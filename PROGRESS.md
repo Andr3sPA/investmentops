@@ -4,56 +4,42 @@
 
 ## Última tarea completada
 
-Fase 1 → Setup del proyecto → *"Crear la estructura de carpetas/módulos base: CLI, orquestador, proveedores de datos, capa de datos, agentes de análisis, proveedores de IA, reportes."*
+Fase 1 → Setup del proyecto → *"Crear la carpeta de prompts, separada del código Python, donde vivirá el prompt de cada agente como archivo independiente."*
 
 ## Cambios realizados
 
-- Se creó el paquete Python `investmentops/` con un subpaquete por cada capa definida en `ARCHITECTURE.md`:
-  - `cli` — capa 1 (punto de entrada).
-  - `core` — capa 2 (orquestador).
-  - `data_providers` — capa 3 (fuentes de datos).
-  - `data_layer` — capa 4 (normalización y almacenamiento).
-  - `analysis_engines` — capa 5 (agentes de análisis).
-  - `ai_providers` — capa 5bis (interfaz de proveedores de IA).
-  - `reports` — capa 6 (generadores de reportes).
-- Cada subpaquete tiene un `__init__.py` con únicamente un docstring que fija su responsabilidad (copiada/resumida de `ARCHITECTURE.md`), sin lógica todavía.
-- Se agregó un `__main__.py` mínimo (`python -m investmentops`) que solo imprime un mensaje de estado, para que el proyecto sea ejecutable de punta a punta en este punto tan temprano, sin adelantar la implementación real de la CLI (que es una tarea posterior).
-- Se verificó que el paquete se ejecuta sin errores y que todos los subpaquetes importan correctamente.
-- Se marcó la tarea como completada en `TASKS.md` (se introdujo la convención `- [x]` / `- [ ]` para el seguimiento de tareas, documentada al inicio del archivo).
-- Se actualizó `ROADMAP.md` para reflejar que la Fase 1 está "en progreso".
+- Se creó la carpeta `prompts/` en la raíz del proyecto, **fuera** del paquete Python `investmentops/`, conforme al principio de `ARCHITECTURE.md` de que "los prompts son artefactos, no código".
+- Se agregó `prompts/README.md` documentando:
+  - Por qué la carpeta está separada del código (cita textual del principio de `ARCHITECTURE.md`).
+  - La convención de nombres: un archivo Markdown (`.md`) por agente, nombrado con el identificador del agente en `snake_case` (ej. `financial_health.md`, `valuation.md`).
+  - Qué debe (y no debe) contener cada archivo de prompt: solo instrucciones de interpretación para el modelo de lenguaje, nunca código Python ni peticiones de veredicto de compra/venta.
+  - El estado actual: la carpeta está vacía de prompts reales porque los agentes de análisis todavía no están implementados; cada agente añadirá su propio archivo cuando se implemente (tareas ya previstas en `TASKS.md`).
+- No se creó ningún archivo de prompt real todavía (ej. `financial_health.md`), porque escribir el contenido del prompt de cada agente es una tarea explícita y separada dentro de las secciones "Agente de análisis: salud financiera" y "Agente de análisis: valoración" de `TASKS.md`, y la regla de trabajo indica una tarea por conversación.
+- Se marcó la tarea como completada en `TASKS.md`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/__init__.py`
-- `investmentops/__main__.py`
-- `investmentops/cli/__init__.py`
-- `investmentops/core/__init__.py`
-- `investmentops/data_providers/__init__.py`
-- `investmentops/data_layer/__init__.py`
-- `investmentops/analysis_engines/__init__.py`
-- `investmentops/ai_providers/__init__.py`
-- `investmentops/reports/__init__.py`
-- `PROGRESS.md` (este archivo)
+- `prompts/README.md`
 
 Modificados:
-- `TASKS.md` (tarea marcada como completada + convención de checkbox añadida)
-- `ROADMAP.md` (estado de Fase 1 añadido)
+- `TASKS.md` (tarea marcada como completada)
+- `PROGRESS.md` (este archivo)
 
-No modificados: `GOALS.md`, `ARCHITECTURE.md` (no había motivo para tocarlos).
+No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, y ningún archivo dentro de `investmentops/` (esta tarea no toca código Python).
 
 ## Decisiones técnicas importantes
 
-- **Lenguaje: Python**, confirmado por el propio `ARCHITECTURE.md` (menciona explícitamente "código Python" varias veces al hablar de prompts externos y agentes). No fue una decisión nueva, solo una confirmación explícita antes de crear archivos `.py`.
-- **Nombres de los subpaquetes**: se usó una correspondencia 1 a 1 y literal con la lista de la propia tarea de `TASKS.md` (CLI, orquestador → `core`, proveedores de datos → `data_providers`, capa de datos → `data_layer`, agentes de análisis → `analysis_engines`, proveedores de IA → `ai_providers`, reportes → `reports`), evitando introducir nombres o sub-estructuras que `ARCHITECTURE.md` no pidió todavía (ej. no se crearon subcarpetas dentro de cada capa, eso se resolverá cuando haya contenido real que lo justifique).
-- **No se creó `prompts/`, `pyproject.toml`/gestor de dependencias, ni archivo de configuración**: son tareas separadas y explícitas dentro de la misma sección "Setup del proyecto" de `TASKS.md`, y la regla de trabajo indica una tarea por conversación.
-- **`__main__.py` mínimo**: se agregó para cumplir la regla de "mantener el proyecto siempre ejecutable" sin adelantar trabajo de la sección "CLI" (que llega mucho más adelante en la Fase 1). Es un placeholder deliberadamente trivial.
-- Se introdujo una convención de checkbox (`- [x]` / `- [ ]`) en `TASKS.md` para poder identificar de forma inequívoca, en futuras conversaciones, cuál es "la siguiente tarea pendiente". Solo se marcó la tarea recién completada; el resto de tareas quedan implícitamente pendientes (sin checkbox) hasta que se toquen.
+- **Ubicación de `prompts/`**: se colocó como carpeta hermana de `investmentops/` en la raíz del proyecto, no dentro del paquete Python, para que quede inequívocamente "fuera del código" (tal como pide `ARCHITECTURE.md`) y sea trivial de encontrar, versionar y editar sin tocar el paquete.
+- **Formato Markdown para los prompts**: se eligió `.md` en vez de `.txt` porque los prompts probablemente incluirán estructura (secciones, listas) que se lee mejor en Markdown, y es consistente con el resto de la documentación del proyecto. No hay lógica de renderizado involucrada; sigue siendo texto plano para el agente.
+- **Convención de nombres = identificador del agente**: se decidió que el nombre de archivo sea exactamente el identificador que usará el agente en código (ej. `financial_health`), para que la carga del prompt sea una simple resolución de ruta por nombre, sin necesidad de un mapeo adicional. Esta convención queda documentada para cuando se implementen los agentes.
+- **No se crearon subcarpetas por fase ni por tipo de agente**: con cero prompts reales todavía, cualquier subdivisión sería especulativa; se prefirió una carpeta plana y agregar estructura solo si el número de prompts lo justifica más adelante (consistente con la decisión ya tomada en la tarea anterior de no crear subestructuras prematuras).
+- **No se escribió el contenido de ningún prompt real**: esa es una tarea separada y explícita en `TASKS.md` (dentro de "Agente de análisis: salud financiera" y "Agente de análisis: valoración"), y requiere primero tener definidas las métricas de entrada de cada agente (tareas previas en la sección "Contratos e interfaces" / la propia sección de cada agente), que tampoco están hechas todavía.
 
 ## Problemas encontrados
 
-- Ninguno. La estructura de `ARCHITECTURE.md` y `TASKS.md` es consistente entre sí; no fue necesario detenerse a señalar contradicciones de diseño.
+- Ninguno. La tarea era puramente de estructura documental y no interactuó con ninguna decisión ya tomada en `ARCHITECTURE.md` o `TASKS.md`.
 
 ## Próxima tarea recomendada
 
-Fase 1 → Setup del proyecto → *"Crear la carpeta de prompts, separada del código Python, donde vivirá el prompt de cada agente como archivo independiente."*
+Fase 1 → Setup del proyecto → *"Configurar el gestor de dependencias y el entorno del proyecto."*
