@@ -4,52 +4,51 @@
 
 ## Última tarea completada
 
-Fase 1 → Contratos e interfaces → *"Definir el contrato de 'analysis engine' / agente de IA (entrada: modelo de dominio normalizado + métricas precalculadas cuando aplique; salida: resultado estructurado)."*
+Fase 1 → Contratos e interfaces → *"Definir el contrato de 'AI provider' (entrada: prompt + datos estructurados; salida: respuesta del modelo + metadatos de proveedor/modelo usado), común para Gemini, Claude, OpenAI y Ollama."*
 
 ## Cambios realizados
 
-- Se creó `investmentops/analysis_engines/contracts.py`, que define el contrato común que debe cumplir todo motor de análisis / agente de IA (ver ARCHITECTURE.md, componente 5):
-  - `AnalysisEngineError`: excepción común para señalar cualquier fallo del agente (el proveedor de IA no responde, su respuesta no se puede interpretar, faltan datos imprescindibles), de forma que el orquestador pueda capturarla y continuar con los demás análisis en vez de detener todo el flujo o inventar hallazgos.
-  - `AnalysisProvenance`: dataclass inmutable con la procedencia de la interpretación — `ai_provider`, `ai_model` y `generated_at` — exigida por `ARCHITECTURE.md` ("metadatos de procedencia... qué proveedor y modelo de IA generó la interpretación").
-  - `AnalysisResult`: dataclass inmutable que agrupa `analysis_id`, `findings` (hallazgos en lenguaje natural producidos por el agente), `supporting_metrics` (métricas calculadas de forma determinística), `limitations` (advertencias) y `provenance` (`AnalysisProvenance`). Es el tipo "Resultado de análisis" descrito en `ARCHITECTURE.md`, "Modelo de datos interno".
-  - `AnalysisEngine`: `Protocol` (tipado estructural, `runtime_checkable`) con un único método `analyze(company_data, metrics=None) -> AnalysisResult`. Cualquier objeto que exponga ese método cumple el contrato, sin necesidad de heredar de una clase base concreta.
-- Se actualizó `investmentops/analysis_engines/__init__.py` para re-exportar `AnalysisEngine`, `AnalysisEngineError`, `AnalysisProvenance` y `AnalysisResult` desde `contracts.py`, de forma que el resto del sistema los importe directamente desde `investmentops.analysis_engines`.
-- Se agregó `tests/test_analysis_engines_contracts.py`, con un agente mínimo de prueba (`_DummyEngine`) que cumple el contrato y otro que falla (`_FailingEngine`), cubriendo: cumplimiento del protocolo `AnalysisEngine`, forma del resultado (`AnalysisResult` + `AnalysisProvenance`), el carácter opcional del parámetro `metrics`, propagación de `AnalysisEngineError`, e inmutabilidad de ambas dataclasses.
+- Se creó `investmentops/ai_providers/contracts.py`, que define el contrato común que debe cumplir toda integración de proveedor de IA (ver ARCHITECTURE.md, componente 5bis):
+  - `AIProviderError`: excepción común para señalar cualquier fallo del proveedor (no responde, error de autenticación, límite de tasa excedido, respuesta en formato inesperado), de forma que quien invoca la interfaz (típicamente un agente de `investmentops.analysis_engines`) pueda capturarla y traducirla a su propia `AnalysisEngineError`, sin detener el resto del flujo de investigación.
+  - `AIProviderResponse`: dataclass inmutable con `content` (texto de respuesta del modelo, sin procesar), `provider`, `model` y `generated_at` — la base con la que un agente construye su propia `AnalysisProvenance` (ver `investmentops.analysis_engines.contracts`).
+  - `AIProvider`: `Protocol` (tipado estructural, `runtime_checkable`) con un único método `complete(prompt, data=None) -> AIProviderResponse`. Cualquier objeto que exponga ese método cumple el contrato, sin necesidad de heredar de una clase base concreta.
+- Se actualizó `investmentops/ai_providers/__init__.py` para re-exportar `AIProvider`, `AIProviderError` y `AIProviderResponse` desde `contracts.py`, de forma que el resto del sistema los importe directamente desde `investmentops.ai_providers`. También se documentaron ahí las tareas siguientes de esta misma sección (implementación concreta, selección de proveedor/modelo por agente, manejo de error).
+- Se agregó `investmentops/tests/test_ai_providers_contracts.py`, con un proveedor mínimo de prueba (`_DummyProvider`) que cumple el contrato y otro que falla (`_FailingProvider`), cubriendo: cumplimiento del protocolo `AIProvider`, forma de la respuesta (`AIProviderResponse`), el carácter opcional del parámetro `data`, propagación de `AIProviderError`, e inmutabilidad de la dataclass de respuesta.
 - Se marcó la tarea como completada en `TASKS.md`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/analysis_engines/contracts.py`
-- `tests/test_analysis_engines_contracts.py`
+- `investmentops/ai_providers/contracts.py`
+- `investmentops/tests/test_ai_providers_contracts.py`
 
 Modificados:
-- `investmentops/analysis_engines/__init__.py`
+- `investmentops/ai_providers/__init__.py`
 - `TASKS.md` (tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
-No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `pyproject.toml`, `.python-version`, `investmentops/config/__init__.py`, `investmentops/__main__.py`, `investmentops/__init__.py`, `investmentops/data_providers/__init__.py`, `investmentops/data_providers/contracts.py`, `tests/test_environment.py`, `tests/test_config.py`, `tests/test_data_providers_contracts.py`, y los demás subpaquetes de `investmentops/` (`cli`, `core`, `data_layer`, `ai_providers`, `reports`), que siguen sin implementación.
+No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `pyproject.toml`, `.python-version`, `investmentops/config/__init__.py`, `investmentops/__main__.py`, `investmentops/__init__.py`, `investmentops/data_providers/__init__.py`, `investmentops/data_providers/contracts.py`, `investmentops/analysis_engines/__init__.py`, `investmentops/analysis_engines/contracts.py`, `investmentops/tests/test_environment.py`, `investmentops/tests/test_config.py`, `investmentops/tests/test_data_providers_contracts.py`, `investmentops/tests/test_analysis_engines_contracts.py`, y los demás subpaquetes de `investmentops/` (`cli`, `core`, `data_layer`, `reports`), que siguen sin implementación.
 
-No se implementó ningún agente concreto (eso corresponde a las secciones "Agente de análisis: salud financiera" y "Agente de análisis: valoración" de `TASKS.md`, tareas posteriores): este trabajo solo define el contrato/interfaz.
+No se implementó ninguna integración concreta de proveedor de IA (Anthropic, Gemini, OpenAI, Ollama): eso corresponde a las tareas siguientes de la sección "Interfaz de proveedores de IA" en `TASKS.md`. Este trabajo solo define el contrato/interfaz.
 
 ## Decisiones técnicas importantes
 
-- **Mismo patrón que `investmentops.data_providers.contracts`**: `Protocol` + `runtime_checkable` en vez de una clase base abstracta, dataclasses `frozen=True` para el resultado y su procedencia, y una excepción propia (`AnalysisEngineError`) heredando de `RuntimeError`. Mantener el mismo patrón entre contratos reduce la carga cognitiva al leer el código y refuerza el principio de `ARCHITECTURE.md` de que el orquestador conoce interfaces, no implementaciones concretas.
-- **`company_data: Any` en `AnalysisEngine.analyze`**: la estructura concreta del modelo de dominio normalizado ("Empresa", "Estados financieros normalizados", "Datos de mercado") todavía no está definida — son tareas separadas y posteriores dentro de "Contratos e interfaces" en `TASKS.md`. Tipar `company_data` de forma laxa ahora evita acoplar este contrato genérico a un diseño de modelo de dominio que aún no existe, igual que `RawProviderData.payload` se dejó como `Any` en el contrato de proveedores de datos.
-- **`metrics: Mapping[str, Any] | None = None`**: se deja opcional porque no todos los agentes necesariamente reciben sus métricas precalculadas desde afuera; algunos pueden calcularlas internamente a partir de `company_data`. Lo que el contrato sí exige es que las métricas usadas terminen expuestas en `AnalysisResult.supporting_metrics`, de forma que el resultado final siempre sea trazable y reproducible, sin importar en qué punto del flujo se calcularon.
-- **`findings` como `Sequence[str]` en vez de un único bloque de texto**: permite que un agente exprese varios hallazgos independientes (ej. uno por ratio interpretado) sin forzar una única cadena larga; los generadores de reporte (Fase 2) pueden decidir si los concatenan o los listan.
-- **Restricción "nunca un veredicto de compra/venta" documentada solo como comentario, no forzada estructuralmente**: el contrato no puede impedir en tiempo de ejecución que un agente redacte una recomendación dentro de `findings`, porque es texto libre generado por un LLM. Esa restricción se refuerza en la capa de prompts (ver `prompts/README.md`) y debe verificarse manualmente al implementar cada agente (ver TASKS.md, "Verificación" de la Fase 1).
-- **`AnalysisEngineError` separado de `DataProviderError`**: aunque ambos son fallos operacionales que el orquestador debe capturar, mantenerlos como tipos distintos permite que el "Resultado de investigación" (tarea futura) distinga en su reporte si lo que falló fue obtener datos o interpretarlos, que son fallos con causas y remedios distintos para el usuario.
-- **Sin manejo de reintentos ni validación del contenido de `findings`/`limitations` en el contrato**: eso es responsabilidad de la implementación concreta de cada agente (parseo de la respuesta del proveedor de IA) y de la interfaz de proveedores de IA (aún pendiente, ver TASKS.md), no del contrato en sí.
+- **Mismo patrón que `investmentops.data_providers.contracts` y `investmentops.analysis_engines.contracts`**: `Protocol` + `runtime_checkable`, una dataclass `frozen=True` para la respuesta, y una excepción propia (`AIProviderError`) heredando de `RuntimeError`. Mantener el mismo patrón entre los tres contratos reduce la carga cognitiva al leer el código y refuerza el principio de `ARCHITECTURE.md` de que quien invoca conoce interfaces, no implementaciones concretas.
+- **Un único método `complete(prompt, data=None)`** en vez de separar "enviar prompt" y "enviar datos" en dos pasos: `ARCHITECTURE.md` describe la entrada como "prompt + datos estructurados + parámetros básicos" en una sola llamada, y esto es lo que un agente de análisis necesita: una invocación atómica que reciba su prompt (cargado desde `prompts/`) junto con las métricas ya calculadas.
+- **`data: Mapping[str, Any] | None = None`**: se deja opcional porque no toda invocación necesita datos estructurados adicionales al prompt (por ejemplo, un futuro agente de reporte podría enviar solo texto ya compuesto). El contrato no impone estructura sobre `data`; cada proveedor concreto decide cómo incorporarlo a su llamada (ej. interpolarlo en el prompt final, o enviarlo como bloque de contexto separado según la API del proveedor).
+- **`content: str` sin estructura forzada**: igual que `RawProviderData.payload` y `company_data` en los otros dos contratos, el texto de respuesta se deja como texto plano sin parsear. La interpretación de ese texto a hallazgos estructurados es responsabilidad de cada agente concreto (ver `investmentops.analysis_engines`), no de esta interfaz transversal.
+- **`AIProviderError` separado de `DataProviderError` y `AnalysisEngineError`**: mantener los tres tipos distintos permite que, más adelante, un agente de análisis distinga en su propio manejo de errores si el fallo vino de invocar al proveedor de IA (`AIProviderError`, que el agente captura y traduce a su propia `AnalysisEngineError`) o de otra causa (datos de entrada faltantes, por ejemplo), sin mezclar responsabilidades entre capas.
+- **Sin mecanismo de reintentos, streaming, ni parámetros de modelo (temperatura, máximo de tokens, etc.) en el contrato**: `ARCHITECTURE.md` menciona "parámetros básicos" pero no los especifica; se dejan fuera de este contrato mínimo para no comprometer una API concreta antes de implementar la primera integración real. Si resultan necesarios, se agregarán como argumentos opcionales de `complete` en la tarea de implementación, sin romper este contrato base (los proveedores concretos seguirían cumpliendo la misma firma mínima).
+- **Sin manejo de selección de proveedor/modelo por agente en este módulo**: ese mecanismo consume `config.local.toml` (sección `[agents]`, ver `CONFIGURATION.md`) y es una tarea separada y posterior ("Definir el mecanismo de selección de proveedor/modelo por agente vía configuración local"), no algo que el contrato en sí deba resolver.
 
 ## Problemas encontrados
 
 Ninguno. Se verificó manualmente que:
-- Un agente mínimo que implementa `analyze(company_data, metrics=None) -> AnalysisResult` satisface `isinstance(agente, AnalysisEngine)`.
-- `AnalysisResult` y `AnalysisProvenance` son inmutables (intentar reasignar un atributo lanza `AttributeError`).
-- Un agente que levanta `AnalysisEngineError` propaga el error correctamente y con su mensaje.
-- El parámetro `metrics` es efectivamente opcional: al omitirlo, el agente de prueba usa sus propias métricas por defecto.
+- Un proveedor mínimo que implementa `complete(prompt, data=None) -> AIProviderResponse` satisface `isinstance(proveedor, AIProvider)`.
+- `AIProviderResponse` es inmutable (intentar reasignar un atributo lanza `AttributeError`).
+- Un proveedor que levanta `AIProviderError` propaga el error correctamente y con su mensaje.
+- El parámetro `data` es efectivamente opcional: al omitirlo, el proveedor de prueba responde igual usando solo el prompt.
 
 ## Próxima tarea recomendada
 
-Fase 1 → Contratos e interfaces → *"Definir el contrato de 'AI provider' (entrada: prompt + datos estructurados; salida: respuesta del modelo + metadatos de proveedor/modelo usado), común para Gemini, Claude, OpenAI y Ollama."*
+Fase 1 → Contratos e interfaces → *"Definir la estructura del modelo de dominio 'Empresa' (ticker, nombre, sector, mercado)."*
