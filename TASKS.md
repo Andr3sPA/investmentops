@@ -17,7 +17,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ### Setup del proyecto
 - [x] Crear la estructura de carpetas/módulos base: CLI, orquestador, proveedores de datos, capa de datos, agentes de análisis, proveedores de IA, reportes.
 - [x] Crear la carpeta de prompts, separada del código Python, donde vivirá el prompt de cada agente como archivo independiente.
-- Configurar el gestor de dependencias y el entorno del proyecto.
+- [x] Configurar el gestor de dependencias y el entorno del proyecto.
 - Definir el formato y la ubicación del archivo de configuración local (API keys de datos, API keys/endpoints de proveedores de IA, qué proveedor usa cada agente, rutas de caché).
 - Implementar la carga de ese archivo de configuración al iniciar el sistema.
 

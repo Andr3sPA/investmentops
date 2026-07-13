@@ -1,0 +1,32 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Bytecode y caché de Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Herramientas de test y lint
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Configuración local con credenciales (definida en tareas posteriores,
+# ver TASKS.md > "Setup del proyecto" > archivo de configuración local)
+config.local.*
+.env
+
+# Caché de datos local de la aplicación (ver ARCHITECTURE.md > Data Layer)
+.investmentops_cache/
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
