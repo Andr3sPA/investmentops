@@ -19,7 +19,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Crear la carpeta de prompts, separada del código Python, donde vivirá el prompt de cada agente como archivo independiente.
 - [x] Configurar el gestor de dependencias y el entorno del proyecto.
 - [x] Definir el formato y la ubicación del archivo de configuración local (API keys de datos, API keys/endpoints de proveedores de IA, qué proveedor usa cada agente, rutas de caché).
-- Implementar la carga de ese archivo de configuración al iniciar el sistema.
+- [x] Implementar la carga de ese archivo de configuración al iniciar el sistema.
 
 ### Contratos e interfaces
 - Definir el contrato de "data provider" (entrada: ticker; salida: datos crudos + metadatos de procedencia).

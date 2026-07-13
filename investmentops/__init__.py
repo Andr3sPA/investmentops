@@ -18,7 +18,11 @@ Este paquete organiza el sistema en las capas descritas en ARCHITECTURE.md:
                         OpenAI, Ollama), transversal a analysis_engines y
                         reports.
 - reports            -> generadores de reportes (Markdown, HTML, JSON).
+- config            -> carga de la configuración local (config.local.toml),
+                        ver CONFIGURATION.md.
 
-Ningún módulo contiene aún lógica: esta es solo la estructura base
-(ver TASKS.md, sección "Setup del proyecto").
+Ningún módulo de análisis/datos/reportes contiene aún lógica de negocio:
+la estructura base sigue vacía salvo por la carga de configuración local
+(investmentops.config), ya implementada (ver TASKS.md, sección "Setup del
+proyecto").
 """
