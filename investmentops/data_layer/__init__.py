@@ -25,16 +25,20 @@ aquí para que el resto del sistema los importe directamente desde
 - `FinancialStatement` (en `investmentops.data_layer.financial_statements`):
   estados financieros normalizados de una empresa en un corte (ingresos,
   beneficios, deuda, con fuente y fecha).
+- `MarketData` (en `investmentops.data_layer.market_data`): datos de
+  mercado normalizados de una empresa en un corte (precio, capitalización,
+  múltiplos, con fuente y fecha de corte).
 
-Aún sin implementación (ver TASKS.md, secciones "Contratos e interfaces"
-restantes de esta capa —Datos de mercado— y "Normalización y
+Aún sin implementación (ver TASKS.md, sección "Normalización y
 almacenamiento" de la Fase 1).
 """
 
 from investmentops.data_layer.domain import Company
 from investmentops.data_layer.financial_statements import FinancialStatement
+from investmentops.data_layer.market_data import MarketData
 
 __all__ = [
     "Company",
     "FinancialStatement",
+    "MarketData",
 ]
