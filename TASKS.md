@@ -26,7 +26,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Definir el contrato de "analysis engine" / agente de IA (entrada: modelo de dominio normalizado + métricas precalculadas cuando aplique; salida: resultado estructurado).
 - [x] Definir el contrato de "AI provider" (entrada: prompt + datos estructurados; salida: respuesta del modelo + metadatos de proveedor/modelo usado), común para Gemini, Claude, OpenAI y Ollama.
 - [x] Definir la estructura del modelo de dominio "Empresa" (ticker, nombre, sector, mercado).
-- Definir la estructura del modelo de dominio "Estados financieros normalizados" (ingresos, beneficios, deuda, con fuente y fecha).
+- [x] Definir la estructura del modelo de dominio "Estados financieros normalizados" (ingresos, beneficios, deuda, con fuente y fecha).
 - Definir la estructura del modelo de dominio "Datos de mercado" (precio, capitalización, múltiplos, fecha de corte).
 - Definir la estructura de "Resultado de análisis" (identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia).
 - Definir la estructura de "Resultado de investigación" (agregación de resultados de análisis para una empresa).
