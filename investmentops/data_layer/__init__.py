@@ -15,6 +15,22 @@ Responsabilidad (ver ARCHITECTURE.md, componente 4):
 Esta capa aísla al resto del sistema de los formatos particulares de cada
 API externa.
 
-Aún sin implementación (ver TASKS.md, secciones "Contratos e interfaces" y
-"Normalización y almacenamiento" de la Fase 1).
+El modelo de dominio "Empresa" (identidad básica: ticker, nombre, sector,
+mercado) ya está definido en `investmentops.data_layer.domain` (ver
+TASKS.md, "Contratos e interfaces" > "Definir la estructura del modelo de
+dominio 'Empresa'") y se re-exporta aquí para que el resto del sistema lo
+importe directamente desde `investmentops.data_layer`:
+
+- `Company`: identidad básica de una empresa (ticker, nombre, sector,
+  mercado).
+
+Aún sin implementación (ver TASKS.md, secciones "Contratos e interfaces"
+restantes de esta capa —Estados financieros normalizados, Datos de
+mercado— y "Normalización y almacenamiento" de la Fase 1).
 """
+
+from investmentops.data_layer.domain import Company
+
+__all__ = [
+    "Company",
+]
