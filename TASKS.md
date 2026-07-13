@@ -22,7 +22,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Implementar la carga de ese archivo de configuración al iniciar el sistema.
 
 ### Contratos e interfaces
-- Definir el contrato de "data provider" (entrada: ticker; salida: datos crudos + metadatos de procedencia).
+- [x] Definir el contrato de "data provider" (entrada: ticker; salida: datos crudos + metadatos de procedencia).
 - Definir el contrato de "analysis engine" / agente de IA (entrada: modelo de dominio normalizado + métricas precalculadas cuando aplique; salida: resultado estructurado).
 - Definir el contrato de "AI provider" (entrada: prompt + datos estructurados; salida: respuesta del modelo + metadatos de proveedor/modelo usado), común para Gemini, Claude, OpenAI y Ollama.
 - Definir la estructura del modelo de dominio "Empresa" (ticker, nombre, sector, mercado).
