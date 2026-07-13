@@ -1,0 +1,66 @@
+# config.example.toml
+#
+# Plantilla de configuración local de InvestmentOps.
+# Ver CONFIGURATION.md para la explicación de cada sección.
+#
+# Uso:
+#   1. Copiar este archivo a `config.local.toml` (raíz del proyecto).
+#   2. Completar las API keys y rutas reales en `config.local.toml`.
+#   3. `config.local.toml` NUNCA se versiona (ver .gitignore: config.local.*).
+#
+# Este archivo (config.example.toml) sí se versiona, pero solo debe
+# contener valores vacíos o de ejemplo, nunca credenciales reales.
+
+[cache]
+# Ruta local (relativa a la raíz del proyecto o absoluta) donde se
+# persisten los datos normalizados y el histórico de consultas.
+path = ".investmentops_cache/"
+
+# --- Proveedores de datos (investmentops.data_providers) ------------------
+# Una sección por proveedor. El nombre de la subsección (ej. "fundamentals")
+# es el identificador que el proveedor usa en código.
+
+[data_providers.fundamentals]
+# Proveedor de datos financieros fundamentales (Fase 1).
+provider = ""          # ej. "example_provider"
+api_key = ""
+# base_url = ""         # opcional, solo si el proveedor lo requiere
+
+# --- Proveedores de IA (investmentops.ai_providers) ------------------------
+# Una sección por proveedor soportado por la interfaz común. No es
+# necesario completar todos: solo los que efectivamente se vayan a usar.
+
+[ai_providers.anthropic]
+api_key = ""
+# base_url = ""         # opcional
+
+[ai_providers.gemini]
+api_key = ""
+
+[ai_providers.openai]
+api_key = ""
+
+[ai_providers.ollama]
+# Ollama corre localmente; normalmente no requiere api_key.
+base_url = "http://localhost:11434"
+
+[ai_providers.default]
+# Proveedor y modelo usados por cualquier agente que no tenga una
+# asignación específica en [agents].
+provider = ""          # anthropic | gemini | openai | ollama
+model = ""
+
+# --- Selección de proveedor de IA por agente (investmentops.analysis_engines) ---
+# Mapea el identificador de cada agente (el mismo usado para su prompt en
+# prompts/, ver prompts/README.md) al proveedor de [ai_providers.*] que
+# debe usar. Si un agente no aparece aquí, usa [ai_providers.default].
+
+[agents]
+# financial_health = "default"
+# valuation = "default"
+
+# --- Preferencias de salida (investmentops.reports, desde la Fase 2) -------
+
+[output]
+default_format = "markdown"   # markdown | html | json
+output_dir = "reports/"
