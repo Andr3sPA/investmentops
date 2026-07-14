@@ -45,11 +45,11 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Implementar manejo de error básico cuando el proveedor de IA no responde o devuelve un formato inesperado. — Implementado en el mismo `AnthropicAIProvider`: errores de red, autenticación (401/403), límite de tasa (429), otros errores HTTP, JSON inválido y respuestas sin contenido interpretable se traducen a `AIProviderError` (ver PROGRESS.md).
 
 ### Normalización y almacenamiento
-- Implementar la transformación de datos crudos del proveedor al modelo "Estados financieros normalizados".
-- Implementar la transformación de datos crudos al modelo "Datos de mercado".
-- Definir el mecanismo de caché local (archivo o base embebida) para persistir datos normalizados.
-- Implementar el guardado de los datos normalizados en la caché tras cada consulta.
-- Implementar la lectura desde caché para evitar una nueva llamada al proveedor si el dato ya existe y es reciente.
+- [x] Implementar la transformación de datos crudos del proveedor al modelo "Estados financieros normalizados". — `financial_statement_from_raw` en `investmentops/data_layer/normalization.py` (ver PROGRESS.md). Toma el corte más reciente del `payload` que entrega `FMPFundamentalsProvider` (`income_statement`, `balance_sheet_statement`) y construye un `FinancialStatement`, señalando `NormalizationError` si faltan campos imprescindibles o la fecha no es interpretable.
+- [ ] Implementar la transformación de datos crudos al modelo "Datos de mercado".
+- [ ] Definir el mecanismo de caché local (archivo o base embebida) para persistir datos normalizados.
+- [ ] Implementar el guardado de los datos normalizados en la caché tras cada consulta.
+- [ ] Implementar la lectura desde caché para evitar una nueva llamada al proveedor si el dato ya existe y es reciente.
 
 ### Agente de análisis: salud financiera
 - Definir qué métricas concretas componen "salud financiera básica" (liquidez, endeudamiento, rentabilidad).

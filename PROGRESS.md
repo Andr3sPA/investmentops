@@ -4,47 +4,48 @@
 
 ## Última tarea completada
 
-Fase 1 → Interfaz de proveedores de IA → *"Dejar documentado (sin implementar aún si no es necesario para el MVP) cómo se sumarían las integraciones restantes (Gemini, Claude, OpenAI, Ollama) sin modificar la interfaz ni los agentes."*
+Fase 1 → Normalización y almacenamiento → *"Implementar la transformación de datos crudos del proveedor al modelo 'Estados financieros normalizados'."*
 
-Antes de implementar, se verificó que esta tarea no estuviera ya satisfecha por trabajo previo: `ARCHITECTURE.md` (sección "Extensibilidad") ya menciona en términos generales que un nuevo proveedor de IA "se agrega implementando el contrato de la interfaz... y registrándose en la configuración", pero eso es una afirmación de principio arquitectónico, no un procedimiento concreto tomando como referencia la única integración real ya existente (`AnthropicAIProvider`). Ningún documento explicaba, paso a paso, qué archivo crear, qué patrón seguir (resolución de credenciales, manejo de error) ni qué módulos NO se deben tocar (`contracts.py`, `selection.py`, los agentes). Se confirmó que requería trabajo nuevo — puramente de documentación, sin código — y se implementó.
+Antes de implementar, se verificó que esta tarea no estuviera ya satisfecha por trabajo previo: existen el modelo de destino (`FinancialStatement`, en `investmentops/data_layer/financial_statements.py`) y la fuente de datos crudos (`FMPFundamentalsProvider.fetch`, en `investmentops/data_providers/fundamentals.py`), pero ningún módulo traducía uno al otro — no existía `investmentops/data_layer/normalization.py` ni ninguna función equivalente en ningún otro archivo del proyecto. Se confirmó que requería trabajo nuevo y se implementó.
 
 ## Qué se implementó
 
-**`investmentops/ai_providers/EXTENDING.md`** — nuevo documento, ubicado junto al módulo (mismo patrón que `prompts/README.md`), que cubre:
+**`investmentops/data_layer/normalization.py`** — nuevo módulo con:
 
-- Por qué agregar un proveedor nuevo no requiere tocar `AIProvider` (contrato estructural, `Protocol`) ni ningún agente de análisis.
-- Un procedimiento paso a paso para sumar Gemini, OpenAI u Ollama, usando `anthropic_provider.py` como plantilla: crear un módulo nuevo, implementar `complete(prompt, data=None) -> AIProviderResponse`, resolver credenciales desde `config.local.toml` (con los defaults ya definidos en `config.example.toml`, ej. `http://localhost:11434` para Ollama), traducir cualquier fallo a `AIProviderError`, no modificar `selection.py` ni los agentes, y escribir pruebas mockeando la llamada HTTP/SDK (nunca red real), siguiendo el patrón de `test_ai_providers_anthropic.py`.
-- Una aclaración explícita: el mapeo de "nombre de proveedor resuelto" (string que devuelve `resolve_agent_provider`) a "clase concreta a instanciar" (`AnthropicAIProvider`, `GeminiAIProvider`, etc.) todavía no existe como mecanismo genérico; es responsabilidad de quien construya cada agente (tareas pendientes "Agente de análisis: salud financiera" / "valoración"), no de este documento ni de `selection.py`.
-- Qué queda explícitamente fuera de alcance: implementar cualquiera de las integraciones, y un registro/factory central de proveedores (no hay evidencia de que se necesite con una sola integración concreta).
+- `financial_statement_from_raw(raw: RawProviderData) -> FinancialStatement`: toma el `RawProviderData` que devuelve `FMPFundamentalsProvider.fetch` y construye un `FinancialStatement` a partir del corte más reciente disponible (primer elemento de `payload["income_statement"]` para ingresos/beneficio neto, primer elemento de `payload["balance_sheet_statement"]` para deuda total, y el campo `"date"` del estado de resultados más reciente para `period_end`). El `source` del `FinancialStatement` se toma de `raw.metadata.source` (procedencia real), no de un valor fijo, para no acoplar el módulo a un único proveedor.
+- `NormalizationError(RuntimeError)`: señala que el payload crudo no trae los campos imprescindibles (ingresos, beneficio neto, deuda, fecha de corte) o que la fecha no tiene un formato interpretable (`"YYYY-MM-DD"`, el que entrega FMP). Se distingue deliberadamente de `DataProviderError`: el fallo ocurre al traducir una respuesta ya obtenida con éxito, no al consultar al proveedor.
 
-No se modificó ningún archivo de código: esta tarea es puramente documental, tal como la describe TASKS.md ("sin implementar aún si no es necesario para el MVP").
+**`investmentops/tests/test_data_layer_normalization.py`** — pruebas que cubren: construcción exitosa tomando el corte más reciente cuando hay varios periodos en `income_statement`, que `source` proviene de la procedencia (no de un valor fijo), y los tres casos de `NormalizationError` (falta `income_statement`, falta `debt`, falta la fecha, y fecha con formato inválido).
 
 ## Decisiones tomadas
 
-- **Ubicación del documento: `investmentops/ai_providers/EXTENDING.md`, no `ARCHITECTURE.md`.** `ARCHITECTURE.md` ya cubre el principio arquitectónico general ("Extensibilidad" > "Nuevos proveedores de IA") y explícitamente "no contiene código" ni detalles de implementación. El procedimiento concreto (qué archivo crear, cómo resolver credenciales, qué pruebas escribir) es información operativa ligada al módulo `investmentops/ai_providers`, coherente con el mismo criterio ya usado para `prompts/README.md` (documentación de convención viviendo junto a la carpeta que describe).
-- **No se implementó ningún proveedor nuevo.** La propia redacción de la tarea en TASKS.md permite dejarlo "sin implementar aún si no es necesario para el MVP"; no hay ninguna señal de que Gemini, OpenAI u Ollama sean necesarios ahora mismo (el MVP de Fase 1, según ROADMAP.md, solo exige "al menos una implementación funcional").
-- **No se creó un mecanismo de registro/factory de proveedores.** Se documentó explícitamente que ese mapeo no existe todavía y que crearlo antes de tener una segunda integración concreta sería anticipar una abstracción sin caso de uso real, siguiendo el mismo criterio ya aplicado en otras decisiones del proyecto (ver por ejemplo `market_data.py`, que evita adelantar series históricas sin necesidad concreta).
+- **Alcance de un único corte, no series históricas.** Coherente con el alcance ya documentado en `investmentops/data_layer/financial_statements.py` (Fase 1: el más reciente disponible; series temporales quedan para la Fase 3, ver TASKS.md). Se toma el primer elemento de cada lista porque FMP devuelve sus endpoints de estado de resultados y balance ordenados del periodo más reciente al más antiguo.
+- **`NormalizationError` como excepción propia, no reutilizar `DataProviderError`.** El contrato de `DataProviderError` (investmentops.data_providers.contracts) cubre fallos de la *consulta* al proveedor (no responde, ticker inexistente, formato HTTP inesperado); en este módulo la consulta ya tuvo éxito y el `RawProviderData` ya existe — el fallo es de *traducción* al modelo interno, una responsabilidad distinta de `investmentops.data_layer`. Mismo criterio que ya separa `AnalysisEngineError` de `DataProviderError` en el resto del proyecto.
+- **`source` tomado de `raw.metadata.source`, no fijado a `"fmp"`.** Aunque hoy FMP es el único proveedor de datos fundamentales (ver TASKS.md, "Elegir el proveedor..."), fijar el valor habría acoplado innecesariamente este módulo a un proveedor concreto cuando la propia procedencia ya trae ese dato.
+- **No se agregó re-exportación en `investmentops/data_layer/__init__.py`.** La tarea pedía únicamente la transformación; exponer `financial_statement_from_raw`/`NormalizationError` a nivel de paquete no es necesario todavía y puede añadirse sin fricción cuando algo fuera de `investmentops.data_layer` lo necesite importar (ningún módulo lo consume aún: eso es responsabilidad de tareas posteriores, ver más abajo).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/ai_providers/EXTENDING.md`
+- `investmentops/data_layer/normalization.py`
+- `investmentops/tests/test_data_layer_normalization.py`
 
 Modificados:
-- `TASKS.md` (tarea "Dejar documentado... cómo se sumarían las integraciones restantes" marcada como completada, con referencia inline a este documento)
+- `TASKS.md` (tarea "Implementar la transformación de datos crudos del proveedor al modelo 'Estados financieros normalizados'" marcada como completada, con referencia inline a este módulo)
 - `PROGRESS.md` (este archivo)
 
-No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `.python-version`, `pyproject.toml`, y todo `investmentops/` (código y tests) salvo el nuevo `EXTENDING.md`.
+No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `.python-version`, `pyproject.toml`, y el resto de `investmentops/` (código y tests) salvo los dos archivos nuevos.
 
 ## Problemas encontrados
 
-Ninguno. La implementación existente de `AnthropicAIProvider` ya era suficientemente representativa del patrón a seguir; no hubo ambigüedad que resolver de forma nueva.
+Ninguno. La forma del `payload` crudo ya estaba fijada por `FMPFundamentalsProvider` y sus pruebas (`income_statement`, `balance_sheet_statement`, `quote`), lo que dejó sin ambigüedad qué campos leer; la única decisión de diseño real fue cómo señalar campos faltantes o fechas inválidas, resuelta con `NormalizationError`.
 
 ## Próxima tarea recomendada
 
-Con esta tarea completa, la sección "Interfaz de proveedores de IA" de la Fase 1 queda **cerrada por completo** en `TASKS.md`. La siguiente sección sin marcar es "Normalización y almacenamiento", cuya primera tarea es:
+Con esta tarea completa, la siguiente sin marcar en "Normalización y almacenamiento" es:
 
-1. *"Implementar la transformación de datos crudos del proveedor al modelo 'Estados financieros normalizados'."* — requiere convertir el `payload` crudo que ya devuelve `FMPFundamentalsProvider.fetch` (claves `income_statement`, `balance_sheet_statement`, `quote`, ver `investmentops/data_providers/fundamentals.py`) a una instancia de `FinancialStatement` (ver `investmentops/data_layer/financial_statements.py`).
+1. *"Implementar la transformación de datos crudos al modelo 'Datos de mercado'."* — requiere una función equivalente (ej. `market_data_from_raw`) que traduzca `payload["quote"]` (ver `investmentops/data_providers/fundamentals.py`) a una instancia de `MarketData` (`investmentops/data_layer/market_data.py`): precio, capitalización, múltiplos (vacíos por ahora, ya que su cálculo es responsabilidad del agente de valoración, no de esta capa) y fecha de corte.
 
 Nota para la próxima conversación:
-- Antes de implementar, revisar la forma real del JSON que devuelve FMP en `income-statement` y `balance-sheet-statement` (campos `revenue`, `netIncome`, `totalDebt`, ya referenciados en `test_data_providers_fundamentals.py`) para mapearlos correctamente a `FinancialStatement.revenue`, `.net_income`, `.debt`, `.source` y `.period_end`.
+- Revisar la forma real del JSON que devuelve el endpoint `/quote/{ticker}` de FMP (campos como `price`, `marketCap`, y si trae una fecha de cotización utilizable como `as_of`) antes de implementar, siguiendo el mismo criterio ya aplicado aquí con `income-statement`/`balance-sheet-statement`.
+- Considerar si conviene crear el módulo como una función adicional en el mismo `investmentops/data_layer/normalization.py` (mismo módulo, mismo tipo de responsabilidad) en vez de uno nuevo, para no fragmentar innecesariamente la capa de normalización.
