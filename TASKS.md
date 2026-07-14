@@ -33,9 +33,9 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 ### Fuente de datos fundamentales
 - [x] Elegir el proveedor de datos financieros fundamentales a usar para el MVP (decisión, no implementación). — Decisión: **Financial Modeling Prep (FMP)** (ver PROGRESS.md).
-- Implementar un cliente mínimo que consulte ese proveedor y obtenga datos crudos de una empresa por ticker.
-- Adjuntar metadatos de procedencia (nombre de la fuente, fecha/hora de consulta) a cada dato crudo obtenido.
-- Implementar manejo de error básico cuando el proveedor no responde o el ticker no existe.
+- [x] Implementar un cliente mínimo que consulte ese proveedor y obtenga datos crudos de una empresa por ticker. — `FMPFundamentalsProvider` en `investmentops/data_providers/fundamentals.py` (ver PROGRESS.md).
+- [x] Adjuntar metadatos de procedencia (nombre de la fuente, fecha/hora de consulta) a cada dato crudo obtenido. — Satisfecha por el mismo `FMPFundamentalsProvider.fetch`, que siempre devuelve `RawProviderData` con `ProviderMetadata` (`source="fmp"`, `queried_at`, `reliability="alta"`).
+- [x] Implementar manejo de error básico cuando el proveedor no responde o el ticker no existe. — Satisfecha por el mismo cliente: errores de red, de autenticación, de formato de respuesta y tickers inexistentes se traducen a `DataProviderError` (ver PROGRESS.md).
 
 ### Interfaz de proveedores de IA
 - Implementar la interfaz común de proveedor de IA (envío de prompt + datos, recepción de respuesta + metadatos).

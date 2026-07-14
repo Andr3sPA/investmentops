@@ -7,11 +7,12 @@ name = "investmentops"
 version = "0.1.0"
 description = "Herramienta CLI local de apoyo a la investigacion previa a una decision de inversion (ver GOALS.md)."
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "requests>=2.31",
+]
 
 [project.optional-dependencies]
-# Dependencias de desarrollo: pruebas y lint. Se mantienen mínimas porque
-# el proyecto aún no tiene código funcional (ver TASKS.md, Fase 1).
+# Dependencias de desarrollo: pruebas y lint.
 dev = [
     "pytest>=7.4",
     "ruff>=0.4",
