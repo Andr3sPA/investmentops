@@ -16,6 +16,26 @@ El orquestador conoce interfaces, no implementaciones concretas: esto es lo
 que permite registrar nuevas fuentes, análisis o proveedores de IA sin
 modificar este módulo.
 
-Aún sin implementación (ver TASKS.md, sección "Orquestador mínimo" de la
-Fase 1).
+La estructura de "Resultado de investigación" ya está definida en
+`investmentops.core.research_result` (ver TASKS.md, "Contratos e
+interfaces" > "Definir la estructura de 'Resultado de investigación'") y
+se re-exporta aquí para que el resto del sistema la importe directamente
+desde `investmentops.core`:
+
+- `ResearchResult`: agregación de los `AnalysisResult` de una empresa
+  (empresa investigada, resultados de análisis, fallos parciales, fecha
+  de ensamblado).
+- `ResearchFailure`: registro explícito de un fallo parcial (fuente de
+  datos o motor de análisis) ocurrido durante una investigación.
+
+Aún sin implementación: la lógica que efectivamente ensambla un
+`ResearchResult` invocando fuentes de datos y motores de análisis (ver
+TASKS.md, sección "Orquestador mínimo" de la Fase 1).
 """
+
+from investmentops.core.research_result import ResearchFailure, ResearchResult
+
+__all__ = [
+    "ResearchFailure",
+    "ResearchResult",
+]

@@ -29,7 +29,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Definir la estructura del modelo de dominio "Estados financieros normalizados" (ingresos, beneficios, deuda, con fuente y fecha).
 - [x] Definir la estructura del modelo de dominio "Datos de mercado" (precio, capitalización, múltiplos, fecha de corte).
 - [x] Definir la estructura de "Resultado de análisis" (identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia). — Ya satisfecha por `AnalysisResult`/`AnalysisProvenance` en `investmentops/analysis_engines/contracts.py` (ver PROGRESS.md).
-- Definir la estructura de "Resultado de investigación" (agregación de resultados de análisis para una empresa).
+- [x] Definir la estructura de "Resultado de investigación" (agregación de resultados de análisis para una empresa). — `ResearchResult`/`ResearchFailure` en `investmentops/core/research_result.py` (ver PROGRESS.md).
 
 ### Fuente de datos fundamentales
 - Elegir el proveedor de datos financieros fundamentales a usar para el MVP (decisión, no implementación).
