@@ -4,57 +4,47 @@
 
 ## Última tarea completada
 
-Fase 1 → Interfaz de proveedores de IA → *"Definir el mecanismo de selección de proveedor/modelo por agente vía configuración local."*
+Fase 1 → Interfaz de proveedores de IA → *"Dejar documentado (sin implementar aún si no es necesario para el MVP) cómo se sumarían las integraciones restantes (Gemini, Claude, OpenAI, Ollama) sin modificar la interfaz ni los agentes."*
 
-Antes de implementar, se verificó que esta tarea no estuviera ya satisfecha por trabajo previo: `AnthropicAIProvider` (ver entrada anterior de este archivo) ya resuelve su propia `api_key`/`base_url`/`model` desde `config.local.toml`, pero esa resolución está acoplada a un único proveedor concreto — no existía ningún mecanismo genérico que, dado un identificador de agente (ej. `"financial_health"`), decidiera **qué proveedor** de `[ai_providers.*]` le corresponde, mirando `[agents]` con fallback a `[ai_providers.default]`, tal como exige `CONFIGURATION.md`. Se confirmó que requería trabajo nuevo y se implementó.
+Antes de implementar, se verificó que esta tarea no estuviera ya satisfecha por trabajo previo: `ARCHITECTURE.md` (sección "Extensibilidad") ya menciona en términos generales que un nuevo proveedor de IA "se agrega implementando el contrato de la interfaz... y registrándose en la configuración", pero eso es una afirmación de principio arquitectónico, no un procedimiento concreto tomando como referencia la única integración real ya existente (`AnthropicAIProvider`). Ningún documento explicaba, paso a paso, qué archivo crear, qué patrón seguir (resolución de credenciales, manejo de error) ni qué módulos NO se deben tocar (`contracts.py`, `selection.py`, los agentes). Se confirmó que requería trabajo nuevo — puramente de documentación, sin código — y se implementó.
 
 ## Qué se implementó
 
-**`investmentops/ai_providers/selection.py`** — nuevo módulo con:
+**`investmentops/ai_providers/EXTENDING.md`** — nuevo documento, ubicado junto al módulo (mismo patrón que `prompts/README.md`), que cubre:
 
-- `AgentProviderSelection` (dataclass inmutable): resultado de la resolución — `agent_id`, `provider` (nombre de la subsección `[ai_providers.<nombre>]` a usar) y `model` (o `None` si no hay uno configurado).
-- `AgentProviderSelectionError` (subclase de `RuntimeError`): señala que no pudo resolverse ningún proveedor para un agente dado.
-- `resolve_agent_provider(agent_id, config) -> AgentProviderSelection`: función pura que implementa la regla de resolución documentada en `CONFIGURATION.md`:
-  1. Si `[agents].<agent_id>` existe y no es literalmente `"default"`, ese valor es el proveedor a usar.
-  2. En cualquier otro caso (agente ausente de `[agents]`, o mapeado explícitamente a `"default"` como en los ejemplos comentados de `config.example.toml`), se usa `[ai_providers.default].provider`.
-  3. El `model` se resuelve siempre desde `[ai_providers.default].model` (mismo criterio ya usado por `AnthropicAIProvider`, ya que hoy no existe un campo `model` por proveedor en la configuración).
-  4. Si no puede resolverse ningún proveedor, se levanta `AgentProviderSelectionError` en vez de adivinar uno.
+- Por qué agregar un proveedor nuevo no requiere tocar `AIProvider` (contrato estructural, `Protocol`) ni ningún agente de análisis.
+- Un procedimiento paso a paso para sumar Gemini, OpenAI u Ollama, usando `anthropic_provider.py` como plantilla: crear un módulo nuevo, implementar `complete(prompt, data=None) -> AIProviderResponse`, resolver credenciales desde `config.local.toml` (con los defaults ya definidos en `config.example.toml`, ej. `http://localhost:11434` para Ollama), traducir cualquier fallo a `AIProviderError`, no modificar `selection.py` ni los agentes, y escribir pruebas mockeando la llamada HTTP/SDK (nunca red real), siguiendo el patrón de `test_ai_providers_anthropic.py`.
+- Una aclaración explícita: el mapeo de "nombre de proveedor resuelto" (string que devuelve `resolve_agent_provider`) a "clase concreta a instanciar" (`AnthropicAIProvider`, `GeminiAIProvider`, etc.) todavía no existe como mecanismo genérico; es responsabilidad de quien construya cada agente (tareas pendientes "Agente de análisis: salud financiera" / "valoración"), no de este documento ni de `selection.py`.
+- Qué queda explícitamente fuera de alcance: implementar cualquiera de las integraciones, y un registro/factory central de proveedores (no hay evidencia de que se necesite con una sola integración concreta).
 
-Esta función **no** instancia ninguna implementación concreta de `AIProvider` (ej. `AnthropicAIProvider`): solo decide qué proveedor/modelo usar. Instanciar la implementación concreta correspondiente queda para quien construya cada agente (tarea posterior, ver "Agente de análisis: salud financiera" y "Agente de análisis: valoración" en `TASKS.md`).
-
-**`investmentops/tests/test_ai_providers_selection.py`** — pruebas cubriendo: agente mapeado explícitamente a un proveedor, agente ausente de `[agents]` con fallback a `[ai_providers.default]`, agente mapeado literalmente a `"default"`, sección `[agents]` ausente por completo, modelo ausente (resuelve a `None`), error cuando no hay ningún proveedor resoluble (ni por agente ni por default), error cuando el agente apunta a `"default"` pero `[ai_providers.default]` no tiene `provider`, que `AgentProviderSelectionError` es un `RuntimeError`, e inmutabilidad de `AgentProviderSelection`.
-
-**`investmentops/ai_providers/__init__.py`** — actualizado para re-exportar `resolve_agent_provider`, `AgentProviderSelection` y `AgentProviderSelectionError`, siguiendo el mismo patrón ya usado para el contrato `AIProvider`/`AIProviderResponse`/`AIProviderError`.
+No se modificó ningún archivo de código: esta tarea es puramente documental, tal como la describe TASKS.md ("sin implementar aún si no es necesario para el MVP").
 
 ## Decisiones tomadas
 
-- **La resolución de `model` no depende de `provider`.** Como `config.example.toml` solo define `model` en `[ai_providers.default]` (no una por cada subsección de proveedor), este mecanismo replica ese mismo criterio en vez de adelantar una estructura de configuración que aún no existe (ej. un `model` por proveedor). Si en el futuro se necesita, es una extensión explícita y posterior, no algo a anticipar aquí.
-- **`"default"` como valor literal en `[agents]` se trata igual que la ausencia del agente en `[agents]`.** Esto es consistente con los ejemplos ya comentados en `config.example.toml` (`financial_health = "default"`) y con la redacción de `CONFIGURATION.md` ("Si un agente no aparece aquí, se asume `[ai_providers.default]`"): un valor explícito `"default"` es la forma de decir lo mismo de forma explícita en el archivo, no un proveedor real llamado `"default"`.
-- **No se instancia ningún `AIProvider` concreto desde este módulo.** Mantener la resolución de "qué proveedor/modelo" separada de "cómo construir ese proveedor" evita acoplar `investmentops.ai_providers.selection` a las implementaciones concretas (`AnthropicAIProvider` y las que se agreguen después), preservando la independencia de proveedor exigida por `ARCHITECTURE.md`.
-- **No se resolvieron credenciales (`api_key`, `base_url`).** Esta tarea es específicamente sobre selección de proveedor/modelo por agente; la resolución de credenciales ya vive en cada implementación concreta de `AIProvider` (ver `AnthropicAIProvider.__init__`) y no se dupdujo aquí.
+- **Ubicación del documento: `investmentops/ai_providers/EXTENDING.md`, no `ARCHITECTURE.md`.** `ARCHITECTURE.md` ya cubre el principio arquitectónico general ("Extensibilidad" > "Nuevos proveedores de IA") y explícitamente "no contiene código" ni detalles de implementación. El procedimiento concreto (qué archivo crear, cómo resolver credenciales, qué pruebas escribir) es información operativa ligada al módulo `investmentops/ai_providers`, coherente con el mismo criterio ya usado para `prompts/README.md` (documentación de convención viviendo junto a la carpeta que describe).
+- **No se implementó ningún proveedor nuevo.** La propia redacción de la tarea en TASKS.md permite dejarlo "sin implementar aún si no es necesario para el MVP"; no hay ninguna señal de que Gemini, OpenAI u Ollama sean necesarios ahora mismo (el MVP de Fase 1, según ROADMAP.md, solo exige "al menos una implementación funcional").
+- **No se creó un mecanismo de registro/factory de proveedores.** Se documentó explícitamente que ese mapeo no existe todavía y que crearlo antes de tener una segunda integración concreta sería anticipar una abstracción sin caso de uso real, siguiendo el mismo criterio ya aplicado en otras decisiones del proyecto (ver por ejemplo `market_data.py`, que evita adelantar series históricas sin necesidad concreta).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/ai_providers/selection.py`
-- `investmentops/tests/test_ai_providers_selection.py`
+- `investmentops/ai_providers/EXTENDING.md`
 
 Modificados:
-- `investmentops/ai_providers/__init__.py` (re-exporta `resolve_agent_provider`, `AgentProviderSelection`, `AgentProviderSelectionError`)
-- `TASKS.md` (tarea "Definir el mecanismo de selección de proveedor/modelo por agente vía configuración local" marcada como completada, con referencia inline a esta implementación)
+- `TASKS.md` (tarea "Dejar documentado... cómo se sumarían las integraciones restantes" marcada como completada, con referencia inline a este documento)
 - `PROGRESS.md` (este archivo)
 
-No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `.python-version`, `pyproject.toml`, `investmentops/ai_providers/contracts.py`, `investmentops/ai_providers/anthropic_provider.py`, y el resto de `investmentops/` (código y tests) no mencionado arriba.
+No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `.python-version`, `pyproject.toml`, y todo `investmentops/` (código y tests) salvo el nuevo `EXTENDING.md`.
 
 ## Problemas encontrados
 
-Ninguno. El contrato y la configuración ya existentes (`AIProvider`, `config.example.toml`, `CONFIGURATION.md`) ya dejaban suficientemente clara la regla de resolución; no hubo ambigüedad que resolver de forma nueva.
+Ninguno. La implementación existente de `AnthropicAIProvider` ya era suficientemente representativa del patrón a seguir; no hubo ambigüedad que resolver de forma nueva.
 
 ## Próxima tarea recomendada
 
-Con el mecanismo de selección definido, queda una única tarea pendiente en `TASKS.md`, sección "Interfaz de proveedores de IA":
+Con esta tarea completa, la sección "Interfaz de proveedores de IA" de la Fase 1 queda **cerrada por completo** en `TASKS.md`. La siguiente sección sin marcar es "Normalización y almacenamiento", cuya primera tarea es:
 
-1. *"Dejar documentado (sin implementar aún si no es necesario para el MVP) cómo se sumarían las integraciones restantes (Gemini, Claude, OpenAI, Ollama) sin modificar la interfaz ni los agentes."* — es una tarea puramente de documentación (probablemente una sección nueva o ampliada en `ARCHITECTURE.md` o un documento dedicado), no de código.
+1. *"Implementar la transformación de datos crudos del proveedor al modelo 'Estados financieros normalizados'."* — requiere convertir el `payload` crudo que ya devuelve `FMPFundamentalsProvider.fetch` (claves `income_statement`, `balance_sheet_statement`, `quote`, ver `investmentops/data_providers/fundamentals.py`) a una instancia de `FinancialStatement` (ver `investmentops/data_layer/financial_statements.py`).
 
 Nota para la próxima conversación:
-- Con esa tarea completa, la sección "Interfaz de proveedores de IA" quedaría cerrada por completo, dejando el proyecto listo para empezar "Normalización y almacenamiento" (la siguiente sección sin marcar en `TASKS.md`).
+- Antes de implementar, revisar la forma real del JSON que devuelve FMP en `income-statement` y `balance-sheet-statement` (campos `revenue`, `netIncome`, `totalDebt`, ya referenciados en `test_data_providers_fundamentals.py`) para mapearlos correctamente a `FinancialStatement.revenue`, `.net_income`, `.debt`, `.source` y `.period_end`.
