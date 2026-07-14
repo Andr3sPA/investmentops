@@ -28,7 +28,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Definir la estructura del modelo de dominio "Empresa" (ticker, nombre, sector, mercado).
 - [x] Definir la estructura del modelo de dominio "Estados financieros normalizados" (ingresos, beneficios, deuda, con fuente y fecha).
 - [x] Definir la estructura del modelo de dominio "Datos de mercado" (precio, capitalización, múltiplos, fecha de corte).
-- Definir la estructura de "Resultado de análisis" (identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia).
+- [x] Definir la estructura de "Resultado de análisis" (identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia). — Ya satisfecha por `AnalysisResult`/`AnalysisProvenance` en `investmentops/analysis_engines/contracts.py` (ver PROGRESS.md).
 - Definir la estructura de "Resultado de investigación" (agregación de resultados de análisis para una empresa).
 
 ### Fuente de datos fundamentales

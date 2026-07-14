@@ -4,52 +4,43 @@
 
 ## Última tarea completada
 
-Fase 1 → Contratos e interfaces → *"Definir la estructura del modelo de dominio 'Datos de mercado' (precio, capitalización, múltiplos, fecha de corte)."*
+Fase 1 → Contratos e interfaces → *"Definir la estructura de 'Resultado de análisis' (identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia)."*
 
 ## Cambios realizados
 
-- Se creó `investmentops/data_layer/market_data.py`, que define el tercer modelo de dominio interno común descrito en ARCHITECTURE.md ("Modelo de datos interno"):
-  - `MarketData`: dataclass inmutable (`frozen=True`) con los datos de mercado básicos de una empresa en **un único corte** (el más reciente disponible): `price` (precio de cotización), `market_cap` (capitalización bursátil), `multiples` (mapeo de identificador de múltiplo a su valor, ej. `{"pe": 18.4, "pb": 3.1}`), más `source` (proveedor del que provienen las cifras) y `as_of` (fecha de corte a la que corresponden).
-  - Igual que con `FinancialStatement`, el alcance se limita a un solo corte por empresa (no serie histórica), siguiendo el mismo criterio de no sobre-diseñar antes de que exista el caso de uso real de series temporales.
-  - `multiples` se modela como `Mapping[str, float]` de forma libre (sin lista fija de múltiplos soportados ni validación de nombres): qué múltiplos se calculan y con qué fórmula es responsabilidad del futuro agente de análisis de valoración (Fase 1, tarea pendiente "Agente de análisis: valoración"), no de este modelo de dominio.
-- Se actualizó `investmentops/data_layer/__init__.py` para re-exportar también `MarketData` (junto a `Company` y `FinancialStatement`, ya existentes), de forma que el resto del sistema lo importe directamente desde `investmentops.data_layer`.
-- Se agregó `investmentops/tests/test_data_layer_market_data.py`, cubriendo: que `MarketData` conserva correctamente sus cinco campos (incluyendo `source` y `as_of`), que es inmutable, que admite un mapeo de múltiplos vacío (si la fuente no entrega ninguno), y que no restringe qué nombres de múltiplos pueden usarse.
-- Se marcó la tarea como completada en `TASKS.md`.
+- **No se creó código nuevo.** Se revisó `investmentops/analysis_engines/contracts.py` y se confirmó que la estructura pedida por esta tarea ya existe, completa, desde que se implementó el contrato de "analysis engine":
+  - `AnalysisResult` (dataclass inmutable) ya contiene exactamente los cinco elementos pedidos por la tarea:
+    - `analysis_id` → identificador del análisis.
+    - `findings` → hallazgos (interpretación en lenguaje natural).
+    - `supporting_metrics` → métricas de soporte (calculadas de forma determinística).
+    - `limitations` → advertencias/limitaciones explícitas.
+    - `provenance` → procedencia, a través de `AnalysisProvenance` (proveedor de IA, modelo, fecha de generación).
+  - Esto no es una coincidencia: el propio docstring de `analysis_engines/contracts.py` ya citaba, al definir el contrato de "analysis engine", la misma redacción de ARCHITECTURE.md que usa esta tarea para "Resultado de análisis" (ver ARCHITECTURE.md, "Modelo de datos interno (conceptual)": *"Resultado de análisis — estructura común que produce cada agente: identificador del análisis, hallazgos, métricas de soporte, advertencias/limitaciones, y metadatos de procedencia."*). Ambas tareas de TASKS.md apuntaban al mismo concepto de dominio, una desde el ángulo del contrato (`analysis engine`) y otra desde el ángulo del modelo de datos (`Resultado de análisis`).
+  - Ya existen pruebas que cubren esta estructura en `investmentops/tests/test_analysis_engines_contracts.py` (inmutabilidad de `AnalysisResult` y `AnalysisProvenance`, construcción con todos los campos, comportamiento con/sin `metrics`, etc.), por lo que no se agregaron pruebas adicionales.
+- Se marcó la tarea como completada en `TASKS.md`, dejando una nota inline que remite a esta decisión y a `AnalysisResult`/`AnalysisProvenance` como la estructura que la satisface.
 
 ## Archivos creados o modificados
 
-Creados:
-- `investmentops/data_layer/market_data.py`
-- `investmentops/tests/test_data_layer_market_data.py`
+Creados: ninguno.
 
 Modificados:
-- `investmentops/data_layer/__init__.py`
-- `TASKS.md` (tarea marcada como completada)
+- `TASKS.md` (tarea marcada como completada, con nota de referencia a la estructura existente)
 - `PROGRESS.md` (este archivo)
 
-No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `pyproject.toml`, `.python-version`, `investmentops/config/__init__.py`, `investmentops/__main__.py`, `investmentops/__init__.py`, `investmentops/data_layer/domain.py`, `investmentops/data_layer/financial_statements.py`, `investmentops/data_providers/__init__.py`, `investmentops/data_providers/contracts.py`, `investmentops/analysis_engines/__init__.py`, `investmentops/analysis_engines/contracts.py`, `investmentops/ai_providers/__init__.py`, `investmentops/ai_providers/contracts.py`, `investmentops/tests/test_environment.py`, `investmentops/tests/test_config.py`, `investmentops/tests/test_data_providers_contracts.py`, `investmentops/tests/test_analysis_engines_contracts.py`, `investmentops/tests/test_ai_providers_contracts.py`, `investmentops/tests/test_data_layer_domain.py`, `investmentops/tests/test_data_layer_financial_statements.py`, y los demás subpaquetes de `investmentops/` (`cli`, `core`, `reports`), que siguen sin implementación.
-
-No se implementó ninguna transformación desde datos crudos de proveedor (`RawProviderData`) hacia `MarketData`: eso corresponde a la sección "Normalización y almacenamiento" de `TASKS.md`, tarea posterior. Tampoco se implementó el cálculo de múltiplos ni el agente de análisis de valoración: cada uno tiene su propia tarea pendiente.
+No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `pyproject.toml`, `.python-version`, todo `investmentops/` (código y tests), incluyendo `investmentops/analysis_engines/contracts.py` y `investmentops/analysis_engines/__init__.py`, que ya contenían la estructura requerida sin necesidad de cambios.
 
 ## Decisiones técnicas importantes
 
-- **Un solo corte por empresa, no una serie temporal**: mismo criterio ya aplicado en `FinancialStatement` — `TASKS.md` pide explícitamente "precio, capitalización, múltiplos, fecha de corte" (singular, un dato de mercado con su fecha), sin mencionar series históricas para este modelo. Definir ya una estructura de serie de tiempo adelantaría una decisión de diseño sin que exista todavía la fuente de datos ni el motor de análisis que la consumiría.
-- **`as_of: date` (no `datetime`)**: mismo criterio que `FinancialStatement.period_end` — es la fecha de corte del dato de mercado (ej. cierre de una sesión bursátil), no un instante preciso de consulta; eso último ya vive en `ProviderMetadata.queried_at` cuando se transforme desde `RawProviderData`.
-- **`multiples: Mapping[str, float]` en vez de campos individuales fijos (`pe`, `pb`, etc.)**: `ARCHITECTURE.md` y `TASKS.md` mencionan "múltiplos" en plural y de forma genérica, sin fijar cuáles. Usar un mapeo abierto evita acoplar la estructura del modelo de dominio a una lista concreta de múltiplos que todavía no se ha decidido (esa decisión es una tarea explícita y posterior: "Definir qué múltiplos concretos componen 'valoración básica'", en "Agente de análisis: valoración"). Si se usaran campos fijos ahora, agregar un múltiplo nuevo en el futuro rompería el contrato; con un mapeo, se extiende sin cambios estructurales.
-- **`source: str` como campo simple** (no un objeto `ProviderMetadata` anidado): mismo criterio ya documentado para `FinancialStatement.source` — evita duplicar la noción de "fecha" (la de consulta vs. la de corte) en esta etapa.
-- **`price` y `market_cap` como `float` obligatorios, sin `Optional`**: mismo criterio que en `Company` y `FinancialStatement` — se mantienen simples y requeridos en esta tarea de definición de estructura; cómo representar un dato faltante de un proveedor concreto se decide en "Normalización y almacenamiento".
-- **`MarketData` en un módulo propio (`market_data.py`)**, no en `domain.py` ni en `financial_statements.py`: se sigue el mismo criterio ya documentado (un módulo por modelo de dominio), manteniendo cada archivo enfocado en un único concepto.
+- **No duplicar `AnalysisResult` en un módulo nuevo de "modelo de dominio"**: `ARCHITECTURE.md` presenta "Resultado de análisis" como parte del "Modelo de datos interno (conceptual)", en la misma lista que "Empresa", "Estados financieros normalizados" y "Datos de mercado" (que sí tienen su propio módulo en `investmentops.data_layer`). Sin embargo, a diferencia de esos tres, "Resultado de análisis" no es un dato que se obtiene de un proveedor externo y se normaliza — es la **salida** del contrato de `analysis_engine`, ya definida junto a ese contrato porque describe exactamente lo que un agente debe producir. Crear una segunda definición idéntica en otro módulo (ej. `investmentops/data_layer/analysis_result.py`) introduciría dos fuentes de verdad para el mismo tipo, obligando a mantenerlas sincronizadas sin ningún beneficio de diseño: los agentes de análisis (`investmentops.analysis_engines`) son quienes producen y consumen este tipo, por lo que su ubicación actual (junto al contrato `AnalysisEngine` que lo declara como tipo de retorno) es la más cohesiva.
+- **Verificación de cobertura completa antes de dar la tarea por satisfecha**: se comparó campo por campo la redacción de la tarea en `TASKS.md` ("identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia") contra los atributos de `AnalysisResult`, confirmando correspondencia 1 a 1 sin campos faltantes ni sobrantes, antes de marcarla como completada.
+- **Se dejó una nota inline en `TASKS.md`** (en vez de solo mencionarlo en `PROGRESS.md`) para que quede explícito, al leer la lista de tareas por sí sola, por qué esta tarea no generó un archivo nuevo — evitando que una futura revisión la interprete como "marcada por error".
 
 ## Problemas encontrados
 
-Ninguno. Se verificó manualmente que:
-- `MarketData` conserva correctamente sus cinco campos al construirse.
-- `MarketData` es inmutable (intentar reasignar `price` lanza `AttributeError`).
-- El modelo admite un mapeo de múltiplos vacío sin necesidad de casos especiales en el código.
-- El modelo no restringe qué nombres de múltiplos pueden usarse (ej. `ev_ebitda`, `ps`, además de `pe`/`pb`).
+Ninguno. Se verificó manualmente que `AnalysisResult` y `AnalysisProvenance` en `investmentops/analysis_engines/contracts.py` cubren los cinco elementos exigidos por la tarea, y que las pruebas ya existentes en `test_analysis_engines_contracts.py` validan su construcción, inmutabilidad y el comportamiento de `metrics` como opcional.
 
 ## Próxima tarea recomendada
 
-Fase 1 → Contratos e interfaces → *"Definir la estructura de 'Resultado de análisis' (identificador, hallazgos, métricas de soporte, advertencias/limitaciones, procedencia)."*
+Fase 1 → Contratos e interfaces → *"Definir la estructura de 'Resultado de investigación' (agregación de resultados de análisis para una empresa)."*
 
-Nota para la próxima conversación: esta estructura ya existe de forma efectiva como `AnalysisResult` en `investmentops/analysis_engines/contracts.py` (definida junto con el contrato de "analysis engine"), con exactamente esos campos (`analysis_id`, `findings`, `supporting_metrics`, `limitations`, `provenance`). Antes de crear algo nuevo, vale la pena confirmar con el usuario si esta tarea debe marcarse como ya satisfecha por esa estructura existente, o si se espera un modelo adicional/distinto.
+Nota para la próxima conversación: a diferencia de "Resultado de análisis", esta estructura **no existe todavía** en ningún módulo — ni `investmentops.core` (el orquestador, que sería quien la ensambla) ni `investmentops.data_layer` la definen aún. Habrá que decidir en qué módulo debe vivir (candidatos naturales: un nuevo archivo en `investmentops.core`, ya que es el orquestador quien la produce agregando los `AnalysisResult` de cada agente; o `investmentops.data_layer`, si se prefiere tratarla como un modelo de dominio más, junto a `Company`, `FinancialStatement` y `MarketData`). Campos mínimos a cubrir según ARCHITECTURE.md: la empresa investigada (`Company`), la colección de `AnalysisResult` de todos los agentes ejecutados, y algún medio para reflejar fallos parciales (ver ARCHITECTURE.md, "Manejo de errores y limitaciones": si una fuente o un agente falla, el resultado final debe dejarlo explícito en vez de omitirlo en silencio).
