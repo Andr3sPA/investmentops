@@ -4,53 +4,50 @@
 
 ## Última tarea completada
 
-Fase 1 → Contratos e interfaces → *"Definir la estructura de 'Resultado de investigación' (agregación de resultados de análisis para una empresa)."*
+Fase 1 → Fuente de datos fundamentales → *"Elegir el proveedor de datos financieros fundamentales a usar para el MVP (decisión, no implementación)."*
 
-## Cambios realizados
+## Decisión tomada
 
-- Se creó `investmentops/core/research_result.py`, que define la última pieza pendiente del "Modelo de datos interno" descrito en ARCHITECTURE.md:
-  - `ResearchResult` (dataclass inmutable): agregación de todos los resultados de análisis de una empresa en un momento dado. Contiene `company` (la `Company` investigada), `analysis_results` (colección de `AnalysisResult` de los agentes que se ejecutaron con éxito), `failures` (fallos parciales explícitos) y `generated_at` (cuándo se ensambló).
-  - `ResearchFailure` (dataclass inmutable): registro explícito de un fallo parcial (`stage`, `identifier`, `reason`), pensado para que el orquestador capture ahí cualquier `DataProviderError` o `AnalysisEngineError` sin detener el resto del flujo, cumpliendo el requisito de ARCHITECTURE.md ("Manejo de errores y limitaciones") de que el resultado final refleje explícitamente qué no se pudo obtener, en vez de omitirlo en silencio.
-  - Un `ResearchResult` puede tener `analysis_results` no vacío con `failures` vacío (investigación exitosa completa), ambos no vacíos (éxito parcial), o `analysis_results` vacío con solo `failures` (fallo total pero explícito) — el tipo no impone que todo salga bien para ser válido.
-- Se actualizó `investmentops/core/__init__.py` (hasta ahora solo un docstring sin código) para re-exportar `ResearchResult` y `ResearchFailure`, siguiendo el mismo patrón ya usado en `ai_providers`, `analysis_engines` y `data_providers`: la estructura vive en un submódulo propio y se re-exporta en el `__init__.py` del paquete.
-- Se agregó `investmentops/tests/test_core_research_result.py`, cubriendo: agregación de empresa + resultados de análisis, convivencia de resultados exitosos con fallos parciales, el caso límite de solo fallos (sin ningún análisis exitoso), e inmutabilidad de ambos tipos.
-- Se marcó la tarea como completada en `TASKS.md`.
+**Proveedor elegido: Financial Modeling Prep (FMP).**
+
+Esta es una tarea de decisión, no de código: no se creó ni modificó ningún archivo Python. El resultado es la elección documentada aquí y en `TASKS.md`, que guiará la siguiente tarea ("Implementar un cliente mínimo que consulte ese proveedor...").
+
+## Investigación realizada
+
+Se compararon tres candidatos con información vigente a julio de 2026:
+
+- **Alpha Vantage**: vendor oficial de NASDAQ, con buena cobertura de fundamentales (`INCOME_STATEMENT`, `BALANCE_SHEET`) y múltiplos (`OVERVIEW`). Su nivel gratuito actual es de solo 25 solicitudes/día (5 por minuto), insuficiente incluso para una investigación completa de una sola empresa (estados financieros + datos de mercado) sin quedarse corto.
+- **Financial Modeling Prep (FMP)**: proveedor oficial, con datos de fundamentales derivados de SEC EDGAR (la misma fuente regulatoria que usan las empresas públicas). Su nivel gratuito (plan Basic) permite 250 llamadas/día, con datos de cierre de día y ~5 años de historial. Buena cobertura tanto de estados financieros como de múltiplos y datos de mercado.
+- **yfinance**: librería no oficial (envuelve/scrapea Yahoo Finance), sin necesidad de API key ni cuota diaria formal. Atractiva para un proyecto de un solo usuario y bajo volumen, pero con riesgo real de romperse sin aviso ante cambios de Yahoo Finance, al no ser un servicio oficial ni contractual.
+
+## Justificación de la decisión
+
+- El usuario confirmó que el uso será de aproximadamente **una consulta al día**, lo que hace irrelevante el límite diario como criterio decisivo (los 250 req/día de FMP son ampliamente suficientes; incluso los de Alpha Vantage alcanzarían, aunque con menos margen).
+- Con el criterio de calidad y confiabilidad como factor principal, **FMP** es preferible a **yfinance** por ser un proveedor oficial y contractual: no depende de scraping no documentado ni corre riesgo de romperse sin aviso ante un cambio de Yahoo Finance, lo cual es importante para una herramienta que el usuario planea usar de forma recurrente (ver ROADMAP.md, Fases 8-9, watchlist y automatización diaria).
+- Frente a **Alpha Vantage**, FMP ofrece datos de fundamentales con mejor trazabilidad (provienen de SEC EDGAR) y una cobertura de múltiplos/datos de mercado más completa, relevante para `investmentops.data_layer.MarketData` (P/E, P/B, capitalización, precio) además de `FinancialStatement` (ingresos, beneficios, deuda).
+- Esta elección es reversible sin impacto en el resto del sistema: conforme a `ARCHITECTURE.md` ("Extensibilidad"), el contrato `DataProvider` (`investmentops.data_providers.contracts`) ya aísla al orquestador de los detalles de FMP; si en el futuro se quisiera cambiar de proveedor (o sumar otro, ej. para datos del mercado colombiano vía Tyba/Trii), bastaría con implementar un nuevo adaptador que cumpla el mismo contrato, sin modificar el resto del sistema.
 
 ## Archivos creados o modificados
 
-Creados:
-- `investmentops/core/research_result.py`
-- `investmentops/tests/test_core_research_result.py`
+Creados: ninguno.
 
 Modificados:
-- `investmentops/core/__init__.py`
-- `TASKS.md` (tarea marcada como completada)
+- `TASKS.md` (tarea marcada como completada, con la decisión documentada inline)
 - `PROGRESS.md` (este archivo)
 
-No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `pyproject.toml`, `.python-version`, y el resto de `investmentops/` (`cli`, `data_providers`, `data_layer`, `analysis_engines`, `ai_providers`, `reports`, `config`), que no requirieron cambios para esta tarea.
-
-No se implementó la lógica que efectivamente ensambla un `ResearchResult` invocando fuentes de datos y motores de análisis reales: eso corresponde a la sección "Orquestador mínimo" de `TASKS.md`, tarea posterior. Tampoco se implementó ningún generador de reportes que consuma este tipo (Fase 2).
-
-## Decisiones técnicas importantes
-
-- **`ResearchResult` vive en `investmentops.core`, no en `investmentops.data_layer`**: mismo criterio ya aplicado con `AnalysisResult` (ver PROGRESS.md, entrada anterior) — no es un dato que se obtenga de un proveedor externo y se normalice, sino la salida propia del orquestador (ARCHITECTURE.md, componente 2: "Ensamblar los resultados de todos los análisis en un modelo de 'resultado de investigación' único"). Vive junto al componente que lo produce, evitando una dependencia circular o artificial de `core` hacia un tipo que "debería" ser suyo pero estuviera definido en otra capa.
-- **`ResearchFailure` como tipo explícito y separado de `ResearchResult`**, en vez de, por ejemplo, una lista de strings: ARCHITECTURE.md pide que el resultado final "refleje explícitamente qué información no pudo obtenerse" — un tipo estructurado (`stage`, `identifier`, `reason`) permite que un futuro generador de reportes distinga programáticamente entre un fallo de fuente de datos y uno de motor de análisis, y a qué proveedor/agente concreto corresponde, sin tener que parsear texto libre.
-- **`stage: str` en vez de una enumeración cerrada** (ej. `Literal["data_provider", "analysis_engine"]`): se mantiene texto libre por el mismo criterio ya usado en `ProviderMetadata.reliability` — no acoplar esta estructura genérica a los dos únicos tipos de fallo que existen hoy, dejando espacio para que fases futuras (ej. Fase 4 con fuente de noticias, Fase 5 con comparables) reutilicen el mismo tipo sin modificarlo.
-- **`analysis_results` y `failures` no son mutuamente excluyentes ni uno implica el otro**: se probó explícitamente (`test_research_result_can_hold_partial_failures_alongside_successful_results`, `test_research_result_supports_empty_analysis_results_with_failures_only`) que el tipo admite éxito parcial y fallo total sin casos especiales, reflejando el principio de ARCHITECTURE.md de que un fallo en una fuente o agente no debe detener el resto del flujo.
-- **`generated_at` a nivel de `ResearchResult`, distinto de `AnalysisProvenance.generated_at`**: cada `AnalysisResult` ya registra cuándo se generó su propia interpretación; `ResearchResult.generated_at` registra cuándo el orquestador ensambló el conjunto, que puede ser (levemente) posterior al de cada análisis individual. Mismo criterio de no confundir "fecha del dato" con "fecha de consulta/ensamblado" ya aplicado en `FinancialStatement.period_end` vs. `ProviderMetadata.queried_at`.
+No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`, `.gitignore`, `pyproject.toml`, `.python-version`, y todo `investmentops/` (código y tests): esta tarea no requería cambios de código.
 
 ## Problemas encontrados
 
-Ninguno. Se verificó manualmente que `ResearchResult` y `ResearchFailure`:
-- Agregan correctamente una `Company` con varios `AnalysisResult`.
-- Permiten que resultados exitosos convivan con fallos parciales sin excluirse mutuamente.
-- Admiten el caso límite de una investigación sin ningún análisis exitoso (solo fallos), sin que el tipo lo rechace.
-- Son inmutables (reasignar cualquier campo lanza `AttributeError`).
+Ninguno.
 
 ## Próxima tarea recomendada
 
-Con esto queda completa la sección "Contratos e interfaces" de la Fase 1 en `TASKS.md`. La siguiente sección pendiente es "Fuente de datos fundamentales", cuya primera tarea es:
+Fase 1 → Fuente de datos fundamentales → *"Implementar un cliente mínimo que consulte ese proveedor y obtenga datos crudos de una empresa por ticker."*
 
-*"Elegir el proveedor de datos financieros fundamentales a usar para el MVP (decisión, no implementación)."*
-
-Nota para la próxima conversación: esta es una tarea de **decisión**, no de código — probablemente conviene resolverla conversando con el usuario sobre qué proveedor prefiere (ej. Alpha Vantage, Financial Modeling Prep, yfinance u otro), en vez de asumir uno unilateralmente, dado que implica una API key real que el usuario deberá completar en su propio `config.local.toml`.
+Nota para la próxima conversación: esta tarea sí requiere código. Deberá:
+- Implementar un módulo bajo `investmentops/data_providers/` (ej. `fundamentals.py` o similar) que cumpla el contrato `DataProvider` ya definido (`investmentops.data_providers.contracts.DataProvider`: método `fetch(ticker) -> RawProviderData`).
+- Leer la API key de FMP desde `config.local.toml`, sección `[data_providers.fundamentals]` (ya prevista en `config.example.toml` y documentada en `CONFIGURATION.md`), usando `investmentops.config.load_config`.
+- Devolver los datos crudos de FMP tal cual (sin transformar al modelo de dominio `FinancialStatement`/`MarketData` — esa transformación es una tarea posterior, "Normalización y almacenamiento").
+- Probablemente requiera una dependencia HTTP (ej. `requests` o `httpx`), que hoy no está en `pyproject.toml` (`dependencies = []`); habrá que decidir cuál añadir y actualizar `pyproject.toml`.
+- Como esta tarea hará una llamada HTTP real a la API de FMP, las pruebas automatizadas deberán simular (mockear) la respuesta en vez de depender de una llamada de red real y de una API key válida en el entorno de test.

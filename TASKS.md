@@ -32,7 +32,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Definir la estructura de "Resultado de investigación" (agregación de resultados de análisis para una empresa). — `ResearchResult`/`ResearchFailure` en `investmentops/core/research_result.py` (ver PROGRESS.md).
 
 ### Fuente de datos fundamentales
-- Elegir el proveedor de datos financieros fundamentales a usar para el MVP (decisión, no implementación).
+- [x] Elegir el proveedor de datos financieros fundamentales a usar para el MVP (decisión, no implementación). — Decisión: **Financial Modeling Prep (FMP)** (ver PROGRESS.md).
 - Implementar un cliente mínimo que consulte ese proveedor y obtenga datos crudos de una empresa por ticker.
 - Adjuntar metadatos de procedencia (nombre de la fuente, fecha/hora de consulta) a cada dato crudo obtenido.
 - Implementar manejo de error básico cuando el proveedor no responde o el ticker no existe.
