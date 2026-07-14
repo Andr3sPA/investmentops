@@ -30,16 +30,31 @@ aquí para que el resto del sistema lo importe directamente desde
   modelo, fecha de generación).
 - `AIProviderError`: excepción común para señalar fallos del proveedor.
 
-Aún sin implementación: ninguna integración concreta (Anthropic, Gemini,
-OpenAI, Ollama). Ver TASKS.md, sección "Interfaz de proveedores de IA" de
-la Fase 1, para las tareas siguientes:
-- Implementar al menos una integración concreta que cumpla la interfaz.
-- Definir el mecanismo de selección de proveedor/modelo por agente vía
-  configuración local (`config.local.toml`, sección `[agents]`).
-- Documentar cómo se sumarían las integraciones restantes sin modificar
-  la interfaz ni los agentes.
-- Implementar manejo de error básico cuando el proveedor no responde o
-  devuelve un formato inesperado.
+El mecanismo de selección de proveedor/modelo por agente vía
+configuración local ya está definido en
+`investmentops.ai_providers.selection` (ver TASKS.md, "Interfaz de
+proveedores de IA" > "Definir el mecanismo de selección de
+proveedor/modelo por agente vía configuración local") y también se
+re-exporta aquí:
+
+- `resolve_agent_provider`: dado un identificador de agente y la
+  configuración cargada, resuelve qué proveedor y modelo le corresponden
+  (mirando `[agents]` y cayendo de vuelta a `[ai_providers.default]`).
+- `AgentProviderSelection`: resultado de esa resolución (agente,
+  proveedor, modelo).
+- `AgentProviderSelectionError`: excepción para cuando no puede resolverse
+  ningún proveedor para un agente dado.
+
+Implementaciones concretas:
+- `investmentops.ai_providers.anthropic_provider.AnthropicAIProvider`:
+  primera integración concreta (Anthropic), ver TASKS.md.
+
+Aún sin implementación: las integraciones restantes (Gemini, OpenAI,
+Ollama). Ver TASKS.md, sección "Interfaz de proveedores de IA" de la Fase
+1, para las tareas siguientes:
+- Dejar documentado (sin implementar aún si no es necesario para el MVP)
+  cómo se sumarían las integraciones restantes sin modificar la interfaz
+  ni los agentes.
 """
 
 from investmentops.ai_providers.contracts import (
@@ -47,9 +62,17 @@ from investmentops.ai_providers.contracts import (
     AIProviderError,
     AIProviderResponse,
 )
+from investmentops.ai_providers.selection import (
+    AgentProviderSelection,
+    AgentProviderSelectionError,
+    resolve_agent_provider,
+)
 
 __all__ = [
     "AIProvider",
     "AIProviderError",
     "AIProviderResponse",
+    "AgentProviderSelection",
+    "AgentProviderSelectionError",
+    "resolve_agent_provider",
 ]

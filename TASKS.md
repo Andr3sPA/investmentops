@@ -40,7 +40,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ### Interfaz de proveedores de IA
 - [x] Implementar la interfaz común de proveedor de IA (envío de prompt + datos, recepción de respuesta + metadatos). — Ya satisfecha por el contrato `AIProvider`/`AIProviderResponse`/`AIProviderError` definido en `investmentops/ai_providers/contracts.py` durante "Contratos e interfaces": ese `Protocol` ya es la interfaz común exigida por esta tarea (ver PROGRESS.md).
 - [x] Implementar al menos una integración concreta (por ejemplo, un proveedor) que cumpla la interfaz. — `AnthropicAIProvider` en `investmentops/ai_providers/anthropic_provider.py` (ver PROGRESS.md).
-- [ ] Definir el mecanismo de selección de proveedor/modelo por agente vía configuración local.
+- [x] Definir el mecanismo de selección de proveedor/modelo por agente vía configuración local. — `resolve_agent_provider`/`AgentProviderSelection`/`AgentProviderSelectionError` en `investmentops/ai_providers/selection.py` (ver PROGRESS.md).
 - [ ] Dejar documentado (sin implementar aún si no es necesario para el MVP) cómo se sumarían las integraciones restantes (Gemini, Claude, OpenAI, Ollama) sin modificar la interfaz ni los agentes.
 - [x] Implementar manejo de error básico cuando el proveedor de IA no responde o devuelve un formato inesperado. — Implementado en el mismo `AnthropicAIProvider`: errores de red, autenticación (401/403), límite de tasa (429), otros errores HTTP, JSON inválido y respuestas sin contenido interpretable se traducen a `AIProviderError` (ver PROGRESS.md).
 
