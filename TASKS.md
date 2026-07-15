@@ -53,7 +53,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 ### Agente de análisis: salud financiera
 - [x] Definir qué métricas concretas componen "salud financiera básica" (liquidez, endeudamiento, rentabilidad). — `investmentops/analysis_engines/FINANCIAL_HEALTH_METRICS.md` (ver PROGRESS.md). Decisión: `net_margin` (rentabilidad) y `debt_to_revenue` (endeudamiento) son calculables con los campos actuales de `FinancialStatement`; la liquidez queda documentada como limitación explícita, ya que el modelo de dominio no tiene `current_assets`/`current_liabilities` — no se inventa una aproximación.
-- Implementar el cálculo determinístico de ratios de liquidez, endeudamiento y rentabilidad a partir del modelo normalizado (entrada del agente, no su resultado final).
+- [x] Implementar el cálculo determinístico de ratios de liquidez, endeudamiento y rentabilidad a partir del modelo normalizado (entrada del agente, no su resultado final). — `calculate_financial_health_metrics`/`FinancialHealthMetrics` en `investmentops/analysis_engines/financial_health.py` (ver PROGRESS.md). Calcula `net_margin` y `debt_to_revenue` según lo decidido en `FINANCIAL_HEALTH_METRICS.md`; la liquidez queda fuera (limitación ya documentada, no se aproxima). Si `revenue == 0`, ambos ratios se devuelven como `None` junto con una advertencia explícita en `FinancialHealthMetrics.warnings`, en vez de lanzar `ZeroDivisionError` o inventar un valor.
 - Escribir el archivo de prompt del agente de salud financiera (fuera del código Python), indicando cómo debe interpretar esas métricas.
 - Implementar la invocación al proveedor de IA configurado con esas métricas + el prompt.
 - Implementar el parseo de la respuesta del modelo al resultado estructurado del agente (hallazgos, métricas, advertencias si faltan datos, proveedor/modelo usado).
@@ -255,7 +255,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 ### Capa de datos
 - Implementar una función de consulta que liste las investigaciones previas guardadas en caché/histórico.
-- Implementar una función que recupere el detalle de una investigación previa específica sin volver a ejecutar las fuentes.
+- Implementar una función que recupere el detalle de una investigación previa específica sin volver a ejecutarlas.
 
 ### CLI
 - Definir la sintaxis del nuevo comando para listar investigaciones anteriores.
