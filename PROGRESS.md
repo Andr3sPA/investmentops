@@ -4,113 +4,113 @@
 
 ## Última tarea completada
 
-Fase 1 → Agente de análisis: salud financiera → *"Implementar el cálculo
-determinístico de ratios de liquidez, endeudamiento y rentabilidad a
-partir del modelo normalizado (entrada del agente, no su resultado
-final)."*
+Fase 1 → Agente de análisis: salud financiera → *"Escribir el archivo de
+prompt del agente de salud financiera (fuera del código Python),
+indicando cómo debe interpretar esas métricas."*
 
-Antes de implementarla, se revisó si ya existía algún cálculo de este
-tipo en el proyecto (`investmentops/analysis_engines/`,
-`investmentops/data_layer/financial_statements.py`) y se confirmó que
-solo existía el contrato (`contracts.py`) y el documento de diseño
-(`FINANCIAL_HEALTH_METRICS.md`) de la tarea anterior: ningún módulo
-calculaba todavía `net_margin` ni `debt_to_revenue`. La tarea requería
-trabajo nuevo.
+Antes de implementarla, se revisó si ya existía algún archivo de prompt
+en `prompts/` (`prompts/README.md` documenta la convención pero
+confirmaba explícitamente que "todavía no hay archivos de prompt") y si
+algún módulo de código ya cargaba/hacía referencia a un prompt de salud
+financiera (`investmentops/analysis_engines/financial_health.py` solo
+implementa el cálculo determinístico, sin invocar IA ni cargar ningún
+archivo de prompt). Se confirmó que la tarea requería trabajo nuevo.
 
 ## Qué se implementó
 
-**`investmentops/analysis_engines/financial_health.py`** (nuevo) —
-implementa exactamente las métricas ya decididas en
-`FINANCIAL_HEALTH_METRICS.md`:
+**`prompts/financial_health.md`** (nuevo) — instrucciones en lenguaje
+natural (Markdown), fuera del código Python, para el modelo de lenguaje
+que interpretará las métricas ya calculadas por
+`calculate_financial_health_metrics` (`net_margin`, `debt_to_revenue`).
+El prompt:
 
-- `FinancialHealthMetrics`: dataclass inmutable con `net_margin`,
-  `debt_to_revenue` y `warnings` (advertencias explícitas sobre métricas
-  no calculables).
-- `calculate_financial_health_metrics(statement)`: calcula
-  `net_margin = net_income / revenue` y
-  `debt_to_revenue = debt / revenue` en Python puro (sin invocar ningún
-  proveedor de IA), a partir de un `FinancialStatement` ya normalizado.
+- Describe qué datos y métricas recibirá el modelo (el
+  `FinancialStatement` normalizado y las métricas precalculadas, sin que
+  el modelo deba recalcularlas).
+- Indica cómo interpretar `net_margin` (rentabilidad, incluyendo el caso
+  de margen negativo) y `debt_to_revenue` (endeudamiento relativo a
+  ingresos), y cómo relacionarlas quirúrgicamente sin forzar
+  conclusiones no respaldadas por los datos.
+- Prohíbe explícitamente inventar o aproximar datos de liquidez (el
+  modelo de dominio no los tiene) y exige declarar esa ausencia cuando
+  sea relevante, en vez de omitirla en silencio.
+- Prohíbe explícitamente inventar valores cuando una métrica venga como
+  `null`/ausente (ej. por `revenue == 0`); exige usar la advertencia ya
+  calculada en `FinancialHealthMetrics.warnings`.
+- Prohíbe explícitamente cualquier recomendación de compra/venta o
+  veredicto de inversión, conforme al principio rector de `GOALS.md` y a
+  la restricción arquitectónica de `ARCHITECTURE.md` ("El sistema
+  informa, no decide").
+- Define el formato de salida esperado: texto breve en español, dirigido
+  a un inversionista individual sin formación financiera avanzada.
 
-**Manejo de `revenue == 0`:** en vez de dejar escapar un
-`ZeroDivisionError` o inventar un valor (ej. `float("inf")`), la función
-devuelve ambos ratios como `None` y agrega una advertencia explícita en
-`FinancialHealthMetrics.warnings`, describiendo por qué no se pudieron
-calcular. Esto sigue el mismo criterio de honestidad ante datos
-degenerados/faltantes ya aplicado en el resto del proyecto (ver
-`investmentops/data_layer/cache.py`, distinción entre "no cacheado" y
-"cacheado pero corrupto").
-
-**`investmentops/tests/test_analysis_engines_financial_health.py`**
-(nuevo) — cubre: cálculo correcto de ambos ratios, soporte de
-`net_income` negativo (empresa con pérdidas), manejo de `revenue == 0`
-(ratios `None` + advertencia, sin `ZeroDivisionError`), inmutabilidad del
-dataclass, y el caso de deuda cero (`debt_to_revenue == 0.0`, no `None`).
+No se modificó ningún módulo de código Python: esta tarea es
+exclusivamente de contenido/documentación, tal como exige
+`ARCHITECTURE.md` ("Prompts como artefactos, no como código").
 
 ## Decisiones tomadas
 
-- **Solo `net_margin` y `debt_to_revenue`, sin liquidez**, conforme a lo
-  ya decidido en `FINANCIAL_HEALTH_METRICS.md`: no se agrega ninguna
-  aproximación de liquidez en esta tarea. Esa limitación sigue viviendo
-  únicamente en el documento de diseño; será el resultado del agente
-  (`AnalysisResult.limitations`, tarea futura) quien la declare de cara
-  al usuario.
-- **`revenue == 0` se trata como caso degenerado explícito, no como error
-  fatal ni como aproximación silenciosa.** Se devuelve `None` en ambos
-  ratios más una advertencia legible en `warnings`, en vez de lanzar una
-  excepción no controlada (que detendría el cálculo del agente sin
-  necesidad) o de devolver un valor inventado que podría leerse como un
-  dato real.
-- **`warnings` es parte del resultado de esta función, no una excepción
-  levantada.** A diferencia de `CacheError`/`NormalizationError` (que
-  señalan datos corruptos o ausentes de forma imprevista), `revenue == 0`
-  es un valor válido y posible en el modelo de dominio (una empresa sin
-  ingresos reportados en el periodo); tratarlo como una excepción
-  bloquearía innecesariamente el flujo del futuro agente.
+- **El prompt no calcula ni corrige métricas.** Se instruye explícitamente
+  al modelo a usar `net_margin` y `debt_to_revenue` tal como se le
+  entregan, sin recalcularlos ni ajustarlos, preservando la separación
+  ya establecida en `ARCHITECTURE.md` entre cálculo determinístico
+  (código) e interpretación (IA).
+- **La ausencia de datos de liquidez se declara de forma explícita en el
+  prompt**, no solo en la documentación de diseño
+  (`FINANCIAL_HEALTH_METRICS.md`): de lo contrario, el modelo de lenguaje
+  podría inferir o insinuar una lectura de liquidez a partir de `debt` u
+  otros campos disponibles, lo cual sería impreciso.
+- **El prompt maneja explícitamente el caso `null`/ausente** de cada
+  métrica (resultado de `revenue == 0` en el cálculo determinístico),
+  indicando que se declare la limitación en vez de inventar un valor.
+- **No se implementa todavía la invocación al proveedor de IA ni el
+  parseo de su respuesta.** Esas son las dos tareas siguientes en la
+  misma sección de `TASKS.md`, explícitamente fuera de alcance de esta
+  tarea.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/analysis_engines/financial_health.py`
-- `investmentops/tests/test_analysis_engines_financial_health.py`
+- `prompts/financial_health.md`
 
 Modificados:
 - `TASKS.md` (tarea marcada como completada, con referencia inline)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`,
-`investmentops/analysis_engines/FINANCIAL_HEALTH_METRICS.md`,
-`investmentops/analysis_engines/__init__.py` (no se re-exporta esta
-función a nivel de paquete, siguiendo el mismo criterio ya usado con
-`investmentops.data_layer.cache`/`normalization`, que tampoco se
-re-exportan desde `investmentops.data_layer`), y el resto del código
-existente.
+`CONFIGURATION.md`, `config.example.toml`, `prompts/README.md` (su
+contenido ya anticipaba correctamente esta convención, no requiere
+cambios), `investmentops/analysis_engines/financial_health.py`, y el
+resto del código existente.
 
 ## Problemas encontrados
 
-Ninguno. El único punto que requería una decisión explícita (`revenue ==
-0`) ya estaba anticipado por la tarea anterior (ver nota de PROGRESS.md
-previa) y se resolvió como advertencia explícita, no como bloqueo.
+Ninguno.
 
 ## Próxima tarea recomendada
 
 La siguiente tarea sin empezar en la misma sección de `TASKS.md`
 ("Agente de análisis: salud financiera") es:
 
-1. *"Escribir el archivo de prompt del agente de salud financiera (fuera
-   del código Python), indicando cómo debe interpretar esas métricas."*
+1. *"Implementar la invocación al proveedor de IA configurado con esas
+   métricas + el prompt."*
 
 Nota para la próxima conversación:
-- El prompt debe vivir en `prompts/financial_health.md` (ver
-  `prompts/README.md`), en Markdown, y limitarse a instrucciones para el
-  modelo de lenguaje sobre cómo interpretar `net_margin` y
-  `debt_to_revenue` (y cómo manejar el caso en que alguno venga como
-  `None`, con su advertencia asociada) — nunca debe pedir un veredicto de
-  compra/venta, conforme a `GOALS.md` y `ARCHITECTURE.md`.
-- El prompt debe mencionar explícitamente que no hay datos de liquidez
-  disponibles para este análisis, para que el modelo no asuma que puede
-  opinar sobre liquidez a partir de las métricas que sí recibe.
-- No confundir esta tarea con la invocación al proveedor de IA (tarea
-  siguiente en la misma sección): aquí solo se escribe el texto del
-  prompt como archivo independiente, sin tocar
-  `investmentops.ai_providers` ni construir ninguna llamada todavía.
+- Esta tarea debe combinar: (a) `resolve_agent_provider` (ver
+  `investmentops/ai_providers/selection.py`) para resolver qué
+  proveedor/modelo le corresponde al agente `"financial_health"`, (b) la
+  construcción de la instancia concreta de `AIProvider` correspondiente
+  (hoy solo existe `AnthropicAIProvider`, ver
+  `investmentops/ai_providers/anthropic_provider.py`), (c) la carga del
+  contenido de `prompts/financial_health.md` desde disco, y (d) la
+  invocación de `AIProvider.complete(prompt, data=...)` con las métricas
+  de `FinancialHealthMetrics` como `data`.
+- No confundir esta tarea con el parseo de la respuesta del modelo al
+  `AnalysisResult` final del agente (tarea siguiente, separada): aquí
+  solo se implementa la invocación y se obtiene el `AIProviderResponse`
+  crudo.
+- Revisar si conviene un mecanismo simple de carga de prompts desde
+  `prompts/<agent_id>.md` reutilizable por futuros agentes (ej.
+  valoración, Fase 6), en vez de hardcodear la ruta solo para
+  `financial_health`, siempre que no adelante trabajo de tareas futuras
+  no relacionadas.
