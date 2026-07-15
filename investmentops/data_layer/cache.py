@@ -1,8 +1,13 @@
-"""Guardado en caché local de datos normalizados (Data Layer).
+"""Guardado y lectura en caché local de datos normalizados (Data Layer).
 
-Cubre la tarea "Implementar el guardado de los datos normalizados en la
-caché tras cada consulta" (TASKS.md, Fase 1, "Normalización y
-almacenamiento"). Implementa el mecanismo ya decidido y documentado en
+Cubre las tareas (TASKS.md, Fase 1, "Normalización y almacenamiento"):
+
+- "Implementar el guardado de los datos normalizados en la caché tras
+  cada consulta."
+- "Implementar la lectura desde caché para evitar una nueva llamada al
+  proveedor si el dato ya existe y es reciente."
+
+Implementa el mecanismo ya decidido y documentado en
 `investmentops/data_layer/CACHE.md`: un archivo JSON por ticker, bajo la
 ruta configurada en `config.local.toml` ([cache].path, ver
 CONFIGURATION.md), con una clave por modelo de dominio cacheado
@@ -15,21 +20,49 @@ para el mismo ticker (ver CACHE.md, "Estructura del archivo"): el
 contenido existente del archivo se lee primero y se fusiona con la nueva
 sección antes de volver a escribirlo.
 
+## Lectura y frescura
+
+`load_financial_statement`/`load_market_data` leen la sección
+correspondiente de `<cache_path>/<TICKER>.json`, reconstruyen el modelo de
+dominio (inverso de la serialización de `_save_section`) y lo devuelven
+solo si su `cached_at` sigue siendo "reciente" según `max_age`. Si la
+sección no existe, o existe pero está vencida, devuelven ``None`` — quien
+las invoca (el futuro orquestador/proveedor de datos) interpreta un
+``None`` como "hay que consultar al proveedor de nuevo", nunca como un
+error. Un archivo o sección corrupta (`cached_at` no interpretable, campos
+imprescindibles ausentes) sí se señala mediante `CacheError`, porque en
+ese caso el problema no es la ausencia del dato sino la caché en un
+estado inconsistente que no debe usarse en silencio.
+
+`DEFAULT_MAX_AGE` (24 horas) es el umbral de frescura elegido para el
+MVP: `CACHE.md` documentó la estructura del archivo (incluyendo
+`cached_at`) dejando explícitamente el umbral concreto para esta tarea.
+Se elige un valor fijo y explícito en código, ajustable por quien invoca
+las funciones de lectura mediante el parámetro `max_age`, en vez de
+sumarlo como una nueva clave de `config.local.toml`: no hay hoy más de un
+caso de uso que lo consuma, y agregarlo a la configuración antes de
+necesitarlo real y concretamente iría contra el criterio de no
+sobre-diseñar ya aplicado en otros módulos de `investmentops.data_layer`
+(ver `market_data.py`, `financial_statements.py`). Si en el futuro se
+necesita que el umbral sea configurable por el usuario, es una extensión
+explícita y posterior, no algo a anticipar aquí.
+
 Fuera de alcance de este módulo:
-- La lectura desde caché y la verificación de frescura de un dato ya
-  cacheado (tarea separada y posterior, ver TASKS.md, "Implementar la
-  lectura desde caché...").
 - Cachear series históricas (varios periodos): igual que
   `FinancialStatement`/`MarketData` hoy, este módulo solo cachea el
   corte más reciente. Extenderlo es tarea explícita de la Fase 3 (ver
   CACHE.md, "Fuera de alcance de esta tarea").
+- Decidir qué hace el orquestador/proveedor cuando `load_*` devuelve
+  ``None`` (es decir, disparar la llamada real al proveedor de datos):
+  eso es responsabilidad de quien invoque estas funciones (ver TASKS.md,
+  "Orquestador mínimo"), no de este módulo.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,14 +75,26 @@ from investmentops.data_layer.market_data import MarketData
 #: `config.example.toml`, sección `[cache]`).
 DEFAULT_CACHE_PATH = ".investmentops_cache/"
 
+#: Umbral por defecto de frescura para la lectura desde caché: una
+#: sección cacheada se considera "reciente" si su `cached_at` tiene menos
+#: de este tiempo transcurrido (ver CACHE.md, "Qué determina 'reciente'",
+#: decisión tomada como parte de esta tarea).
+DEFAULT_MAX_AGE = timedelta(hours=24)
+
 
 class CacheError(RuntimeError):
-    """Error al persistir datos normalizados en la caché local.
+    """Error al persistir o leer datos normalizados en la caché local.
 
-    Cubre fallos de E/S al escribir la caché (ej. no se puede crear el
-    directorio configurado, no se puede escribir o leer el archivo
-    `<TICKER>.json`) y el caso de un ticker vacío, para el que no existe
-    un nombre de archivo válido.
+    Cubre fallos de E/S al escribir/leer la caché (ej. no se puede crear
+    el directorio configurado, no se puede escribir o leer el archivo
+    `<TICKER>.json`), el caso de un ticker vacío (para el que no existe
+    un nombre de archivo válido), y el caso de una sección cacheada cuyo
+    contenido está corrupto o incompleto para reconstruir el modelo de
+    dominio correspondiente (ej. falta `cached_at`, tiene un formato de
+    fecha no reconocible, o le faltan campos imprescindibles). No cubre
+    el caso de "dato no cacheado" ni "dato cacheado mas vencido": esos
+    casos son válidos y se señalan devolviendo ``None`` desde `load_*`,
+    no levantando esta excepción.
     """
 
 
@@ -117,6 +162,108 @@ def save_market_data(
     )
 
 
+def load_financial_statement(
+    ticker: str,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+    max_age: timedelta = DEFAULT_MAX_AGE,
+) -> FinancialStatement | None:
+    """Lee un `FinancialStatement` desde la caché local, si existe y es reciente.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a buscar en caché (ej. ``"AAPL"``).
+        Se normaliza a mayúsculas, igual criterio que `save_*`.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas.
+    max_age:
+        Antigüedad máxima aceptada desde `cached_at` para considerar el
+        dato "reciente". Por defecto, `DEFAULT_MAX_AGE` (24 horas).
+
+    Returns
+    -------
+    FinancialStatement | None
+        El `FinancialStatement` reconstruido si hay una sección cacheada
+        y no ha vencido según `max_age`; ``None`` si no hay nada
+        cacheado para este ticker o si el dato cacheado ya es demasiado
+        viejo (en ambos casos, quien invoca esta función debe consultar
+        de nuevo al proveedor de datos).
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío, si ocurre un fallo de E/S al leer el
+        archivo, o si la sección cacheada existe pero está corrupta o
+        incompleta (falta `cached_at`, tiene un formato no reconocible,
+        o faltan campos imprescindibles del modelo).
+    """
+    section = _load_section(
+        ticker,
+        "financial_statement",
+        cache_path=cache_path,
+        config=config,
+        max_age=max_age,
+    )
+    if section is None:
+        return None
+
+    try:
+        return FinancialStatement(
+            revenue=float(section["revenue"]),
+            net_income=float(section["net_income"]),
+            debt=float(section["debt"]),
+            source=section["source"],
+            period_end=date.fromisoformat(section["period_end"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CacheError(
+            f"La sección 'financial_statement' cacheada para '{ticker}' "
+            f"está corrupta o incompleta: {exc}"
+        ) from exc
+
+
+def load_market_data(
+    ticker: str,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+    max_age: timedelta = DEFAULT_MAX_AGE,
+) -> MarketData | None:
+    """Lee un `MarketData` desde la caché local, si existe y es reciente.
+
+    Misma semántica que `load_financial_statement`, pero para la sección
+    ``"market_data"`` del archivo `<TICKER>.json`.
+    """
+    section = _load_section(
+        ticker,
+        "market_data",
+        cache_path=cache_path,
+        config=config,
+        max_age=max_age,
+    )
+    if section is None:
+        return None
+
+    try:
+        return MarketData(
+            price=float(section["price"]),
+            market_cap=float(section["market_cap"]),
+            multiples=dict(section.get("multiples") or {}),
+            source=section["source"],
+            as_of=date.fromisoformat(section["as_of"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CacheError(
+            f"La sección 'market_data' cacheada para '{ticker}' está "
+            f"corrupta o incompleta: {exc}"
+        ) from exc
+
+
 def _save_section(
     ticker: str,
     section: str,
@@ -162,6 +309,54 @@ def _save_section(
     return file_path
 
 
+def _load_section(
+    ticker: str,
+    section: str,
+    *,
+    cache_path: str | Path | None,
+    config: dict[str, Any] | None,
+    max_age: timedelta,
+) -> dict[str, Any] | None:
+    """Lee una sección de `<TICKER>.json`, si existe y no ha vencido.
+
+    Devuelve ``None`` si el archivo no existe todavía, si existe pero no
+    tiene la sección pedida, o si la tiene pero su `cached_at` ya superó
+    `max_age`. Levanta `CacheError` si la sección existe pero le falta
+    `cached_at` o este no tiene un formato interpretable, o ante
+    cualquier fallo de E/S al leer el archivo (ver `_read_existing`).
+    """
+    if not ticker or not ticker.strip():
+        raise CacheError("El ticker no puede estar vacío.")
+
+    cache_dir = _resolve_cache_dir(cache_path, config)
+    file_path = _ticker_file(cache_dir, ticker)
+
+    existing = _read_existing(file_path)
+    section_data = existing.get(section)
+    if section_data is None:
+        return None
+
+    cached_at_raw = section_data.get("cached_at")
+    if cached_at_raw is None:
+        raise CacheError(
+            f"La sección '{section}' cacheada para '{ticker}' no tiene "
+            "un campo 'cached_at'."
+        )
+
+    try:
+        cached_at = datetime.fromisoformat(cached_at_raw)
+    except (TypeError, ValueError) as exc:
+        raise CacheError(
+            f"La sección '{section}' cacheada para '{ticker}' tiene un "
+            f"'cached_at' con un formato no reconocible: {cached_at_raw!r}."
+        ) from exc
+
+    if datetime.now(timezone.utc) - cached_at > max_age:
+        return None
+
+    return section_data
+
+
 def _resolve_cache_dir(
     cache_path: str | Path | None, config: dict[str, Any] | None
 ) -> Path:
@@ -190,7 +385,7 @@ def _read_existing(file_path: Path) -> dict[str, Any]:
     """Lee el contenido actual de un archivo de caché, si ya existe.
 
     Devuelve un diccionario vacío si el archivo no existe todavía (primer
-    dato cacheado para ese ticker).
+    dato cacheado para ese ticker, o ninguna consulta previa a leerlo).
     """
     if not file_path.is_file():
         return {}

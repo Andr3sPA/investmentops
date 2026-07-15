@@ -6,12 +6,14 @@ embebida) para persistir datos normalizados" (TASKS.md, Fase 1,
 
 Esta tarea **solo decide y documenta el mecanismo**: formato, ubicación y
 estructura de la caché. La implementación del guardado y la lectura son
-tareas separadas y posteriores, ya desglosadas en `TASKS.md`:
+tareas separadas, ya completadas y desglosadas en `TASKS.md`:
 
 - "Implementar el guardado de los datos normalizados en la caché tras
-  cada consulta."
+  cada consulta." — `save_financial_statement`/`save_market_data` en
+  `investmentops/data_layer/cache.py`.
 - "Implementar la lectura desde caché para evitar una nueva llamada al
-  proveedor si el dato ya existe y es reciente."
+  proveedor si el dato ya existe y es reciente." —
+  `load_financial_statement`/`load_market_data` en el mismo módulo.
 
 ## Decisión: archivos JSON, uno por empresa (ticker)
 
@@ -83,9 +85,8 @@ tocar los datos ya guardados de otros tipos:
   `investmentops.data_layer.normalization`.
 - Se agrega un campo `cached_at` (fecha/hora en que se escribió esa
   sección de la caché, en UTC, formato ISO 8601) que **no** forma parte de
-  los dataclasses de dominio: es metadato propio de la caché, necesario
-  para que la tarea de lectura ("...si el dato ya existe y es reciente")
-  pueda decidir si un dato cacheado sigue siendo válido o debe
+  los dataclasses de dominio: es metadato propio de la caché, usado por
+  la lectura para decidir si un dato cacheado sigue siendo válido o debe
   refrescarse. No debe confundirse con `period_end`/`as_of` (fecha del
   propio dato financiero) ni con `ProviderMetadata.queried_at` (fecha en
   que se consultó al proveedor por primera vez): `cached_at` es
@@ -95,27 +96,32 @@ tocar los datos ya guardados de otros tipos:
   correspondiente simplemente está ausente del objeto JSON, no se
   representa con `null` ni con un objeto vacío.
 
-## Qué determina "reciente" (fuera de alcance de esta tarea)
+## Qué determina "reciente"
 
-El criterio concreto para decidir si un dato cacheado es lo bastante
-reciente como para evitar una nueva llamada al proveedor (ej. un umbral
-de horas/días desde `cached_at`) es responsabilidad de la tarea de
-lectura ("Implementar la lectura desde caché..."), no de esta decisión de
-mecanismo. Este documento solo garantiza que el dato necesario para esa
-decisión (`cached_at`) ya queda registrado en la estructura del archivo.
+Umbral elegido: **24 horas** desde `cached_at`
+(`investmentops.data_layer.cache.DEFAULT_MAX_AGE`). Si al invocar
+`load_financial_statement`/`load_market_data` la sección cacheada tiene
+menos de 24 horas de antigüedad, se devuelve el modelo reconstruido sin
+consultar al proveedor de nuevo; si tiene más, se devuelve `None` para
+que quien invoque la lectura dispare una nueva consulta.
 
-## Fuera de alcance de esta tarea
+Es un valor fijo y explícito en código (no una clave nueva de
+`config.local.toml`): no hay hoy un caso de uso que requiera que el
+usuario lo configure, y agregarlo a la configuración antes de necesitarlo
+concretamente iría contra el mismo criterio de no sobre-diseñar ya
+aplicado en otros módulos de esta capa. `max_age` es, de todas formas, un
+parámetro explícito de `load_financial_statement`/`load_market_data` por
+si una llamada puntual necesita un umbral distinto al de 24 horas.
 
-- La función que efectivamente escribe un archivo `<TICKER>.json` (tarea
-  "Implementar el guardado...").
-- La función que efectivamente lee y valida la frescura de un archivo
-  cacheado (tarea "Implementar la lectura...").
-- El manejo de errores de lectura/escritura en disco (permisos, disco
-  lleno, JSON corrupto): se resuelve como parte de las dos tareas
-  anteriores, no aquí.
+## Fuera de alcance de esta tarea (aún)
+
 - Cachear series históricas (varios periodos): la estructura anterior
   asume un único corte por modelo, igual que `FinancialStatement` y
   `MarketData` hoy. Extenderla a series es tarea explícita de la Fase 3
   (ver TASKS.md, Fase 3, "Normalización"), y podrá representarse como una
   lista dentro de la misma clave (ej. `"financial_statement": [...]`) sin
   romper este formato de archivo por ticker.
+- Decidir qué hace el orquestador cuando la lectura devuelve `None`
+  (disparar la consulta real al proveedor de datos y luego guardar el
+  resultado): responsabilidad de "Orquestador mínimo" (ver TASKS.md), no
+  de esta capa de caché.
