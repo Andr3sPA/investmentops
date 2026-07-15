@@ -59,11 +59,11 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente (hallazgos, métricas, advertencias si faltan datos, proveedor/modelo usado). — `parse_financial_health_response` en `investmentops/analysis_engines/financial_health.py` (ver PROGRESS.md). Traduce el `AIProviderResponse` crudo (más las `FinancialHealthMetrics` ya calculadas) a un `AnalysisResult`: `analysis_id="financial_health"`, `findings=[response.content]`, `supporting_metrics` con `net_margin`/`debt_to_revenue`, `limitations` con la limitación de liquidez (siempre presente) más cualquier advertencia de `metrics.warnings`, y `provenance` construida desde los metadatos del proveedor de IA. Se agregó también `analyze_financial_health`, una función de conveniencia que encadena calcular métricas → invocar al proveedor → parsear la respuesta.
 
 ### Agente de análisis: valoración
-- Definir qué múltiplos concretos componen "valoración básica" (ej. P/E, P/B).
-- Implementar el cálculo determinístico de esos múltiplos a partir del modelo normalizado.
-- Escribir el archivo de prompt del agente de valoración (fuera del código Python).
-- Implementar la invocación al proveedor de IA configurado con esos múltiplos + el prompt.
-- Implementar el parseo de la respuesta del modelo al resultado estructurado del agente de valoración.
+- [x] Definir qué múltiplos concretos componen "valoración básica" (ej. P/E, P/B). — `investmentops/analysis_engines/VALUATION_METRICS.md` (ver PROGRESS.md). Decisión: `price_to_earnings` (`market_cap / net_income`) y `price_to_sales` (`market_cap / revenue`) son calculables con los campos actuales de `MarketData`/`FinancialStatement`, sin necesitar `shares_outstanding` (fórmulas agregadas, no por acción). P/B y EV/EBITDA quedan documentados como limitaciones explícitas: el modelo de dominio no expone patrimonio/`equity` (para P/B) ni EBITDA/`cash` (para EV/EBITDA) — no se inventa una aproximación.
+- [ ] Implementar el cálculo determinístico de esos múltiplos a partir del modelo normalizado.
+- [ ] Escribir el archivo de prompt del agente de valoración (fuera del código Python).
+- [ ] Implementar la invocación al proveedor de IA configurado con esos múltiplos + el prompt.
+- [ ] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente de valoración.
 
 ### Orquestador mínimo
 - Implementar la función que recibe un ticker y dispara la consulta al proveedor de Fase 1.

@@ -4,197 +4,131 @@
 
 ## Última tarea completada
 
-Fase 1 → Agente de análisis: salud financiera → *"Implementar el parseo
-de la respuesta del modelo al resultado estructurado del agente
-(hallazgos, métricas, advertencias si faltan datos, proveedor/modelo
-usado)."*
+Fase 1 → Agente de análisis: valoración → *"Definir qué múltiplos
+concretos componen 'valoración básica' (ej. P/E, P/B)."*
 
-Antes de implementarla, se verificó que no estuviera ya satisfecha por
-código existente: `invoke_financial_health_agent` (tarea anterior) ya
-invocaba al proveedor de IA configurado y devolvía un
-`AIProviderResponse`, pero nada en el proyecto traducía esa respuesta
-cruda a la estructura común `AnalysisResult`
-(`investmentops.analysis_engines.contracts`). Se confirmó que la tarea
-requería trabajo nuevo.
+Antes de implementarla, se verificó que no estuviera ya satisfecha: nada
+en el proyecto decide todavía qué múltiplos calcula el agente de
+valoración (`MarketData.multiples` sigue vacío por diseño, ver
+`market_data.py` y `normalization.py`). Se confirmó que la tarea
+requería trabajo nuevo, y que —al ser una tarea de diseño/documentación,
+igual que `FINANCIAL_HEALTH_METRICS.md` lo fue para salud financiera—
+no correspondía escribir código todavía.
 
 ## Qué se implementó
 
-**`investmentops/analysis_engines/financial_health.py`** (modificado) —
-se agregaron dos piezas nuevas, sin tocar `calculate_financial_health_metrics`,
-`FinancialHealthMetrics` ni `invoke_financial_health_agent`:
+**`investmentops/analysis_engines/VALUATION_METRICS.md`** (nuevo) —
+documento de decisión que analiza qué múltiplos de valoración son
+calculables con los campos que **hoy** exponen `MarketData` (`price`,
+`market_cap`, `multiples` vacío, `source`, `as_of`) y
+`FinancialStatement` (`revenue`, `net_income`, `debt`, `source`,
+`period_end`), sin inventar ni aproximar campos ausentes:
 
-- **`LIQUIDITY_LIMITATION`** (constante nueva): el texto exacto de la
-  limitación de liquidez ya decidida en `FINANCIAL_HEALTH_METRICS.md`
-  (el modelo de dominio no expone `current_assets`/`current_liabilities`),
-  ahora expuesto como constante reutilizable en vez de solo vivir en la
-  documentación, para que `parse_financial_health_response` no la
-  hardcodee de forma duplicada si otra tarea futura necesita el mismo
-  texto.
-- **`parse_financial_health_response(response, metrics) -> AnalysisResult`**
-  — toma el `AIProviderResponse` ya devuelto por
-  `invoke_financial_health_agent` y las mismas `FinancialHealthMetrics`
-  ya calculadas (nunca recalculadas ni derivadas del texto del modelo) y
-  construye:
-  - `analysis_id`: `AGENT_ID` (`"financial_health"`).
-  - `findings`: `[response.content]` — el texto de interpretación del
-    modelo, empaquetado tal cual como un único hallazgo. El prompt
-    (`prompts/financial_health.md`) no le pide al modelo un formato
-    estructurado (JSON, secciones marcadas): es texto libre en español,
-    por lo que "parsear" aquí es "empaquetar", no "extraer campos" (tal
-    como ya anticipaba la nota dejada en la entrada anterior de este
-    archivo).
-  - `supporting_metrics`: `{"net_margin": ..., "debt_to_revenue": ...}`,
-    tomados directamente de `metrics`, nunca de `response.content` (la
-    IA interpreta las métricas, no las genera ni las corrige, conforme a
-    `ARCHITECTURE.md`).
-  - `limitations`: siempre incluye `LIQUIDITY_LIMITATION` como primer
-    elemento, seguida de cualquier advertencia en `metrics.warnings` (ej.
-    el caso `revenue == 0`).
-  - `provenance`: `AnalysisProvenance(ai_provider=response.provider,
-    ai_model=response.model, generated_at=response.generated_at)`,
-    tomada directamente de los metadatos ya entregados por el proveedor
-    de IA.
-- **`analyze_financial_health(statement, metrics=None, *, config=None)
-  -> AnalysisResult`** (función de conveniencia nueva) — encadena
-  `calculate_financial_health_metrics` (solo si no se pasan métricas ya
-  calculadas) → `invoke_financial_health_agent` →
-  `parse_financial_health_response`, para que quien necesite un
-  `AnalysisResult` completo de salud financiera a partir de un
-  `FinancialStatement` no tenga que orquestar manualmente las tres
-  piezas. No traduce las excepciones de las funciones que invoca
-  (`PromptError`, `AgentProviderSelectionError`, `AIProviderError`) a
-  `AnalysisEngineError`: esa decisión de integración (si este módulo
-  debe exponer algo que cumpla literalmente el protocolo
-  `AnalysisEngine`) se deja para la sección "Orquestador mínimo" de
-  `TASKS.md`, que es quien realmente necesita ese contrato para invocar
-  agentes de forma uniforme y capturar sus fallos sin detener el resto
-  del flujo.
+- **Hallazgo clave:** aunque ningún modelo expone `shares_outstanding`,
+  P/E y P/S sí son calculables usando cifras **agregadas** en vez de "por
+  acción", ya que `market_cap = price × shares`:
+  - `price_to_earnings = market_cap / net_income`
+  - `price_to_sales = market_cap / revenue`
+  Ambas fórmulas son algebraicamente equivalentes a sus versiones
+  clásicas por acción, sin depender de un dato que no existe hoy en el
+  modelo de dominio.
+- **P/B descartado (limitación explícita):** requiere patrimonio/valor
+  en libros (`equity`), que `FinancialStatement` no expone (solo tiene
+  `debt`, un concepto distinto y no intercambiable con patrimonio).
+- **EV/EBITDA descartado (limitación explícita):** requiere EBITDA
+  (ausente; solo hay `net_income`) y efectivo/equivalentes (ausente,
+  para calcular el Enterprise Value completo).
+- **Casos degenerados ya anticipados** (para la tarea de implementación
+  siguiente): `net_income <= 0` hace que P/E no sea interpretable de
+  forma estándar (se tratará como "no calculable" + advertencia, mismo
+  criterio que `revenue == 0` en `FINANCIAL_HEALTH_METRICS.md`);
+  `revenue == 0` hace lo mismo con P/S.
 
-**Pruebas nuevas:**
-- `investmentops/tests/test_analysis_engines_financial_health_parse.py`
-  — cubre `parse_financial_health_response` (analysis_id correcto,
-  findings desde `response.content`, supporting_metrics desde `metrics`
-  y no desde el texto del modelo —incluyendo un caso adversarial donde
-  el texto del modelo "sugiere" un valor de métrica distinto, para
-  confirmar que se ignora—, limitación de liquidez siempre presente,
-  advertencias de `metrics.warnings` incluidas junto a esa limitación,
-  procedencia construida desde los metadatos de la respuesta,
-  inmutabilidad del resultado) y `analyze_financial_health` de punta a
-  punta (mockeando `requests.post` igual que las pruebas de invocación
-  ya existentes): resultado completo con proveedor real de Anthropic
-  mockeado, métricas precalculadas respetadas sin recalcularse, y
-  propagación correcta del caso `revenue == 0`.
+**Decisión final:** el agente de valoración calculará, en esta fase,
+`price_to_earnings` y `price_to_sales`. P/B y EV/EBITDA quedan como
+limitaciones explícitas que el futuro `AnalysisResult.limitations` del
+agente de valoración deberá declarar, siguiendo el mismo patrón ya
+usado para la liquidez en el agente de salud financiera.
 
-No se modificó ningún otro módulo de código Python
-(`calculate_financial_health_metrics`, `FinancialHealthMetrics`,
-`invoke_financial_health_agent`, `AnthropicAIProvider`,
-`resolve_agent_provider`, `build_ai_provider`, `load_prompt`,
-`load_config`, ningún modelo de dominio, ningún prompt existente) ni
-`investmentops/analysis_engines/contracts.py` (se reutiliza
-`AnalysisResult`/`AnalysisProvenance` tal cual ya estaban definidos).
+No se modificó ningún archivo de código Python en esta tarea (es una
+tarea de diseño/documentación pura, igual que
+`FINANCIAL_HEALTH_METRICS.md` y `CACHE.md` lo fueron en su momento).
 
 ## Decisiones tomadas
 
-- **`findings` es una lista de un solo elemento con el texto completo
-  del modelo, sin segmentar por párrafos.** El prompt no exige ni sugiere
-  un formato estructurado; segmentar arbitrariamente (por ejemplo, por
-  saltos de línea) introduciría una regla de parseo que el prompt no
-  respalda y que podría partir una idea a la mitad. Si en el futuro se
-  necesita una lista de hallazgos más granular, eso implica cambiar
-  primero el prompt para pedir un formato estructurado (ej. una lista
-  numerada o JSON), no inventar aquí una heurística de segmentación de
-  texto libre.
-- **`LIQUIDITY_LIMITATION` se expone como constante de módulo, no como un
-  string hardcodeado dentro de `parse_financial_health_response`.**
-  Aunque hoy solo la usa esa función, es la misma limitación ya
-  documentada (no un texto nuevo) en `FINANCIAL_HEALTH_METRICS.md`;
-  exponerla como constante evita que una futura duplicación de este
-  texto (por ejemplo, si se agrega una función de reporte que también
-  necesite mencionar la limitación) diverja del texto original.
-- **`analyze_financial_health` no atrapa ni traduce excepciones.** Se
-  consideró que hacerlo aquí adelantaría una decisión de integración
-  (cómo debe comportarse este agente frente al protocolo
-  `AnalysisEngine`, incluyendo su manejo de errores para el orquestador)
-  que no corresponde a esta tarea de parseo, sino a "Orquestador mínimo"
-  (ver TASKS.md), evitando así sobre-diseñar antes de que exista ese
-  caso de uso concreto.
-- **Se mantiene el orden de `limitations`: primero `LIQUIDITY_LIMITATION`,
-  luego las advertencias de `metrics.warnings`.** Es un orden estable y
-  predecible (la limitación estructural del modelo siempre antes que las
-  advertencias específicas de los datos de una consulta puntual), útil
-  para cualquier prueba o reporte futuro que dependa de este orden.
+- **P/E y P/S se expresan como `market_cap / net_income` y
+  `market_cap / revenue`** (cifras agregadas), no como fórmulas "por
+  acción" que requerirían `shares_outstanding`. Esto evita tener que
+  extender el modelo de dominio (`MarketData`/`FinancialStatement`) antes
+  de necesitarlo realmente, siguiendo el mismo criterio de no
+  sobre-diseñar ya aplicado en el resto del proyecto (ver
+  `market_data.py`, "no soporta series históricas").
+- **P/B y EV/EBITDA no se aproximan con los campos disponibles** (por
+  ejemplo, usando `debt` como sustituto de `equity`, o `net_income` como
+  sustituto de `EBITDA`). Se documentan como limitaciones explícitas,
+  igual principio que la liquidez en `FINANCIAL_HEALTH_METRICS.md`:
+  declarar honestamente lo que no se puede calcular en vez de forzar una
+  fórmula con datos que no le corresponden conceptualmente.
+- **Los casos `net_income <= 0` y `revenue == 0` se anticipan aquí como
+  decisión de diseño** (tratarlos como "no calculable" + advertencia),
+  para que la tarea de implementación siguiente los resuelva de forma
+  consistente con el precedente ya sentado por
+  `calculate_financial_health_metrics` (revenue == 0 → None + warning),
+  sin tener que re-decidir el criterio en esa tarea.
 
 ## Validación realizada
 
-Igual que en la entrada anterior de este archivo, no fue posible
-ejecutar `pytest` real en este entorno de Claude Web (sin acceso a red
-para instalar dependencias). Se reconstruyó manualmente el escenario de
-`parse_financial_health_response` (construcción directa de
-`AIProviderResponse` y `FinancialHealthMetrics`, sin red) y se verificó
-con `unittest.mock` el flujo completo de `analyze_financial_health`
-mockeando `requests.post`, siguiendo el mismo patrón ya usado en
-`test_analysis_engines_financial_health_invoke.py`. Todos los escenarios
-cubiertos por los nuevos archivos de prueba pasaron en esta
-reconstrucción manual. Se recomienda correr `pytest` en el entorno real
-del proyecto para confirmar la integración completa junto con el resto
-de la suite existente.
+Tarea de diseño/documentación, sin código nuevo que ejecutar. Se revisó
+manualmente la equivalencia algebraica de `market_cap / net_income` y
+`market_cap / revenue` con sus versiones "por acción" tradicionales, y se
+confirmó contra los campos reales de `MarketData`
+(`investmentops/data_layer/market_data.py`) y `FinancialStatement`
+(`investmentops/data_layer/financial_statements.py`) que ningún campo
+adicional (`equity`, `ebitda`, `cash`, `shares_outstanding`) existe hoy
+en el modelo de dominio.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_analysis_engines_financial_health_parse.py`
+- `investmentops/analysis_engines/VALUATION_METRICS.md`
 
 Modificados:
-- `investmentops/analysis_engines/financial_health.py` (se agregaron
-  `LIQUIDITY_LIMITATION`, `parse_financial_health_response` y
-  `analyze_financial_health`; sin cambios en
-  `calculate_financial_health_metrics`, `FinancialHealthMetrics` ni
-  `invoke_financial_health_agent`)
 - `TASKS.md` (tarea marcada como completada, con referencia inline)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`,
-`prompts/financial_health.md`,
-`investmentops/analysis_engines/contracts.py`,
-`investmentops/analysis_engines/FINANCIAL_HEALTH_METRICS.md`,
-`investmentops/analysis_engines/prompts.py`,
-`investmentops/ai_providers/*`, y el resto del código existente.
+`prompts/financial_health.md`, ningún módulo de código Python existente
+(`investmentops/analysis_engines/financial_health.py`,
+`investmentops/data_layer/*`, `investmentops/ai_providers/*`, etc.).
 
 ## Problemas encontrados
 
-Ninguno en la implementación. Misma limitación de entorno que en la
-entrada anterior: sin acceso a red para instalar `pytest`/`requests` y
-correr la suite real (ver "Validación realizada" arriba); se compensó
-con una reconstrucción mínima y validación manual equivalente.
+Ninguno.
 
 ## Próxima tarea recomendada
 
-Con esto queda completa toda la sección "Agente de análisis: salud
-financiera" de la Fase 1 en `TASKS.md`. La siguiente sección con tareas
-pendientes es **"Agente de análisis: valoración"**, cuya primera tarea
-sin empezar es:
+La siguiente tarea sin empezar en "Agente de análisis: valoración" es:
 
-1. *"Definir qué múltiplos concretos componen 'valoración básica' (ej.
-   P/E, P/B)."*
+1. *"Implementar el cálculo determinístico de esos múltiplos a partir
+   del modelo normalizado."*
 
 Nota para la próxima conversación:
-- Esta es una tarea de diseño/documentación (igual que
-  `FINANCIAL_HEALTH_METRICS.md` lo fue para salud financiera), no de
-  código: debe decidir qué múltiplos son calculables con los campos que
-  **hoy** expone `MarketData` (`price`, `market_cap`, `multiples` ya
-  vacío por diseño) y `FinancialStatement` (`revenue`, `net_income`,
-  `debt`) — por ejemplo, P/E (`price / (net_income / shares_outstanding)`)
-  requeriría un dato de acciones en circulación (`shares_outstanding`)
-  que **ninguno** de los dos modelos de dominio expone hoy. Antes de
-  definir los múltiplos, conviene revisar explícitamente qué es
-  calculable sin inventar ni aproximar campos ausentes, siguiendo el
-  mismo criterio ya aplicado en `FINANCIAL_HEALTH_METRICS.md` (declarar
-  limitaciones explícitas en vez de forzar una fórmula con datos que no
-  corresponden).
-- Si el análisis concluye que ningún múltiplo estándar es calculable sin
-  extender antes `MarketData`/`FinancialStatement` (ej. agregar
-  `shares_outstanding`), esa extensión de modelo de dominio sería una
-  decisión a documentar explícitamente como parte de esa misma tarea o
-  como una tarea previa separada, no algo a resolver improvisando una
-  aproximación.
+- Implementar una función análoga a
+  `calculate_financial_health_metrics`/`FinancialHealthMetrics` (ver
+  `investmentops/analysis_engines/financial_health.py`), pero para
+  valoración: recibirá un `MarketData` y un `FinancialStatement`, y
+  devolverá un dataclass inmutable (ej. `ValuationMetrics`) con
+  `price_to_earnings`, `price_to_sales` y `warnings`.
+- Seguir el mismo criterio ya sentado en `VALUATION_METRICS.md` y en
+  `calculate_financial_health_metrics` para los casos degenerados:
+  `net_income <= 0` → `price_to_earnings = None` + advertencia explícita
+  (sin lanzar excepción ni inventar un valor); `revenue == 0` →
+  `price_to_sales = None` + advertencia explícita.
+  Decidir si ambos casos degenerados pueden coexistir en la misma
+  llamada (ej. `net_income <= 0` y `revenue == 0` a la vez) y si
+  `warnings` debe listar ambas advertencias en ese caso.
+- No calcular P/B ni EV/EBITDA (limitaciones ya documentadas en
+  `VALUATION_METRICS.md`); esas limitaciones se declararán más adelante
+  en `AnalysisResult.limitations`, en la tarea de parseo de la respuesta
+  del agente (no en esta tarea de cálculo determinístico).
