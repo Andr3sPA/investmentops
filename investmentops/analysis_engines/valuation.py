@@ -1,8 +1,13 @@
-"""Agente de análisis: valoración — cálculo determinístico de múltiplos.
+"""Agente de análisis: valoración — cálculo determinístico de múltiplos e
+invocación al proveedor de IA configurado.
 
-Cubre la tarea "Implementar el cálculo determinístico de esos múltiplos a
-partir del modelo normalizado" (TASKS.md, Fase 1, "Agente de análisis:
-valoración").
+Cubre, en un mismo módulo, dos tareas relacionadas de TASKS.md, Fase 1,
+"Agente de análisis: valoración":
+
+- "Implementar el cálculo determinístico de esos múltiplos a partir del
+  modelo normalizado." (`calculate_valuation_metrics`).
+- "Implementar la invocación al proveedor de IA configurado con esos
+  múltiplos + el prompt." (`invoke_valuation_agent`).
 
 Implementa exactamente los múltiplos ya decididos en
 `investmentops/analysis_engines/VALUATION_METRICS.md`:
@@ -16,8 +21,9 @@ Implementa exactamente los múltiplos ya decididos en
 
 Conforme a `ARCHITECTURE.md` ("La IA es un mecanismo central, no un
 accesorio" / "El cálculo determinístico de métricas... es una entrada
-para el agente, no un sustituto de su interpretación"), este cálculo es
-puro Python, sin invocar ningún proveedor de IA.
+para el agente, no un sustituto de su interpretación"), el cálculo de
+`calculate_valuation_metrics` es puro Python, sin invocar ningún
+proveedor de IA.
 
 ## Manejo de casos degenerados
 
@@ -39,36 +45,75 @@ para `revenue == 0`, ya anticipado en `VALUATION_METRICS.md`:
   pérdidas e ingresos en cero): en ese caso `warnings` incluye ambas
   advertencias, una por cada métrica no calculable.
 
+## Invocación al proveedor de IA
+
+`invoke_valuation_agent` sigue exactamente el mismo patrón ya usado en
+`investmentops.analysis_engines.financial_health.invoke_financial_health_agent`:
+
+1. Carga el prompt del agente desde `prompts/valuation.md` (ver
+   `investmentops.analysis_engines.prompts.load_prompt` y
+   `prompts/README.md`, "Prompts como artefactos, no como código").
+2. Resuelve qué proveedor/modelo le corresponde al agente
+   ``"valuation"`` según `config.local.toml` (ver
+   `investmentops.ai_providers.selection.resolve_agent_provider` y
+   CONFIGURATION.md, sección `[agents]`).
+3. Construye la instancia concreta de `AIProvider` correspondiente (ver
+   `investmentops.ai_providers.factory.build_ai_provider`; hoy solo
+   `AnthropicAIProvider` está implementada).
+4. Invoca `AIProvider.complete(prompt, data=...)`, enviando como `data`
+   el `MarketData` y el `FinancialStatement` normalizados, más las
+   `ValuationMetrics` ya calculadas (nunca al revés: la IA nunca calcula
+   ni recalcula estos múltiplos, solo los interpreta, conforme a
+   `ARCHITECTURE.md`).
+
+Esta función devuelve el `AIProviderResponse` crudo (texto de respuesta +
+metadatos de procedencia). No interpreta ni parsea ese texto por sí
+misma: el parseo a `AnalysisResult` es una tarea separada y posterior
+(ver TASKS.md, "Agente de análisis: valoración" > "Implementar el parseo
+de la respuesta del modelo al resultado estructurado del agente de
+valoración"), análoga a
+`financial_health.parse_financial_health_response`.
+
 Fuera de alcance de este módulo:
 - P/B y EV/EBITDA: limitaciones ya documentadas en
-  `VALUATION_METRICS.md`; se declararán más adelante en
-  `AnalysisResult.limitations`, en la tarea de parseo de la respuesta
-  del agente (no en esta tarea de cálculo determinístico).
-- El prompt del agente de valoración y la invocación al proveedor de IA
-  configurado: tareas separadas y posteriores (ver TASKS.md, "Agente de
-  análisis: valoración").
+  `VALUATION_METRICS.md`; se declararán en `AnalysisResult.limitations`
+  en la tarea de parseo, no en este módulo.
+- El contenido del prompt en sí (vive en `prompts/valuation.md`, fuera
+  del código Python, ver `prompts/README.md`).
 - El parseo de la respuesta del modelo a `AnalysisResult`: tarea
-  separada y posterior, análoga a
-  `financial_health.parse_financial_health_response`.
+  separada y posterior.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
+from investmentops.ai_providers import (
+    AIProviderResponse,
+    build_ai_provider,
+    resolve_agent_provider,
+)
+from investmentops.analysis_engines.prompts import load_prompt
+from investmentops.config import load_config
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
+
+#: Identificador de este agente, usado tanto para localizar su archivo de
+#: prompt (`prompts/valuation.md`, ver `prompts/README.md`) como para
+#: resolver su proveedor de IA configurado (`config.local.toml`, sección
+#: `[agents]`, ver CONFIGURATION.md) y como futuro
+#: `AnalysisResult.analysis_id` (tarea de parseo, aún pendiente).
+AGENT_ID = "valuation"
 
 
 @dataclass(frozen=True)
 class ValuationMetrics:
     """Múltiplos de valoración calculados de forma determinística.
 
-    Es el tipo de salida de `calculate_valuation_metrics`, pensado para
-    alimentar, en una tarea posterior, el campo `metrics` que recibirá la
-    invocación al proveedor de IA del agente de valoración (mismo patrón
-    ya usado por `FinancialHealthMetrics` en
+    Es el tipo de salida de `calculate_valuation_metrics`, y el que
+    alimenta el campo `metrics` que recibe `invoke_valuation_agent` (mismo
+    patrón ya usado por `FinancialHealthMetrics` en
     `investmentops.analysis_engines.financial_health`).
 
     Attributes
@@ -152,3 +197,101 @@ def calculate_valuation_metrics(
         price_to_sales=price_to_sales,
         warnings=tuple(warnings),
     )
+
+
+def invoke_valuation_agent(
+    market_data: MarketData,
+    statement: FinancialStatement,
+    metrics: ValuationMetrics,
+    *,
+    config: dict[str, Any] | None = None,
+) -> AIProviderResponse:
+    """Invoca al proveedor de IA configurado para el agente de valoración.
+
+    Combina el prompt del agente (`prompts/valuation.md`), el
+    proveedor/modelo resuelto para ``"valuation"`` según
+    `config.local.toml`, y los múltiplos ya calculados de forma
+    determinística (`metrics`, nunca recalculados por la IA), para
+    obtener una interpretación del modelo de lenguaje.
+
+    Parameters
+    ----------
+    market_data:
+        El `MarketData` normalizado de la empresa, enviado como parte de
+        `data` para que el modelo tenga el contexto completo (precio,
+        capitalización, fuente y fecha de corte), no solo los múltiplos
+        ya derivados.
+    statement:
+        El `FinancialStatement` normalizado de la misma empresa, enviado
+        por la misma razón (ingresos, beneficio neto, deuda, fuente y
+        fecha de corte).
+    metrics:
+        Las `ValuationMetrics` ya calculadas por
+        `calculate_valuation_metrics` para `market_data`/`statement`. Se
+        envían tal cual, incluyendo `warnings` si algún múltiplo no se
+        pudo calcular (ver prompt del agente, que instruye a declarar esa
+        ausencia en vez de inventar un valor).
+    config:
+        Configuración ya cargada (como la que devuelve
+        `investmentops.config.load_config`). Útil para pruebas, para no
+        depender de un `config.local.toml` real en disco. Si no se
+        indica, se llama a `load_config()`.
+
+    Returns
+    -------
+    AIProviderResponse
+        La respuesta cruda del proveedor de IA (texto de interpretación +
+        metadatos de procedencia: proveedor, modelo, fecha). Este
+        resultado **no** se parsea aquí a la estructura final del agente
+        (`AnalysisResult`): esa es una tarea separada y posterior (ver
+        TASKS.md).
+
+    Raises
+    ------
+    PromptError
+        Si no se puede cargar `prompts/valuation.md` (ver
+        `investmentops.analysis_engines.prompts.load_prompt`).
+    AgentProviderSelectionError
+        Si no se puede resolver ningún proveedor de IA para el agente
+        ``"valuation"`` según la configuración (ver
+        `investmentops.ai_providers.selection.resolve_agent_provider`).
+    AIProviderError
+        Si el proveedor resuelto no tiene una integración concreta
+        implementada (ver
+        `investmentops.ai_providers.factory.build_ai_provider`), si
+        faltan credenciales imprescindibles para construirlo, o si la
+        invocación al modelo de lenguaje falla (no responde, error de
+        autenticación, límite de tasa, respuesta sin contenido
+        interpretable).
+    ConfigError
+        Si `config` no se indica y no se puede cargar
+        `config.local.toml` (ver `investmentops.config.load_config`).
+    """
+    cfg = config if config is not None else load_config()
+
+    prompt = load_prompt(AGENT_ID)
+    selection = resolve_agent_provider(AGENT_ID, cfg)
+    provider = build_ai_provider(selection.provider, config=cfg)
+
+    data = {
+        "market_data": {
+            "price": market_data.price,
+            "market_cap": market_data.market_cap,
+            "source": market_data.source,
+            "as_of": market_data.as_of.isoformat(),
+        },
+        "financial_statement": {
+            "revenue": statement.revenue,
+            "net_income": statement.net_income,
+            "debt": statement.debt,
+            "source": statement.source,
+            "period_end": statement.period_end.isoformat(),
+        },
+        "metrics": {
+            "price_to_earnings": metrics.price_to_earnings,
+            "price_to_sales": metrics.price_to_sales,
+            "warnings": list(metrics.warnings),
+        },
+    }
+
+    return provider.complete(prompt, data=data)
