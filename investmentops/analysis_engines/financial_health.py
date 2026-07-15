@@ -1,6 +1,6 @@
 """Agente de análisis: salud financiera.
 
-Cubre, en un mismo módulo, dos tareas relacionadas de TASKS.md, Fase 1,
+Cubre, en un mismo módulo, cuatro tareas relacionadas de TASKS.md, Fase 1,
 "Agente de análisis: salud financiera":
 
 - "Implementar el cálculo determinístico de ratios de liquidez,
@@ -8,6 +8,13 @@ Cubre, en un mismo módulo, dos tareas relacionadas de TASKS.md, Fase 1,
   del agente, no su resultado final)." (`calculate_financial_health_metrics`).
 - "Implementar la invocación al proveedor de IA configurado con esas
   métricas + el prompt." (`invoke_financial_health_agent`).
+- "Implementar el parseo de la respuesta del modelo al resultado
+  estructurado del agente (hallazgos, métricas, advertencias si faltan
+  datos, proveedor/modelo usado)." (`parse_financial_health_response`).
+- Función de conveniencia que encadena las tres anteriores
+  (`analyze_financial_health`), necesaria para que quien registre este
+  agente en el futuro orquestador (ver TASKS.md, "Orquestador mínimo") no
+  tenga que reimplementar el encadenado calcular → invocar → parsear.
 
 ## Cálculo determinístico de métricas
 
@@ -57,19 +64,57 @@ para este agente:
    las interpreta, conforme a `ARCHITECTURE.md`).
 
 Esta función devuelve el `AIProviderResponse` crudo (texto de respuesta +
-metadatos de procedencia). **No** interpreta ni parsea ese texto a la
-estructura final `AnalysisResult` del agente (hallazgos, métricas de
-soporte, limitaciones, procedencia): eso es la tarea siguiente y
-separada en TASKS.md ("Implementar el parseo de la respuesta del modelo
-al resultado estructurado del agente"), explícitamente fuera de alcance
-aquí.
+metadatos de procedencia). No interpreta ni parsea ese texto por sí
+misma: ese trabajo lo hace `parse_financial_health_response`.
+
+## Parseo de la respuesta a `AnalysisResult`
+
+`parse_financial_health_response` traduce un `AIProviderResponse` (más
+las `FinancialHealthMetrics` ya calculadas, las mismas que se enviaron al
+proveedor de IA) a la estructura común `AnalysisResult` definida en
+`investmentops.analysis_engines.contracts`:
+
+- `analysis_id`: siempre `AGENT_ID` (``"financial_health"``).
+- `findings`: el texto de interpretación del modelo
+  (`response.content`), como un único hallazgo. El prompt
+  (`prompts/financial_health.md`) no le pide al modelo un formato
+  estructurado (JSON, secciones marcadas): es texto libre en español, por
+  lo que "parsear" aquí significa empaquetar ese texto como hallazgo, no
+  extraer campos de una respuesta estructurada (ver nota dejada en
+  PROGRESS.md para esta tarea).
+- `supporting_metrics`: las mismas `FinancialHealthMetrics` ya calculadas
+  de forma determinística (`net_margin`, `debt_to_revenue`) — nunca un
+  valor nuevo derivado del texto del modelo, conforme a
+  `ARCHITECTURE.md` ("La IA es un mecanismo central, no un accesorio").
+- `limitations`: siempre incluye la limitación de liquidez ya documentada
+  en `FINANCIAL_HEALTH_METRICS.md` (este agente no calcula liquidez), más
+  cualquier advertencia de `FinancialHealthMetrics.warnings` (ej. el caso
+  `revenue == 0`).
+- `provenance`: `AnalysisProvenance(ai_provider=response.provider,
+  ai_model=response.model, generated_at=response.generated_at)`, tomado
+  directamente de los metadatos que ya entrega el proveedor de IA.
+
+## Función de conveniencia `analyze_financial_health`
+
+Encadena `calculate_financial_health_metrics` (si no se pasan métricas ya
+calculadas) → `invoke_financial_health_agent` → 
+`parse_financial_health_response`, para que quien quiera un
+`AnalysisResult` completo a partir de un `FinancialStatement` no tenga
+que orquestar manualmente las tres funciones. No traduce las excepciones
+de las funciones que invoca (`PromptError`, `AgentProviderSelectionError`,
+`AIProviderError`) a `AnalysisEngineError`: decidir si este módulo debe
+exponer una implementación que cumpla literalmente el protocolo
+`AnalysisEngine` (incluyendo esa traducción de errores) es una decisión
+de integración que corresponde al "Orquestador mínimo" (ver TASKS.md),
+no a esta tarea de parseo.
 
 Fuera de alcance de este módulo:
-- El parseo de la respuesta del modelo de lenguaje al `AnalysisResult`
-  final del agente (tarea posterior, ver arriba).
 - Cualquier ratio de liquidez: ver `FINANCIAL_HEALTH_METRICS.md`.
 - El contenido del prompt en sí (vive en `prompts/financial_health.md`,
   fuera del código Python, ver `prompts/README.md`).
+- Traducir los errores de este agente a `AnalysisEngineError` para
+  cumplir literalmente el protocolo `AnalysisEngine`: tarea separada
+  (ver TASKS.md, "Orquestador mínimo").
 """
 
 from __future__ import annotations
@@ -82,6 +127,7 @@ from investmentops.ai_providers import (
     build_ai_provider,
     resolve_agent_provider,
 )
+from investmentops.analysis_engines.contracts import AnalysisProvenance, AnalysisResult
 from investmentops.analysis_engines.prompts import load_prompt
 from investmentops.config import load_config
 from investmentops.data_layer.financial_statements import FinancialStatement
@@ -89,8 +135,19 @@ from investmentops.data_layer.financial_statements import FinancialStatement
 #: Identificador de este agente, usado tanto para localizar su archivo de
 #: prompt (`prompts/financial_health.md`, ver `prompts/README.md`) como
 #: para resolver su proveedor de IA configurado (`config.local.toml`,
-#: sección `[agents]`, ver CONFIGURATION.md).
+#: sección `[agents]`, ver CONFIGURATION.md) y como `AnalysisResult.analysis_id`.
 AGENT_ID = "financial_health"
+
+#: Limitación explícita de liquidez, conforme a
+#: `FINANCIAL_HEALTH_METRICS.md`: el modelo de dominio normalizado no
+#: expone `current_assets`/`current_liabilities`, por lo que este agente
+#: nunca calcula ni aproxima un ratio de liquidez. Se declara siempre en
+#: `AnalysisResult.limitations`, en vez de omitir el tema en silencio.
+LIQUIDITY_LIMITATION = (
+    "No se dispone de datos de liquidez (activos/pasivos corrientes) en el "
+    "modelo de dominio normalizado actual; este análisis no incluye un "
+    "ratio de liquidez."
+)
 
 
 @dataclass(frozen=True)
@@ -98,11 +155,9 @@ class FinancialHealthMetrics:
     """Ratios de salud financiera calculados de forma determinística.
 
     Es el tipo de salida de `calculate_financial_health_metrics`, pensado
-    para alimentar el campo `metrics` que recibirá el futuro agente de
-    salud financiera (ver
-    `investmentops.analysis_engines.contracts.AnalysisEngine.analyze`) y,
-    eventualmente, `AnalysisResult.supporting_metrics` una vez ese agente
-    esté implementado.
+    para alimentar el campo `metrics` que recibe
+    `invoke_financial_health_agent` y, a través de
+    `parse_financial_health_response`, `AnalysisResult.supporting_metrics`.
 
     Attributes
     ----------
@@ -119,7 +174,7 @@ class FinancialHealthMetrics:
         calcularon sin problema. No incluye la limitación de liquidez
         (esa es una ausencia estructural del modelo, no un caso
         degenerado de los datos, y ya está documentada aparte en
-        `FINANCIAL_HEALTH_METRICS.md`).
+        `FINANCIAL_HEALTH_METRICS.md` y en `LIQUIDITY_LIMITATION`).
     """
 
     net_margin: float | None
@@ -212,8 +267,7 @@ def invoke_financial_health_agent(
         La respuesta cruda del proveedor de IA (texto de interpretación +
         metadatos de procedencia: proveedor, modelo, fecha). Este
         resultado **no** se parsea aquí a la estructura final del agente
-        (`AnalysisResult`); ese parseo es una tarea separada y posterior
-        (ver TASKS.md).
+        (`AnalysisResult`); ver `parse_financial_health_response`.
 
     Raises
     ------
@@ -258,3 +312,103 @@ def invoke_financial_health_agent(
     }
 
     return provider.complete(prompt, data=data)
+
+
+def parse_financial_health_response(
+    response: AIProviderResponse,
+    metrics: FinancialHealthMetrics,
+) -> AnalysisResult:
+    """Traduce la respuesta cruda del proveedor de IA a un `AnalysisResult`.
+
+    Empaqueta el texto de interpretación del modelo (`response.content`)
+    como el único hallazgo del agente, adjunta las mismas métricas ya
+    calculadas de forma determinística (nunca un valor nuevo derivado del
+    texto del modelo) y construye la procedencia a partir de los
+    metadatos que ya entrega el proveedor de IA.
+
+    Parameters
+    ----------
+    response:
+        La respuesta cruda devuelta por `invoke_financial_health_agent`
+        (texto de interpretación + proveedor/modelo/fecha de generación).
+    metrics:
+        Las mismas `FinancialHealthMetrics` que se enviaron al proveedor
+        de IA en `invoke_financial_health_agent` (no se recalculan ni se
+        derivan de `response`).
+
+    Returns
+    -------
+    AnalysisResult
+        - `analysis_id`: siempre `AGENT_ID` (``"financial_health"``).
+        - `findings`: una lista con un único elemento, el texto de
+          `response.content` (sin recortar ni reformatear: el prompt no
+          exige un formato estructurado, ver docstring del módulo).
+        - `supporting_metrics`: `{"net_margin": ..., "debt_to_revenue": ...}`,
+          tomados directamente de `metrics`.
+        - `limitations`: siempre incluye `LIQUIDITY_LIMITATION`, seguida
+          de cualquier advertencia en `metrics.warnings` (ej. el caso
+          `revenue == 0`).
+        - `provenance`: `AnalysisProvenance(ai_provider=response.provider,
+          ai_model=response.model, generated_at=response.generated_at)`.
+    """
+    findings = [response.content]
+    supporting_metrics = {
+        "net_margin": metrics.net_margin,
+        "debt_to_revenue": metrics.debt_to_revenue,
+    }
+    limitations = [LIQUIDITY_LIMITATION, *metrics.warnings]
+    provenance = AnalysisProvenance(
+        ai_provider=response.provider,
+        ai_model=response.model,
+        generated_at=response.generated_at,
+    )
+
+    return AnalysisResult(
+        analysis_id=AGENT_ID,
+        findings=findings,
+        supporting_metrics=supporting_metrics,
+        limitations=limitations,
+        provenance=provenance,
+    )
+
+
+def analyze_financial_health(
+    statement: FinancialStatement,
+    metrics: FinancialHealthMetrics | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> AnalysisResult:
+    """Produce el `AnalysisResult` completo de salud financiera para una empresa.
+
+    Función de conveniencia que encadena, en orden, `calculate_
+    financial_health_metrics` (solo si `metrics` no se indica),
+    `invoke_financial_health_agent` y `parse_financial_health_response`.
+    No traduce las excepciones que puedan levantar esas funciones (ver
+    "Fuera de alcance" en el docstring del módulo): quien invoque esta
+    función es responsable de capturarlas si necesita continuar el flujo
+    ante un fallo parcial (ese manejo es responsabilidad del "Orquestador
+    mínimo", ver TASKS.md).
+
+    Parameters
+    ----------
+    statement:
+        El `FinancialStatement` normalizado de la empresa a analizar.
+    metrics:
+        Métricas ya calculadas, si se quiere evitar recalcularlas (por
+        ejemplo, si ya se calcularon antes para otro propósito). Si no
+        se indica, se calculan aquí mismo con
+        `calculate_financial_health_metrics`.
+    config:
+        Configuración ya cargada, propagada a `invoke_financial_health_agent`.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado estructurado completo del agente de salud
+        financiera.
+    """
+    resolved_metrics = (
+        metrics if metrics is not None else calculate_financial_health_metrics(statement)
+    )
+    response = invoke_financial_health_agent(statement, resolved_metrics, config=config)
+    return parse_financial_health_response(response, resolved_metrics)

@@ -4,218 +4,197 @@
 
 ## Última tarea completada
 
-Fase 1 → Agente de análisis: salud financiera → *"Implementar la
-invocación al proveedor de IA configurado con esas métricas + el
-prompt."*
+Fase 1 → Agente de análisis: salud financiera → *"Implementar el parseo
+de la respuesta del modelo al resultado estructurado del agente
+(hallazgos, métricas, advertencias si faltan datos, proveedor/modelo
+usado)."*
 
 Antes de implementarla, se verificó que no estuviera ya satisfecha por
-código existente:
-
-- `investmentops/ai_providers/anthropic_provider.py` ya implementa
-  `AIProvider.complete()`, pero nada en el proyecto lo invocaba todavía
-  desde un agente concreto.
-- `investmentops/ai_providers/selection.py` (`resolve_agent_provider`)
-  ya resuelve *qué nombre* de proveedor le corresponde a un agente, pero
-  `investmentops/ai_providers/EXTENDING.md` documentaba explícitamente
-  que no existía ("Quién decide qué clase concreta instanciar") un
-  mecanismo que tradujera ese nombre a una instancia concreta de
-  `AIProvider`.
-- `investmentops/analysis_engines/financial_health.py` solo tenía el
-  cálculo determinístico de métricas (`calculate_financial_health_metrics`);
-  no invocaba IA ni cargaba ningún prompt desde código.
-- No existía ningún mecanismo para cargar `prompts/<agent_id>.md` desde
-  código (los prompts solo se habían usado, hasta ahora, como archivos
-  de referencia para quien escribe el código, no como algo que el código
-  leyera en tiempo de ejecución).
-
-Se confirmó que la tarea requería trabajo nuevo en tres piezas
-complementarias.
+código existente: `invoke_financial_health_agent` (tarea anterior) ya
+invocaba al proveedor de IA configurado y devolvía un
+`AIProviderResponse`, pero nada en el proyecto traducía esa respuesta
+cruda a la estructura común `AnalysisResult`
+(`investmentops.analysis_engines.contracts`). Se confirmó que la tarea
+requería trabajo nuevo.
 
 ## Qué se implementó
 
-**`investmentops/analysis_engines/prompts.py`** (nuevo) — mecanismo
-reutilizable de carga de prompts: `load_prompt(agent_id, *,
-prompts_dir=None)` traduce un `agent_id` (ej. `"financial_health"`) a
-`prompts/<agent_id>.md` (raíz del proyecto, salvo que se indique
-`prompts_dir` explícitamente, útil para pruebas) y devuelve su
-contenido como texto plano. Señala `PromptError` si el archivo no
-existe, si falla la lectura, o si está vacío. Implementa exactamente la
-nota dejada en la entrada anterior de este archivo: *"Revisar si
-conviene un mecanismo simple de carga de prompts... reutilizable por
-futuros agentes"*.
-
-**`investmentops/ai_providers/factory.py`** (nuevo) — `build_ai_provider(
-provider_name, *, config=None)` traduce el nombre de proveedor resuelto
-por `resolve_agent_provider` (ej. `"anthropic"`) a la instancia concreta
-correspondiente de `AIProvider` (hoy solo `AnthropicAIProvider`, vía un
-mapeo explícito `_PROVIDER_FACTORIES`). Si el nombre no tiene una
-integración concreta implementada, levanta `AIProviderError` con un
-mensaje que lista los proveedores soportados actualmente y remite a
-`EXTENDING.md` para sumar uno nuevo. `investmentops/ai_providers/__init__.py`
-se actualizó para re-exportar `build_ai_provider`, siguiendo el mismo
-patrón ya usado para el resto de la interfaz.
-
 **`investmentops/analysis_engines/financial_health.py`** (modificado) —
-se agregó `invoke_financial_health_agent(statement, metrics, *,
-config=None) -> AIProviderResponse`, que combina las tres piezas
-anteriores más lo ya existente:
+se agregaron dos piezas nuevas, sin tocar `calculate_financial_health_metrics`,
+`FinancialHealthMetrics` ni `invoke_financial_health_agent`:
 
-1. Carga `prompts/financial_health.md` vía `load_prompt`.
-2. Resuelve el proveedor/modelo del agente `"financial_health"` vía
-   `resolve_agent_provider` (ya existente, sin cambios).
-3. Construye la instancia concreta de `AIProvider` vía
-   `build_ai_provider`.
-4. Invoca `provider.complete(prompt, data=...)`, enviando como `data` el
-   `FinancialStatement` normalizado (ingresos, beneficio neto, deuda,
-   fuente, fecha de corte) y las `FinancialHealthMetrics` ya calculadas
-   (`net_margin`, `debt_to_revenue`, `warnings`) — nunca al revés: la IA
-   no calcula ni corrige estas métricas, solo las recibe ya calculadas
-   por `calculate_financial_health_metrics` (sin cambios en esa función).
-
-Devuelve el `AIProviderResponse` crudo (texto + metadatos de
-procedencia). No se modificó `calculate_financial_health_metrics` ni
-`FinancialHealthMetrics`.
+- **`LIQUIDITY_LIMITATION`** (constante nueva): el texto exacto de la
+  limitación de liquidez ya decidida en `FINANCIAL_HEALTH_METRICS.md`
+  (el modelo de dominio no expone `current_assets`/`current_liabilities`),
+  ahora expuesto como constante reutilizable en vez de solo vivir en la
+  documentación, para que `parse_financial_health_response` no la
+  hardcodee de forma duplicada si otra tarea futura necesita el mismo
+  texto.
+- **`parse_financial_health_response(response, metrics) -> AnalysisResult`**
+  — toma el `AIProviderResponse` ya devuelto por
+  `invoke_financial_health_agent` y las mismas `FinancialHealthMetrics`
+  ya calculadas (nunca recalculadas ni derivadas del texto del modelo) y
+  construye:
+  - `analysis_id`: `AGENT_ID` (`"financial_health"`).
+  - `findings`: `[response.content]` — el texto de interpretación del
+    modelo, empaquetado tal cual como un único hallazgo. El prompt
+    (`prompts/financial_health.md`) no le pide al modelo un formato
+    estructurado (JSON, secciones marcadas): es texto libre en español,
+    por lo que "parsear" aquí es "empaquetar", no "extraer campos" (tal
+    como ya anticipaba la nota dejada en la entrada anterior de este
+    archivo).
+  - `supporting_metrics`: `{"net_margin": ..., "debt_to_revenue": ...}`,
+    tomados directamente de `metrics`, nunca de `response.content` (la
+    IA interpreta las métricas, no las genera ni las corrige, conforme a
+    `ARCHITECTURE.md`).
+  - `limitations`: siempre incluye `LIQUIDITY_LIMITATION` como primer
+    elemento, seguida de cualquier advertencia en `metrics.warnings` (ej.
+    el caso `revenue == 0`).
+  - `provenance`: `AnalysisProvenance(ai_provider=response.provider,
+    ai_model=response.model, generated_at=response.generated_at)`,
+    tomada directamente de los metadatos ya entregados por el proveedor
+    de IA.
+- **`analyze_financial_health(statement, metrics=None, *, config=None)
+  -> AnalysisResult`** (función de conveniencia nueva) — encadena
+  `calculate_financial_health_metrics` (solo si no se pasan métricas ya
+  calculadas) → `invoke_financial_health_agent` →
+  `parse_financial_health_response`, para que quien necesite un
+  `AnalysisResult` completo de salud financiera a partir de un
+  `FinancialStatement` no tenga que orquestar manualmente las tres
+  piezas. No traduce las excepciones de las funciones que invoca
+  (`PromptError`, `AgentProviderSelectionError`, `AIProviderError`) a
+  `AnalysisEngineError`: esa decisión de integración (si este módulo
+  debe exponer algo que cumpla literalmente el protocolo
+  `AnalysisEngine`) se deja para la sección "Orquestador mínimo" de
+  `TASKS.md`, que es quien realmente necesita ese contrato para invocar
+  agentes de forma uniforme y capturar sus fallos sin detener el resto
+  del flujo.
 
 **Pruebas nuevas:**
-- `investmentops/tests/test_analysis_engines_prompts.py` — carga
-  exitosa, archivo ausente, archivo vacío, y una prueba de integración
-  que confirma que `prompts/financial_health.md` real se puede cargar y
-  contiene el texto esperado.
-- `investmentops/tests/test_ai_providers_factory.py` — construcción
-  exitosa de `AnthropicAIProvider`, error claro para un proveedor sin
-  integración concreta, y propagación de errores de construcción (ej.
-  falta de API key) desde la clase concreta.
-- `investmentops/tests/test_analysis_engines_financial_health_invoke.py`
-  — invocación exitosa (mockeando `requests.post`, igual patrón que
-  `test_ai_providers_anthropic.py`), confirma que el prompt y las
-  métricas (incluida la advertencia de `revenue == 0`) viajan en la
-  llamada real a la API, que se respeta el modelo configurado, y que los
-  errores de resolución de proveedor (`AgentProviderSelectionError`), de
-  proveedor no soportado (`AIProviderError`) y de prompt faltante
-  (`PromptError`) se propagan sin ser silenciados.
+- `investmentops/tests/test_analysis_engines_financial_health_parse.py`
+  — cubre `parse_financial_health_response` (analysis_id correcto,
+  findings desde `response.content`, supporting_metrics desde `metrics`
+  y no desde el texto del modelo —incluyendo un caso adversarial donde
+  el texto del modelo "sugiere" un valor de métrica distinto, para
+  confirmar que se ignora—, limitación de liquidez siempre presente,
+  advertencias de `metrics.warnings` incluidas junto a esa limitación,
+  procedencia construida desde los metadatos de la respuesta,
+  inmutabilidad del resultado) y `analyze_financial_health` de punta a
+  punta (mockeando `requests.post` igual que las pruebas de invocación
+  ya existentes): resultado completo con proveedor real de Anthropic
+  mockeado, métricas precalculadas respetadas sin recalcularse, y
+  propagación correcta del caso `revenue == 0`.
 
-No se modificó ningún otro módulo de código Python (`calculate_financial_health_metrics`,
-`FinancialHealthMetrics`, `AnthropicAIProvider`, `resolve_agent_provider`,
-`load_config`, ningún modelo de dominio) ni ningún prompt existente.
+No se modificó ningún otro módulo de código Python
+(`calculate_financial_health_metrics`, `FinancialHealthMetrics`,
+`invoke_financial_health_agent`, `AnthropicAIProvider`,
+`resolve_agent_provider`, `build_ai_provider`, `load_prompt`,
+`load_config`, ningún modelo de dominio, ningún prompt existente) ni
+`investmentops/analysis_engines/contracts.py` (se reutiliza
+`AnalysisResult`/`AnalysisProvenance` tal cual ya estaban definidos).
 
 ## Decisiones tomadas
 
-- **La fábrica de proveedores (`build_ai_provider`) es un mapeo estático
-  explícito**, no un registro dinámico/plugin: hoy solo existe una
-  integración concreta (Anthropic), y un mecanismo más elaborado sería
-  sobre-diseño antes de tener más de un proveedor real (mismo criterio
-  ya aplicado en otras partes del proyecto, ver `MarketData`,
-  `CACHE.md`). Sumar un proveedor nuevo (Gemini, OpenAI, Ollama) implica
-  agregar una entrada al mapeo, sin tocar `contracts.py` ni
-  `selection.py`, consistente con `EXTENDING.md`.
-- **El cargador de prompts (`load_prompt`) vive en
-  `investmentops.analysis_engines`, no en `investmentops.config` ni en
-  un módulo nuevo de nivel superior**, porque quien lo consume hoy (y
-  presumiblemente en el futuro: valoración, estrategias) son agentes de
-  análisis; no es un dato de configuración del sistema.
-- **`invoke_financial_health_agent` no parsea la respuesta del modelo.**
-  Devuelve el `AIProviderResponse` crudo tal cual lo entrega el
-  proveedor. El parseo a la estructura final del agente
-  (`AnalysisResult`: hallazgos, métricas de soporte, limitaciones,
-  procedencia) es la tarea siguiente y explícitamente separada en
-  `TASKS.md`.
-- **`data` enviado al proveedor incluye tanto el `FinancialStatement`
-  como las `FinancialHealthMetrics`**, no solo las métricas: el prompt
-  (`prompts/financial_health.md`) ya asumía que el modelo recibiría
-  "Datos normalizados de la empresa" además de las métricas
-  precalculadas, por lo que omitir el `FinancialStatement` habría dejado
-  el prompt inconsistente con los datos realmente enviados.
-- **No se creó un mecanismo genérico "agente completo" (invocación +
-  parseo) en esta tarea.** Se limita estrictamente a la invocación, tal
-  como pide el título exacto de la tarea en `TASKS.md`.
+- **`findings` es una lista de un solo elemento con el texto completo
+  del modelo, sin segmentar por párrafos.** El prompt no exige ni sugiere
+  un formato estructurado; segmentar arbitrariamente (por ejemplo, por
+  saltos de línea) introduciría una regla de parseo que el prompt no
+  respalda y que podría partir una idea a la mitad. Si en el futuro se
+  necesita una lista de hallazgos más granular, eso implica cambiar
+  primero el prompt para pedir un formato estructurado (ej. una lista
+  numerada o JSON), no inventar aquí una heurística de segmentación de
+  texto libre.
+- **`LIQUIDITY_LIMITATION` se expone como constante de módulo, no como un
+  string hardcodeado dentro de `parse_financial_health_response`.**
+  Aunque hoy solo la usa esa función, es la misma limitación ya
+  documentada (no un texto nuevo) en `FINANCIAL_HEALTH_METRICS.md`;
+  exponerla como constante evita que una futura duplicación de este
+  texto (por ejemplo, si se agrega una función de reporte que también
+  necesite mencionar la limitación) diverja del texto original.
+- **`analyze_financial_health` no atrapa ni traduce excepciones.** Se
+  consideró que hacerlo aquí adelantaría una decisión de integración
+  (cómo debe comportarse este agente frente al protocolo
+  `AnalysisEngine`, incluyendo su manejo de errores para el orquestador)
+  que no corresponde a esta tarea de parseo, sino a "Orquestador mínimo"
+  (ver TASKS.md), evitando así sobre-diseñar antes de que exista ese
+  caso de uso concreto.
+- **Se mantiene el orden de `limitations`: primero `LIQUIDITY_LIMITATION`,
+  luego las advertencias de `metrics.warnings`.** Es un orden estable y
+  predecible (la limitación estructural del modelo siempre antes que las
+  advertencias específicas de los datos de una consulta puntual), útil
+  para cualquier prueba o reporte futuro que dependa de este orden.
 
 ## Validación realizada
 
-No fue posible ejecutar la suite de pruebas real vía `pytest` en este
-entorno de Claude Web (sin acceso a red para instalar dependencias). En
-su lugar, se reconstruyó un árbol mínimo equivalente de las
-dependencias ya existentes (`contracts.py`, `selection.py`,
-`anthropic_provider.py`, `config/__init__.py`, `FinancialStatement`,
-`prompts/financial_health.md` real) y se ejecutaron manualmente, con
-`unittest.mock`, los mismos escenarios cubiertos por los archivos de
-prueba nuevos (invocación exitosa con prompt+métricas en el payload,
-advertencia de `revenue == 0` propagada, proveedor no soportado,
-`load_prompt` exitoso/vacío/ausente, `build_ai_provider` exitoso/error).
-Todos los escenarios pasaron. Se recomienda correr `pytest` en el
-entorno real del proyecto para confirmar la integración completa junto
-con el resto de la suite existente.
+Igual que en la entrada anterior de este archivo, no fue posible
+ejecutar `pytest` real en este entorno de Claude Web (sin acceso a red
+para instalar dependencias). Se reconstruyó manualmente el escenario de
+`parse_financial_health_response` (construcción directa de
+`AIProviderResponse` y `FinancialHealthMetrics`, sin red) y se verificó
+con `unittest.mock` el flujo completo de `analyze_financial_health`
+mockeando `requests.post`, siguiendo el mismo patrón ya usado en
+`test_analysis_engines_financial_health_invoke.py`. Todos los escenarios
+cubiertos por los nuevos archivos de prueba pasaron en esta
+reconstrucción manual. Se recomienda correr `pytest` en el entorno real
+del proyecto para confirmar la integración completa junto con el resto
+de la suite existente.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/analysis_engines/prompts.py`
-- `investmentops/ai_providers/factory.py`
-- `investmentops/tests/test_analysis_engines_prompts.py`
-- `investmentops/tests/test_ai_providers_factory.py`
-- `investmentops/tests/test_analysis_engines_financial_health_invoke.py`
+- `investmentops/tests/test_analysis_engines_financial_health_parse.py`
 
 Modificados:
-- `investmentops/analysis_engines/financial_health.py` (se agregó
-  `invoke_financial_health_agent` y `AGENT_ID`; sin cambios en
-  `calculate_financial_health_metrics` ni `FinancialHealthMetrics`)
-- `investmentops/ai_providers/__init__.py` (re-exporta `build_ai_provider`)
+- `investmentops/analysis_engines/financial_health.py` (se agregaron
+  `LIQUIDITY_LIMITATION`, `parse_financial_health_response` y
+  `analyze_financial_health`; sin cambios en
+  `calculate_financial_health_metrics`, `FinancialHealthMetrics` ni
+  `invoke_financial_health_agent`)
 - `TASKS.md` (tarea marcada como completada, con referencia inline)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`,
-`prompts/financial_health.md`, `investmentops/ai_providers/contracts.py`,
-`investmentops/ai_providers/selection.py`,
-`investmentops/ai_providers/anthropic_provider.py`,
-`investmentops/ai_providers/EXTENDING.md`,
+`prompts/financial_health.md`,
 `investmentops/analysis_engines/contracts.py`,
-`investmentops/analysis_engines/FINANCIAL_HEALTH_METRICS.md`, y el resto
-del código existente.
+`investmentops/analysis_engines/FINANCIAL_HEALTH_METRICS.md`,
+`investmentops/analysis_engines/prompts.py`,
+`investmentops/ai_providers/*`, y el resto del código existente.
 
 ## Problemas encontrados
 
-Ninguno en la implementación. Limitación del entorno: sin acceso a red
-para instalar `pytest`/`requests` y correr la suite real (ver
-"Validación realizada" arriba); se compensó con una reconstrucción
-mínima y validación manual equivalente.
+Ninguno en la implementación. Misma limitación de entorno que en la
+entrada anterior: sin acceso a red para instalar `pytest`/`requests` y
+correr la suite real (ver "Validación realizada" arriba); se compensó
+con una reconstrucción mínima y validación manual equivalente.
 
 ## Próxima tarea recomendada
 
-La siguiente tarea sin empezar en la misma sección de `TASKS.md`
-("Agente de análisis: salud financiera") es:
+Con esto queda completa toda la sección "Agente de análisis: salud
+financiera" de la Fase 1 en `TASKS.md`. La siguiente sección con tareas
+pendientes es **"Agente de análisis: valoración"**, cuya primera tarea
+sin empezar es:
 
-1. *"Implementar el parseo de la respuesta del modelo al resultado
-   estructurado del agente (hallazgos, métricas, advertencias si faltan
-   datos, proveedor/modelo usado)."*
+1. *"Definir qué múltiplos concretos componen 'valoración básica' (ej.
+   P/E, P/B)."*
 
 Nota para la próxima conversación:
-- Esta tarea debe tomar el `AIProviderResponse` que ya devuelve
-  `invoke_financial_health_agent` (`response.content`,
-  `response.provider`, `response.model`, `response.generated_at`) y
-  construir un `AnalysisResult` (ver
-  `investmentops/analysis_engines/contracts.py`): `analysis_id`
-  (`"financial_health"`, ya disponible como `AGENT_ID`), `findings`
-  (derivados de `response.content`; decidir si es una lista de una sola
-  línea con el texto completo, o si se intenta segmentar por párrafos —
-  probablemente lo primero, dado que el prompt no exige un formato
-  estructurado), `supporting_metrics` (las mismas `FinancialHealthMetrics`
-  ya calculadas, no nada nuevo), `limitations` (al menos la limitación de
-  liquidez ya documentada en `FINANCIAL_HEALTH_METRICS.md`, más
-  cualquier advertencia de `FinancialHealthMetrics.warnings`), y
-  `provenance` (`AnalysisProvenance(ai_provider=response.provider,
-  ai_model=response.model, generated_at=response.generated_at)`).
-- Esta función probablemente debería combinarse con
-  `invoke_financial_health_agent` en una función de nivel superior (ej.
-  `analyze_financial_health`) que sea la que finalmente cumpla el
-  protocolo `AnalysisEngine` (`analyze(company_data, metrics=None) ->
-  AnalysisResult`) de `investmentops.analysis_engines.contracts` —
-  aunque decidir esa integración exacta (¿una clase que envuelva estas
-  funciones? ¿una función libre que ya cumpla el protocolo estructural
-  del `Protocol`?) es trabajo de esa tarea, no de esta.
-- No hay indicación en el prompt de que el modelo deba devolver un
-  formato estructurado (ej. JSON): la respuesta es texto libre en
-  español. El parseo, por tanto, es principalmente "empaquetar" el texto
-  como `findings`, no "extraer campos" de una respuesta estructurada.
-  Si se decide pedirle al modelo un formato más estructurado en el
-  futuro, sería un cambio al prompt (`prompts/financial_health.md`), no
-  a esta capa de parseo.
+- Esta es una tarea de diseño/documentación (igual que
+  `FINANCIAL_HEALTH_METRICS.md` lo fue para salud financiera), no de
+  código: debe decidir qué múltiplos son calculables con los campos que
+  **hoy** expone `MarketData` (`price`, `market_cap`, `multiples` ya
+  vacío por diseño) y `FinancialStatement` (`revenue`, `net_income`,
+  `debt`) — por ejemplo, P/E (`price / (net_income / shares_outstanding)`)
+  requeriría un dato de acciones en circulación (`shares_outstanding`)
+  que **ninguno** de los dos modelos de dominio expone hoy. Antes de
+  definir los múltiplos, conviene revisar explícitamente qué es
+  calculable sin inventar ni aproximar campos ausentes, siguiendo el
+  mismo criterio ya aplicado en `FINANCIAL_HEALTH_METRICS.md` (declarar
+  limitaciones explícitas en vez de forzar una fórmula con datos que no
+  corresponden).
+- Si el análisis concluye que ningún múltiplo estándar es calculable sin
+  extender antes `MarketData`/`FinancialStatement` (ej. agregar
+  `shares_outstanding`), esa extensión de modelo de dominio sería una
+  decisión a documentar explícitamente como parte de esa misma tarea o
+  como una tarea previa separada, no algo a resolver improvisando una
+  aproximación.
