@@ -1,38 +1,46 @@
-"""Transformación de datos crudos de un proveedor al modelo de dominio
-"Estados financieros normalizados" (FinancialStatement).
+"""Transformación de datos crudos de un proveedor a los modelos de dominio
+"Estados financieros normalizados" (FinancialStatement) y "Datos de
+mercado" (MarketData).
 
-Cubre la tarea "Implementar la transformación de datos crudos del
-proveedor al modelo 'Estados financieros normalizados'" (TASKS.md, Fase
-1, "Normalización y almacenamiento"). Traduce el `RawProviderData` que
-devuelve `investmentops.data_providers.fundamentals.FMPFundamentalsProvider`
-(payload con las claves ``"income_statement"``, ``"balance_sheet_statement"``
-y ``"quote"``, ver ese módulo) al modelo `FinancialStatement`
-(investmentops.data_layer.financial_statements), tomando el corte más
-reciente disponible.
+Cubre las tareas "Implementar la transformación de datos crudos del
+proveedor al modelo 'Estados financieros normalizados'" e "Implementar la
+transformación de datos crudos al modelo 'Datos de mercado'" (TASKS.md,
+Fase 1, "Normalización y almacenamiento"). Ambas transformaciones viven en
+el mismo módulo, siguiendo la recomendación dejada en PROGRESS.md tras
+implementar la primera: son responsabilidades del mismo tipo (traducir el
+`RawProviderData` que entrega
+`investmentops.data_providers.fundamentals.FMPFundamentalsProvider` a un
+modelo de dominio normalizado) y fragmentarlas en módulos separados no
+aporta claridad adicional.
 
-Alcance de esta tarea (Fase 1): un único corte -el más reciente, primer
-elemento de la lista `income_statement` tal como lo entrega FMP-, sin
-series históricas. Extender esto a series temporales es una tarea
-explícita y posterior de la Fase 3 (ver TASKS.md y
-investmentops/data_layer/financial_statements.py).
+`financial_statement_from_raw` traduce las claves ``"income_statement"``
+y ``"balance_sheet_statement"`` del payload; `market_data_from_raw`
+traduce la clave ``"quote"`` (ver ese módulo para la forma exacta del
+payload). Ambas toman el corte más reciente disponible (primer elemento
+de la lista correspondiente, tal como las entrega FMP), sin series
+históricas (eso es alcance explícito y posterior de la Fase 3, ver
+TASKS.md).
 
 Fuera de alcance de este módulo:
-- La transformación al modelo "Datos de mercado" (`MarketData`): tarea
-  separada, siguiente en TASKS.md.
+- El cálculo de múltiplos de valoración (P/E, P/B, etc.): responsabilidad
+  del agente de análisis de valoración (ver TASKS.md, "Agente de
+  análisis: valoración"), no de esta capa. `market_data_from_raw` deja
+  `MarketData.multiples` vacío por esta razón.
 - El cacheo/persistencia de los datos normalizados: tarea separada
   posterior (ver TASKS.md, "Normalización y almacenamiento").
 - Cualquier proveedor distinto de FMP: este módulo asume la forma
   concreta del `payload` que entrega `FMPFundamentalsProvider` (ver
   investmentops/data_providers/fundamentals.py). Si en el futuro se
-  agrega otro proveedor de datos fundamentales, su propia transformación
-  a `FinancialStatement` es una tarea aparte, sin modificar esta.
+  agrega otro proveedor de datos, su propia transformación es una tarea
+  aparte, sin modificar esta.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from investmentops.data_layer.financial_statements import FinancialStatement
+from investmentops.data_layer.market_data import MarketData
 from investmentops.data_providers.contracts import RawProviderData
 
 
@@ -40,9 +48,10 @@ class NormalizationError(RuntimeError):
     """Error al transformar datos crudos de un proveedor al modelo interno.
 
     Cubre el caso en que el `payload` crudo no trae los campos
-    imprescindibles para construir el modelo normalizado (ej. falta el
-    estado de resultados, no incluye la fecha de corte, o la fecha no
-    tiene un formato reconocible). Se distingue de `DataProviderError`
+    imprescindibles para construir el modelo normalizado correspondiente
+    (ej. falta el estado de resultados, falta la cotización, no incluye
+    la fecha de corte, o la fecha/timestamp no tiene un formato
+    reconocible). Se distingue de `DataProviderError`
     (investmentops.data_providers.contracts) porque el fallo no ocurre al
     consultar al proveedor -esa consulta ya tuvo éxito, `RawProviderData`
     ya existe-, sino al traducir su respuesta al modelo de dominio
@@ -131,4 +140,89 @@ def financial_statement_from_raw(raw: RawProviderData) -> FinancialStatement:
         debt=float(debt),
         source=raw.metadata.source,
         period_end=period_end,
+    )
+
+
+def market_data_from_raw(raw: RawProviderData) -> MarketData:
+    """Construye un `MarketData` a partir de datos crudos de FMP.
+
+    Toma el corte más reciente disponible: el primer elemento de
+    `raw.payload["quote"]` (ver
+    `investmentops.data_providers.fundamentals.FMPFundamentalsProvider`),
+    leyendo ``"price"`` y ``"marketCap"`` para precio y capitalización, y
+    ``"timestamp"`` (timestamp Unix en segundos, tal como lo entrega el
+    endpoint `/quote` de FMP) para la fecha de corte (`as_of`).
+
+    `MarketData.multiples` se deja siempre vacío: el cálculo de múltiplos
+    de valoración (P/E, P/B, etc.) es responsabilidad del agente de
+    análisis de valoración (ver ARCHITECTURE.md, componente 5, y
+    TASKS.md, "Agente de análisis: valoración"), no de esta capa de
+    normalización.
+
+    Parameters
+    ----------
+    raw:
+        Datos crudos ya obtenidos de un proveedor (ver
+        `investmentops.data_providers.contracts.RawProviderData`),
+        típicamente el resultado de
+        `FMPFundamentalsProvider.fetch(ticker)`.
+
+    Returns
+    -------
+    MarketData
+        El modelo de dominio normalizado, con `source` tomado de
+        `raw.metadata.source` (no de un valor fijo) y `multiples` vacío.
+
+    Raises
+    ------
+    NormalizationError
+        Si falta la cotización, si faltan los campos imprescindibles
+        (precio, capitalización, timestamp de cotización), o si el
+        timestamp no tiene un formato reconocible (se espera un
+        timestamp Unix en segundos).
+    """
+    quote = raw.payload.get("quote") or []
+    if not quote:
+        raise NormalizationError(
+            "No se puede construir 'Datos de mercado' "
+            f"para '{raw.ticker}': el payload crudo no trae 'quote'."
+        )
+    latest_quote = quote[0]
+
+    price = latest_quote.get("price")
+    market_cap = latest_quote.get("marketCap")
+    timestamp_raw = latest_quote.get("timestamp")
+
+    missing = [
+        field_name
+        for field_name, value in (
+            ("price", price),
+            ("market_cap", market_cap),
+            ("as_of (timestamp)", timestamp_raw),
+        )
+        if value is None
+    ]
+    if missing:
+        raise NormalizationError(
+            "No se puede construir 'Datos de mercado' "
+            f"para '{raw.ticker}': faltan campos imprescindibles en el "
+            f"payload crudo: {', '.join(missing)}."
+        )
+
+    try:
+        as_of = datetime.fromtimestamp(float(timestamp_raw), tz=timezone.utc).date()
+    except (TypeError, ValueError, OSError) as exc:
+        raise NormalizationError(
+            "No se puede construir 'Datos de mercado' "
+            f"para '{raw.ticker}': el timestamp de cotización "
+            f"'{timestamp_raw}' no tiene un formato reconocible (se "
+            "espera un timestamp Unix en segundos)."
+        ) from exc
+
+    return MarketData(
+        price=float(price),
+        market_cap=float(market_cap),
+        multiples={},
+        source=raw.metadata.source,
+        as_of=as_of,
     )

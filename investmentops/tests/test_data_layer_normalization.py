@@ -1,21 +1,23 @@
-"""Pruebas para la transformación de datos crudos de FMP al modelo
-"Estados financieros normalizados" (investmentops.data_layer.normalization).
+"""Pruebas para la transformación de datos crudos de FMP a los modelos
+"Estados financieros normalizados" y "Datos de mercado"
+(investmentops.data_layer.normalization).
 
-Cubre la tarea "Implementar la transformación de datos crudos del
-proveedor al modelo 'Estados financieros normalizados'" (TASKS.md, Fase
-1, "Normalización y almacenamiento"). No prueba la transformación al
-modelo "Datos de mercado" (`MarketData`) ni el cacheo de datos
-normalizados: esas son tareas separadas y posteriores (ver TASKS.md).
+Cubre las tareas "Implementar la transformación de datos crudos del
+proveedor al modelo 'Estados financieros normalizados'" e "Implementar la
+transformación de datos crudos al modelo 'Datos de mercado'" (TASKS.md,
+Fase 1, "Normalización y almacenamiento"). No prueba el cacheo de datos
+normalizados: esa es una tarea separada y posterior (ver TASKS.md).
 """
 
 from datetime import date, datetime, timezone
 
 import pytest
 
-from investmentops.data_layer import FinancialStatement
+from investmentops.data_layer import FinancialStatement, MarketData
 from investmentops.data_layer.normalization import (
     NormalizationError,
     financial_statement_from_raw,
+    market_data_from_raw,
 )
 from investmentops.data_providers.contracts import ProviderMetadata, RawProviderData
 
@@ -30,6 +32,9 @@ def _raw_data(payload: dict, source: str = "fmp") -> RawProviderData:
             reliability="alta",
         ),
     )
+
+
+# --- financial_statement_from_raw ------------------------------------------
 
 
 def test_financial_statement_from_raw_builds_statement_from_latest_period() -> None:
@@ -119,6 +124,113 @@ def test_financial_statement_from_raw_raises_when_date_is_invalid() -> None:
 
     with pytest.raises(NormalizationError, match="formato reconocible"):
         financial_statement_from_raw(raw)
+
+
+# --- market_data_from_raw ---------------------------------------------------
+
+
+def test_market_data_from_raw_builds_market_data_from_latest_quote() -> None:
+    raw = _raw_data(
+        {
+            "quote": [
+                {
+                    "price": 185.5,
+                    "marketCap": 2_900_000_000_000.0,
+                    "timestamp": 1735689600,  # 2025-01-01T00:00:00Z
+                },
+                {
+                    "price": 180.0,
+                    "marketCap": 2_800_000_000_000.0,
+                    "timestamp": 1703980800,  # cotización anterior, no debe usarse
+                },
+            ],
+        }
+    )
+
+    market_data = market_data_from_raw(raw)
+
+    assert isinstance(market_data, MarketData)
+    assert market_data.price == 185.5
+    assert market_data.market_cap == 2_900_000_000_000.0
+    assert market_data.multiples == {}
+    assert market_data.source == "fmp"
+    assert market_data.as_of == date(2025, 1, 1)
+
+
+def test_market_data_from_raw_uses_provider_metadata_source() -> None:
+    """El `source` del modelo debe venir de la procedencia, no de un valor fijo."""
+    raw = _raw_data(
+        {
+            "quote": [
+                {"price": 42.0, "marketCap": 1_000_000.0, "timestamp": 1735689600}
+            ]
+        },
+        source="example_provider",
+    )
+
+    market_data = market_data_from_raw(raw)
+
+    assert market_data.source == "example_provider"
+
+
+def test_market_data_from_raw_leaves_multiples_empty() -> None:
+    """El cálculo de múltiplos es responsabilidad del agente de valoración."""
+    raw = _raw_data(
+        {
+            "quote": [
+                {"price": 42.0, "marketCap": 1_000_000.0, "timestamp": 1735689600}
+            ]
+        }
+    )
+
+    market_data = market_data_from_raw(raw)
+
+    assert market_data.multiples == {}
+
+
+def test_market_data_from_raw_raises_when_quote_missing() -> None:
+    raw = _raw_data({"quote": []})
+
+    with pytest.raises(NormalizationError, match="quote"):
+        market_data_from_raw(raw)
+
+
+def test_market_data_from_raw_raises_when_price_is_missing() -> None:
+    raw = _raw_data({"quote": [{"marketCap": 1_000_000.0, "timestamp": 1735689600}]})
+
+    with pytest.raises(NormalizationError, match="price"):
+        market_data_from_raw(raw)
+
+
+def test_market_data_from_raw_raises_when_market_cap_is_missing() -> None:
+    raw = _raw_data({"quote": [{"price": 42.0, "timestamp": 1735689600}]})
+
+    with pytest.raises(NormalizationError, match="market_cap"):
+        market_data_from_raw(raw)
+
+
+def test_market_data_from_raw_raises_when_timestamp_is_missing() -> None:
+    raw = _raw_data({"quote": [{"price": 42.0, "marketCap": 1_000_000.0}]})
+
+    with pytest.raises(NormalizationError, match="as_of"):
+        market_data_from_raw(raw)
+
+
+def test_market_data_from_raw_raises_when_timestamp_is_invalid() -> None:
+    raw = _raw_data(
+        {
+            "quote": [
+                {
+                    "price": 42.0,
+                    "marketCap": 1_000_000.0,
+                    "timestamp": "not-a-timestamp",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(NormalizationError, match="formato reconocible"):
+        market_data_from_raw(raw)
 
 
 def test_normalization_error_is_a_runtime_error() -> None:

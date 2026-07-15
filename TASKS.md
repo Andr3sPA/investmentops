@@ -46,7 +46,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 ### Normalización y almacenamiento
 - [x] Implementar la transformación de datos crudos del proveedor al modelo "Estados financieros normalizados". — `financial_statement_from_raw` en `investmentops/data_layer/normalization.py` (ver PROGRESS.md). Toma el corte más reciente del `payload` que entrega `FMPFundamentalsProvider` (`income_statement`, `balance_sheet_statement`) y construye un `FinancialStatement`, señalando `NormalizationError` si faltan campos imprescindibles o la fecha no es interpretable.
-- [ ] Implementar la transformación de datos crudos al modelo "Datos de mercado".
+- [x] Implementar la transformación de datos crudos al modelo "Datos de mercado". — `market_data_from_raw` en `investmentops/data_layer/normalization.py` (ver PROGRESS.md). Toma el corte más reciente del `payload["quote"]` que entrega `FMPFundamentalsProvider` (`price`, `marketCap`, `timestamp`) y construye un `MarketData` con `multiples` vacío (su cálculo es responsabilidad del agente de valoración), señalando `NormalizationError` si faltan campos imprescindibles o el timestamp no es interpretable.
 - [ ] Definir el mecanismo de caché local (archivo o base embebida) para persistir datos normalizados.
 - [ ] Implementar el guardado de los datos normalizados en la caché tras cada consulta.
 - [ ] Implementar la lectura desde caché para evitar una nueva llamada al proveedor si el dato ya existe y es reciente.
