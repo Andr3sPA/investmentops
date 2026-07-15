@@ -60,7 +60,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 ### Agente de análisis: valoración
 - [x] Definir qué múltiplos concretos componen "valoración básica" (ej. P/E, P/B). — `investmentops/analysis_engines/VALUATION_METRICS.md` (ver PROGRESS.md). Decisión: `price_to_earnings` (`market_cap / net_income`) y `price_to_sales` (`market_cap / revenue`) son calculables con los campos actuales de `MarketData`/`FinancialStatement`, sin necesitar `shares_outstanding` (fórmulas agregadas, no por acción). P/B y EV/EBITDA quedan documentados como limitaciones explícitas: el modelo de dominio no expone patrimonio/`equity` (para P/B) ni EBITDA/`cash` (para EV/EBITDA) — no se inventa una aproximación.
-- [ ] Implementar el cálculo determinístico de esos múltiplos a partir del modelo normalizado.
+- [x] Implementar el cálculo determinístico de esos múltiplos a partir del modelo normalizado. — `calculate_valuation_metrics`/`ValuationMetrics` en `investmentops/analysis_engines/valuation.py` (ver PROGRESS.md). Calcula `price_to_earnings` (`market_cap / net_income`) y `price_to_sales` (`market_cap / revenue`) según lo decidido en `VALUATION_METRICS.md`. Si `net_income <= 0`, `price_to_earnings` se devuelve como `None` con advertencia explícita; si `revenue == 0`, `price_to_sales` se devuelve como `None` con su propia advertencia. Ambos casos pueden coexistir en `ValuationMetrics.warnings`, sin lanzar `ZeroDivisionError` ni inventar un valor.
 - [ ] Escribir el archivo de prompt del agente de valoración (fuera del código Python).
 - [ ] Implementar la invocación al proveedor de IA configurado con esos múltiplos + el prompt.
 - [ ] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente de valoración.
