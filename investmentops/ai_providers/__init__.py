@@ -49,12 +49,25 @@ Implementaciones concretas:
 - `investmentops.ai_providers.anthropic_provider.AnthropicAIProvider`:
   primera integración concreta (Anthropic), ver TASKS.md.
 
+La construcción de la instancia concreta correspondiente al proveedor
+resuelto por `resolve_agent_provider` (ej. traducir el texto
+``"anthropic"`` a una instancia de `AnthropicAIProvider`) ya está
+definida en `investmentops.ai_providers.factory` (ver TASKS.md, "Agente
+de análisis: salud financiera" > "Implementar la invocación al proveedor
+de IA configurado con esas métricas + el prompt") y también se re-exporta
+aquí:
+
+- `build_ai_provider`: dado un nombre de proveedor (ej. ``"anthropic"``)
+  y la configuración cargada, devuelve la instancia concreta de
+  `AIProvider` lista para invocar.
+
 Aún sin implementación: las integraciones restantes (Gemini, OpenAI,
 Ollama). Ver TASKS.md, sección "Interfaz de proveedores de IA" de la Fase
 1, para las tareas siguientes:
 - Dejar documentado (sin implementar aún si no es necesario para el MVP)
   cómo se sumarían las integraciones restantes sin modificar la interfaz
-  ni los agentes.
+  ni los agentes. — Ya cubierto en
+  `investmentops/ai_providers/EXTENDING.md`.
 """
 
 from investmentops.ai_providers.contracts import (
@@ -62,6 +75,7 @@ from investmentops.ai_providers.contracts import (
     AIProviderError,
     AIProviderResponse,
 )
+from investmentops.ai_providers.factory import build_ai_provider
 from investmentops.ai_providers.selection import (
     AgentProviderSelection,
     AgentProviderSelectionError,
@@ -74,5 +88,6 @@ __all__ = [
     "AIProviderResponse",
     "AgentProviderSelection",
     "AgentProviderSelectionError",
+    "build_ai_provider",
     "resolve_agent_provider",
 ]
