@@ -1,120 +1,127 @@
 # InvestmentOps — Progreso
 
-**Última actualización:** 2026-07-14
+**Última actualización:** 2026-07-15
 
 ## Última tarea completada
 
-Fase 1 → Agente de análisis: valoración → *"Implementar la invocación al
-proveedor de IA configurado con esos múltiplos + el prompt."*
+Fase 1 → Agente de análisis: valoración → *"Implementar el parseo de la
+respuesta del modelo al resultado estructurado del agente de
+valoración."*
 
 Antes de implementarla, se verificó que no estuviera ya satisfecha:
 `investmentops/analysis_engines/valuation.py` solo contenía
-`ValuationMetrics`/`calculate_valuation_metrics` (cálculo determinístico
-de P/E y P/S), sin ninguna función que invocara al proveedor de IA. La
-tarea anterior ("Escribir el archivo de prompt del agente de
-valoración") ya estaba completa (`prompts/valuation.md`), y quedaba
-disponible toda la infraestructura reutilizable
-(`investmentops.analysis_engines.prompts.load_prompt`,
-`investmentops.ai_providers.selection.resolve_agent_provider`,
-`investmentops.ai_providers.factory.build_ai_provider`) señalada como
-nota para esta tarea en la actualización anterior de este archivo.
+`ValuationMetrics`, `calculate_valuation_metrics` (cálculo determinístico
+de P/E y P/S) e `invoke_valuation_agent` (invocación al proveedor de IA,
+tarea anterior ya completada), sin ninguna función que tradujera el
+`AIProviderResponse` crudo a un `AnalysisResult`. Quedaba disponible toda
+la infraestructura reutilizable de `investmentops.analysis_engines.contracts`
+(`AnalysisResult`, `AnalysisProvenance`) y el patrón ya validado de
+`parse_financial_health_response` en
+`investmentops/analysis_engines/financial_health.py`, señalado como nota
+para esta tarea en la actualización anterior de este archivo.
 
 ## Qué se implementó
 
 **`investmentops/analysis_engines/valuation.py`** (modificado) — se
-agregó `invoke_valuation_agent`, siguiendo exactamente el mismo patrón
-ya usado en `invoke_financial_health_agent`
-(`investmentops/analysis_engines/financial_health.py`):
+agregaron `PRICE_TO_BOOK_LIMITATION`, `EV_EBITDA_LIMITATION`,
+`parse_valuation_response` y `analyze_valuation`, siguiendo exactamente
+el mismo patrón ya usado en `parse_financial_health_response` y
+`analyze_financial_health` (`investmentops/analysis_engines/financial_health.py`):
 
-- Se agregó `AGENT_ID = "valuation"`, consistente con el nombre del
-  archivo de prompt (`prompts/valuation.md`) y con `[agents]` en
-  `config.example.toml` (que ya trae `# valuation = "default"` como
-  ejemplo comentado).
-- `invoke_valuation_agent(market_data, statement, metrics, *, config=None)`:
-  1. Carga el prompt del agente con
-     `investmentops.analysis_engines.prompts.load_prompt(AGENT_ID)`.
-  2. Resuelve el proveedor/modelo configurado para `"valuation"` con
-     `resolve_agent_provider(AGENT_ID, cfg)`.
-  3. Construye la instancia concreta de `AIProvider` con
-     `build_ai_provider(selection.provider, config=cfg)` (hoy solo
-     `AnthropicAIProvider` está implementada).
-  4. Invoca `AIProvider.complete(prompt, data=...)`, enviando como
-     `data` el `MarketData` normalizado (`price`, `market_cap`,
-     `source`, `as_of`), el `FinancialStatement` normalizado (`revenue`,
-     `net_income`, `debt`, `source`, `period_end`) y las
-     `ValuationMetrics` ya calculadas (`price_to_earnings`,
-     `price_to_sales`, `warnings`) — nunca al revés: la IA nunca
-     calcula ni recalcula estos múltiplos, solo los interpreta,
-     conforme a `ARCHITECTURE.md`.
-  5. Devuelve el `AIProviderResponse` crudo (texto de interpretación +
-     metadatos de procedencia). No lo parsea a `AnalysisResult`: eso es
-     la tarea siguiente, aún pendiente.
-- El docstring del módulo se actualizó para documentar ambas piezas
-  (cálculo determinístico + invocación), mismo criterio ya usado en
-  `financial_health.py`.
-- No se modificó `ValuationMetrics` ni `calculate_valuation_metrics`
-  (ya estaban completos y correctos de la tarea anterior).
+- `PRICE_TO_BOOK_LIMITATION` y `EV_EBITDA_LIMITATION`: constantes de
+  texto, análogas a `LIQUIDITY_LIMITATION` en `financial_health.py`,
+  declarando las limitaciones ya documentadas en
+  `VALUATION_METRICS.md` (el modelo de dominio no expone `equity` ni
+  `ebitda`/`cash`). Se usan dos constantes separadas (no una sola,
+  como en `financial_health.py`) porque son dos ausencias distintas e
+  independientes (P/B y EV/EBITDA), cada una con su propia explicación.
+- `parse_valuation_response(response, metrics) -> AnalysisResult`:
+  - `analysis_id="valuation"` (`AGENT_ID`).
+  - `findings=[response.content]` (texto libre del modelo, sin
+    recortar ni reformatear, igual que en `financial_health.py`).
+  - `supporting_metrics` con `price_to_earnings`/`price_to_sales`,
+    tomados directamente de `metrics` (las mismas `ValuationMetrics`
+    ya calculadas de forma determinística), nunca del texto del
+    modelo.
+  - `limitations` con `PRICE_TO_BOOK_LIMITATION` y
+    `EV_EBITDA_LIMITATION` siempre presentes (en ese orden), seguidas
+    de cualquier advertencia en `metrics.warnings` (ej. los casos
+    `net_income <= 0` o `revenue == 0`).
+  - `provenance` construida desde `response.provider`/`response.model`/
+    `response.generated_at`.
+- `analyze_valuation(market_data, statement, metrics=None, *, config=None) -> AnalysisResult`:
+  función de conveniencia que encadena `calculate_valuation_metrics`
+  (solo si `metrics` no se indica) → `invoke_valuation_agent` →
+  `parse_valuation_response`, análoga a `analyze_financial_health`. No
+  traduce las excepciones de las funciones que invoca.
+- El docstring del módulo se actualizó para documentar las tres piezas
+  (cálculo determinístico + invocación + parseo), mismo criterio ya
+  usado en `financial_health.py`.
+- No se modificaron `ValuationMetrics`, `calculate_valuation_metrics` ni
+  `invoke_valuation_agent` (ya estaban completos y correctos de tareas
+  anteriores).
 
-**`investmentops/tests/test_analysis_engines_valuation_invoke.py`**
-(nuevo) — pruebas para `invoke_valuation_agent`, análogas a
-`test_analysis_engines_financial_health_invoke.py`: mockean
-`requests.post` (nunca hacen una llamada de red real) y cubren:
+**`investmentops/tests/test_analysis_engines_valuation_parse.py`**
+(nuevo) — pruebas para `parse_valuation_response` y `analyze_valuation`,
+análogas a `test_analysis_engines_financial_health_parse.py`:
 
-- Que devuelve un `AIProviderResponse` con el contenido esperado.
-- Que el prompt enviado corresponde al de valoración (contiene
-  "valoración").
-- Que `data` incluye `market_data`, `financial_statement` y los
-  múltiplos (`price_to_earnings`, `price_to_sales`), incluyendo fechas
-  (`period_end`, `as_of`).
-- Que una advertencia de `ValuationMetrics.warnings` (ej.
-  `net_income == 0`) se propaga en el contenido enviado.
-- Que se usa el modelo configurado en `[ai_providers.default].model`.
-- Que se propagan `AIProviderError` (proveedor no soportado),
-  `AgentProviderSelectionError` (sin proveedor resoluble) y
-  `PromptError` (fallo al cargar el prompt) sin ser capturadas ni
-  traducidas.
+- Que `parse_valuation_response` devuelve un `AnalysisResult` con
+  `analysis_id="valuation"`.
+- Que `findings` usa el texto crudo del modelo.
+- Que `supporting_metrics` viene de `metrics` (las ya calculadas), no
+  del texto del modelo, aunque el modelo "sugiera" otro valor.
+- Que `limitations` siempre incluye `PRICE_TO_BOOK_LIMITATION` y
+  `EV_EBITDA_LIMITATION`, y que se agregan las advertencias de
+  `metrics.warnings` a continuación cuando existen (ej. `net_income <= 0`
+  y `revenue == 0` simultáneos: 4 limitaciones en total).
+- Que `provenance` se construye desde los metadatos de la respuesta.
+- Que el `AnalysisResult` resultante es inmutable.
+- Pruebas de punta a punta para `analyze_valuation` (mockeando
+  `requests.post`, nunca una llamada de red real): resultado completo,
+  reutilización de métricas ya calculadas sin recalcular, y propagación
+  de advertencias de casos degenerados hasta las `limitations` finales.
 
 ## Decisiones tomadas
 
-- **Mismo patrón que `invoke_financial_health_agent`**, sin
-  desviaciones: misma forma de resolver configuración
-  (`config if config is not None else load_config()`), mismo orden
-  (cargar prompt → resolver proveedor → construir instancia → invocar),
-  mismo criterio de no traducir excepciones (`PromptError`,
-  `AgentProviderSelectionError`, `AIProviderError` se propagan tal
-  cual, igual que en `financial_health.py`).
-- **Se envían `MarketData` y `FinancialStatement` completos como
-  `data`, no solo los múltiplos ya calculados**: mismo criterio ya
-  aplicado en `invoke_financial_health_agent`, que envía el
-  `FinancialStatement` completo además de las métricas — le da al
-  modelo el contexto completo (fuente, fecha de corte) para su
-  interpretación, no solo los números derivados.
-- **No se implementó todavía el parseo de la respuesta a
-  `AnalysisResult`** (`parse_valuation_response`) ni una función de
-  conveniencia equivalente a `analyze_financial_health`: siguiendo la
-  instrucción de implementar solo una tarea por conversación, y porque
-  esa es una tarea separada y explícita en `TASKS.md`.
+- **Mismo patrón que `parse_financial_health_response`/
+  `analyze_financial_health`**, sin desviaciones: mismo orden de
+  campos en `AnalysisResult`, mismo criterio de no recalcular ni
+  derivar métricas del texto del modelo, mismo criterio de no traducir
+  excepciones en la función de conveniencia.
+- **Dos constantes de limitación separadas** (`PRICE_TO_BOOK_LIMITATION`,
+  `EV_EBITDA_LIMITATION`) en vez de una sola combinada: a diferencia de
+  la liquidez en `financial_health.py` (una única ausencia), aquí hay
+  dos múltiplos distintos y no calculables por razones distintas
+  (`equity` ausente vs. `ebitda`/`cash` ausentes), documentados por
+  separado en `VALUATION_METRICS.md`; mantenerlas como constantes
+  separadas conserva esa distinción y facilita que pruebas o reportes
+  futuros verifiquen cada una de forma independiente.
+- **`analyze_valuation` se agregó en la misma tarea** (no se difirió),
+  siguiendo la nota dejada en la actualización anterior de este archivo
+  y el precedente ya sentado por `analyze_financial_health`, que
+  también se agregó como parte de la tarea de parseo de su propio
+  agente.
 
 ## Validación realizada
 
-Revisión manual del código contra el patrón ya validado de
-`invoke_financial_health_agent` y sus pruebas
-(`test_analysis_engines_financial_health_invoke.py`). Las pruebas nuevas
-(`test_analysis_engines_valuation_invoke.py`) siguen la misma
-estructura y mockean la capa HTTP (`requests.post`), sin depender de
-credenciales reales ni de red. No se ejecutó la suite completa en este
-entorno (Claude Web, sin acceso al repositorio real); se dejan los
-archivos para que el usuario los integre y corra `pytest` localmente.
+Revisión manual del código y las pruebas nuevas contra el patrón ya
+validado de `parse_financial_health_response`/`analyze_financial_health`
+y sus pruebas (`test_analysis_engines_financial_health_parse.py`). No se
+ejecutó la suite completa en este entorno (Claude Web, sin acceso al
+repositorio real); se dejan los archivos para que el usuario los integre
+y corra `pytest` localmente.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_analysis_engines_valuation_invoke.py`
+- `investmentops/tests/test_analysis_engines_valuation_parse.py`
 
 Modificados:
-- `investmentops/analysis_engines/valuation.py` (se agregó `AGENT_ID` e
-  `invoke_valuation_agent`; `ValuationMetrics`/
-  `calculate_valuation_metrics` se mantienen sin cambios funcionales)
+- `investmentops/analysis_engines/valuation.py` (se agregaron
+  `PRICE_TO_BOOK_LIMITATION`, `EV_EBITDA_LIMITATION`,
+  `parse_valuation_response` y `analyze_valuation`; `ValuationMetrics`,
+  `calculate_valuation_metrics` e `invoke_valuation_agent` se mantienen
+  sin cambios funcionales)
 - `TASKS.md` (tarea marcada como completada, con referencia inline)
 - `PROGRESS.md` (este archivo)
 
@@ -131,26 +138,33 @@ Ninguno.
 
 ## Próxima tarea recomendada
 
-La siguiente tarea sin empezar en "Agente de análisis: valoración" es:
+Con esta tarea, la sección "Agente de análisis: valoración" de la Fase 1
+queda completa (mismo estado que "Agente de análisis: salud
+financiera"). La siguiente sección sin empezar en `TASKS.md` es
+**"Orquestador mínimo"**, cuya primera tarea es:
 
-1. *"Implementar el parseo de la respuesta del modelo al resultado
-   estructurado del agente de valoración."*
+1. *"Implementar la función que recibe un ticker y dispara la consulta
+   al proveedor de Fase 1."*
 
 Nota para la próxima conversación:
-- Seguir el mismo patrón de `parse_financial_health_response` en
-  `investmentops/analysis_engines/financial_health.py`: construir un
-  `AnalysisResult` con `analysis_id=AGENT_ID` (`"valuation"`),
-  `findings=[response.content]`, `supporting_metrics` con
-  `price_to_earnings`/`price_to_sales` (tomados de `ValuationMetrics`,
-  nunca del texto del modelo), `limitations` con las limitaciones
-  explícitas de P/B y EV/EBITDA ya documentadas en
-  `VALUATION_METRICS.md` (análogas a `LIQUIDITY_LIMITATION` en
-  `financial_health.py`) más cualquier advertencia de
-  `ValuationMetrics.warnings`, y `provenance` construida desde
-  `response.provider`/`response.model`/`response.generated_at`.
-- Considerar agregar también una función de conveniencia
-  `analyze_valuation` que encadene `calculate_valuation_metrics` →
-  `invoke_valuation_agent` → `parse_valuation_response`, análoga a
-  `analyze_financial_health`.
-- Reutilizar `AnalysisResult`/`AnalysisProvenance` de
-  `investmentops.analysis_engines.contracts` sin modificarlas.
+- Ya existe toda la infraestructura que esta función debe orquestar:
+  `FMPFundamentalsProvider.fetch` (`investmentops/data_providers/
+  fundamentals.py`), la lectura/escritura de caché
+  (`investmentops.data_layer.cache.load_financial_statement`/
+  `load_market_data`/`save_financial_statement`/`save_market_data`) y
+  la normalización (`investmentops.data_layer.normalization.
+  financial_statement_from_raw`/`market_data_from_raw`).
+- Esta primera tarea del orquestador probablemente deba: intentar leer
+  desde caché primero (evitar la llamada al proveedor si el dato es
+  reciente), y si no hay dato reciente, consultar
+  `FMPFundamentalsProvider.fetch(ticker)`, normalizar el resultado y
+  guardarlo en caché — pero confirmar el alcance exacto en la próxima
+  conversación antes de implementar, ya que TASKS.md desglosa esto en
+  varias tareas pequeñas ("recibe un ticker y dispara la consulta",
+  "paso a normalización", "invocación de los dos agentes", "ensamblado
+  en ResearchResult", "manejo de fallos"): esta primera tarea concreta
+  debería limitarse solo a disparar la consulta al proveedor, sin
+  adelantar el resto.
+- Los dos agentes de análisis (`analyze_financial_health`,
+  `analyze_valuation`) ya están completos y listos para ser invocados
+  por el orquestador en una tarea posterior de la misma sección.

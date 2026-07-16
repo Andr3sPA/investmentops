@@ -1,13 +1,20 @@
-"""Agente de análisis: valoración — cálculo determinístico de múltiplos e
-invocación al proveedor de IA configurado.
+"""Agente de análisis: valoración — cálculo determinístico de múltiplos,
+invocación al proveedor de IA configurado y parseo de su respuesta.
 
-Cubre, en un mismo módulo, dos tareas relacionadas de TASKS.md, Fase 1,
+Cubre, en un mismo módulo, tres tareas relacionadas de TASKS.md, Fase 1,
 "Agente de análisis: valoración":
 
 - "Implementar el cálculo determinístico de esos múltiplos a partir del
   modelo normalizado." (`calculate_valuation_metrics`).
 - "Implementar la invocación al proveedor de IA configurado con esos
   múltiplos + el prompt." (`invoke_valuation_agent`).
+- "Implementar el parseo de la respuesta del modelo al resultado
+  estructurado del agente de valoración." (`parse_valuation_response`).
+
+Se agrega además `analyze_valuation`, una función de conveniencia que
+encadena las tres piezas anteriores, mismo criterio ya aplicado en
+`investmentops.analysis_engines.financial_health.analyze_financial_health`
+para el agente de salud financiera.
 
 Implementa exactamente los múltiplos ya decididos en
 `investmentops/analysis_engines/VALUATION_METRICS.md`:
@@ -17,7 +24,11 @@ Implementa exactamente los múltiplos ya decididos en
 - **P/B y EV/EBITDA:** fuera de alcance (limitaciones explícitas
   documentadas en `VALUATION_METRICS.md`; ni `MarketData` ni
   `FinancialStatement` exponen `equity`, `ebitda` o `cash`). Este módulo
-  no calcula ni aproxima ninguno de los dos.
+  no calcula ni aproxima ninguno de los dos, y `parse_valuation_response`
+  declara ambas ausencias explícitamente en
+  `AnalysisResult.limitations`, mismo criterio ya usado por
+  `LIQUIDITY_LIMITATION` en
+  `investmentops.analysis_engines.financial_health`.
 
 Conforme a `ARCHITECTURE.md` ("La IA es un mecanismo central, no un
 accesorio" / "El cálculo determinístico de métricas... es una entrada
@@ -68,20 +79,52 @@ para `revenue == 0`, ya anticipado en `VALUATION_METRICS.md`:
 
 Esta función devuelve el `AIProviderResponse` crudo (texto de respuesta +
 metadatos de procedencia). No interpreta ni parsea ese texto por sí
-misma: el parseo a `AnalysisResult` es una tarea separada y posterior
-(ver TASKS.md, "Agente de análisis: valoración" > "Implementar el parseo
-de la respuesta del modelo al resultado estructurado del agente de
-valoración"), análoga a
-`financial_health.parse_financial_health_response`.
+misma: ese trabajo lo hace `parse_valuation_response`.
+
+## Parseo de la respuesta a `AnalysisResult`
+
+`parse_valuation_response` traduce un `AIProviderResponse` (más las
+`ValuationMetrics` ya calculadas, las mismas que se enviaron al
+proveedor de IA) a la estructura común `AnalysisResult` definida en
+`investmentops.analysis_engines.contracts`, mismo criterio ya aplicado
+por `parse_financial_health_response`:
+
+- `analysis_id`: siempre `AGENT_ID` (``"valuation"``).
+- `findings`: el texto de interpretación del modelo
+  (`response.content`), como un único hallazgo. Igual que
+  `prompts/financial_health.md`, `prompts/valuation.md` no le pide al
+  modelo un formato estructurado: es texto libre en español, por lo que
+  "parsear" aquí significa empaquetar ese texto como hallazgo, no
+  extraer campos de una respuesta estructurada.
+- `supporting_metrics`: las mismas `ValuationMetrics` ya calculadas de
+  forma determinística (`price_to_earnings`, `price_to_sales`) — nunca
+  un valor nuevo derivado del texto del modelo, conforme a
+  `ARCHITECTURE.md` ("La IA es un mecanismo central, no un accesorio").
+- `limitations`: siempre incluye las limitaciones de P/B y EV/EBITDA ya
+  documentadas en `VALUATION_METRICS.md` (este agente no calcula ninguno
+  de los dos), más cualquier advertencia de `ValuationMetrics.warnings`
+  (ej. los casos `net_income <= 0` o `revenue == 0`).
+- `provenance`: `AnalysisProvenance(ai_provider=response.provider,
+  ai_model=response.model, generated_at=response.generated_at)`, tomado
+  directamente de los metadatos que ya entrega el proveedor de IA.
+
+## Función de conveniencia `analyze_valuation`
+
+Encadena `calculate_valuation_metrics` (si no se pasan métricas ya
+calculadas) → `invoke_valuation_agent` → `parse_valuation_response`,
+mismo criterio ya aplicado por
+`investmentops.analysis_engines.financial_health.analyze_financial_health`.
+No traduce las excepciones de las funciones que invoca (`PromptError`,
+`AgentProviderSelectionError`, `AIProviderError`) a `AnalysisEngineError`:
+esa decisión de integración corresponde al "Orquestador mínimo" (ver
+TASKS.md), no a esta tarea de parseo.
 
 Fuera de alcance de este módulo:
-- P/B y EV/EBITDA: limitaciones ya documentadas en
-  `VALUATION_METRICS.md`; se declararán en `AnalysisResult.limitations`
-  en la tarea de parseo, no en este módulo.
 - El contenido del prompt en sí (vive en `prompts/valuation.md`, fuera
   del código Python, ver `prompts/README.md`).
-- El parseo de la respuesta del modelo a `AnalysisResult`: tarea
-  separada y posterior.
+- Traducir los errores de este agente a `AnalysisEngineError` para
+  cumplir literalmente el protocolo `AnalysisEngine`: tarea separada
+  (ver TASKS.md, "Orquestador mínimo").
 """
 
 from __future__ import annotations
@@ -94,6 +137,7 @@ from investmentops.ai_providers import (
     build_ai_provider,
     resolve_agent_provider,
 )
+from investmentops.analysis_engines.contracts import AnalysisProvenance, AnalysisResult
 from investmentops.analysis_engines.prompts import load_prompt
 from investmentops.config import load_config
 from investmentops.data_layer.financial_statements import FinancialStatement
@@ -102,9 +146,30 @@ from investmentops.data_layer.market_data import MarketData
 #: Identificador de este agente, usado tanto para localizar su archivo de
 #: prompt (`prompts/valuation.md`, ver `prompts/README.md`) como para
 #: resolver su proveedor de IA configurado (`config.local.toml`, sección
-#: `[agents]`, ver CONFIGURATION.md) y como futuro
-#: `AnalysisResult.analysis_id` (tarea de parseo, aún pendiente).
+#: `[agents]`, ver CONFIGURATION.md) y como `AnalysisResult.analysis_id`.
 AGENT_ID = "valuation"
+
+#: Limitación explícita de Price/Book (P/B), conforme a
+#: `VALUATION_METRICS.md`: el modelo de dominio normalizado no expone
+#: patrimonio (`equity`/`book_value`), por lo que este agente nunca
+#: calcula ni aproxima P/B. Se declara siempre en
+#: `AnalysisResult.limitations`, en vez de omitir el tema en silencio.
+PRICE_TO_BOOK_LIMITATION = (
+    "No se dispone de datos de patrimonio (equity/book_value) en el "
+    "modelo de dominio normalizado actual; este análisis no incluye el "
+    "múltiplo Price/Book (P/B)."
+)
+
+#: Limitación explícita de EV/EBITDA, conforme a `VALUATION_METRICS.md`:
+#: el modelo de dominio normalizado no expone EBITDA ni efectivo (`cash`),
+#: por lo que este agente nunca calcula ni aproxima EV/EBITDA. Se declara
+#: siempre en `AnalysisResult.limitations`, en vez de omitir el tema en
+#: silencio.
+EV_EBITDA_LIMITATION = (
+    "No se dispone de datos de EBITDA ni de efectivo (cash) en el modelo "
+    "de dominio normalizado actual; este análisis no incluye el múltiplo "
+    "EV/EBITDA."
+)
 
 
 @dataclass(frozen=True)
@@ -131,8 +196,9 @@ class ValuationMetrics:
         ambos múltiplos se calcularon sin problema. No incluye las
         limitaciones de P/B ni EV/EBITDA (ausencias estructurales del
         modelo de dominio, no casos degenerados de los datos; ya
-        documentadas aparte en `VALUATION_METRICS.md` y a declarar en la
-        tarea de parseo del agente).
+        documentadas aparte en `VALUATION_METRICS.md` y declaradas en
+        `parse_valuation_response` vía `PRICE_TO_BOOK_LIMITATION` y
+        `EV_EBITDA_LIMITATION`).
     """
 
     price_to_earnings: float | None
@@ -243,8 +309,7 @@ def invoke_valuation_agent(
         La respuesta cruda del proveedor de IA (texto de interpretación +
         metadatos de procedencia: proveedor, modelo, fecha). Este
         resultado **no** se parsea aquí a la estructura final del agente
-        (`AnalysisResult`): esa es una tarea separada y posterior (ver
-        TASKS.md).
+        (`AnalysisResult`); ver `parse_valuation_response`.
 
     Raises
     ------
@@ -295,3 +360,117 @@ def invoke_valuation_agent(
     }
 
     return provider.complete(prompt, data=data)
+
+
+def parse_valuation_response(
+    response: AIProviderResponse,
+    metrics: ValuationMetrics,
+) -> AnalysisResult:
+    """Traduce la respuesta cruda del proveedor de IA a un `AnalysisResult`.
+
+    Empaqueta el texto de interpretación del modelo (`response.content`)
+    como el único hallazgo del agente, adjunta las mismas métricas ya
+    calculadas de forma determinística (nunca un valor nuevo derivado del
+    texto del modelo) y construye la procedencia a partir de los
+    metadatos que ya entrega el proveedor de IA. Mismo patrón ya usado
+    por
+    `investmentops.analysis_engines.financial_health.parse_financial_health_response`.
+
+    Parameters
+    ----------
+    response:
+        La respuesta cruda devuelta por `invoke_valuation_agent` (texto
+        de interpretación + proveedor/modelo/fecha de generación).
+    metrics:
+        Las mismas `ValuationMetrics` que se enviaron al proveedor de IA
+        en `invoke_valuation_agent` (no se recalculan ni se derivan de
+        `response`).
+
+    Returns
+    -------
+    AnalysisResult
+        - `analysis_id`: siempre `AGENT_ID` (``"valuation"``).
+        - `findings`: una lista con un único elemento, el texto de
+          `response.content` (sin recortar ni reformatear: el prompt no
+          exige un formato estructurado, ver docstring del módulo).
+        - `supporting_metrics`: `{"price_to_earnings": ..., "price_to_sales": ...}`,
+          tomados directamente de `metrics`.
+        - `limitations`: siempre incluye `PRICE_TO_BOOK_LIMITATION` y
+          `EV_EBITDA_LIMITATION`, seguidas de cualquier advertencia en
+          `metrics.warnings` (ej. los casos `net_income <= 0` o
+          `revenue == 0`).
+        - `provenance`: `AnalysisProvenance(ai_provider=response.provider,
+          ai_model=response.model, generated_at=response.generated_at)`.
+    """
+    findings = [response.content]
+    supporting_metrics = {
+        "price_to_earnings": metrics.price_to_earnings,
+        "price_to_sales": metrics.price_to_sales,
+    }
+    limitations = [
+        PRICE_TO_BOOK_LIMITATION,
+        EV_EBITDA_LIMITATION,
+        *metrics.warnings,
+    ]
+    provenance = AnalysisProvenance(
+        ai_provider=response.provider,
+        ai_model=response.model,
+        generated_at=response.generated_at,
+    )
+
+    return AnalysisResult(
+        analysis_id=AGENT_ID,
+        findings=findings,
+        supporting_metrics=supporting_metrics,
+        limitations=limitations,
+        provenance=provenance,
+    )
+
+
+def analyze_valuation(
+    market_data: MarketData,
+    statement: FinancialStatement,
+    metrics: ValuationMetrics | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> AnalysisResult:
+    """Produce el `AnalysisResult` completo de valoración para una empresa.
+
+    Función de conveniencia que encadena, en orden,
+    `calculate_valuation_metrics` (solo si `metrics` no se indica),
+    `invoke_valuation_agent` y `parse_valuation_response`. No traduce las
+    excepciones que puedan levantar esas funciones (ver "Fuera de
+    alcance" en el docstring del módulo): quien invoque esta función es
+    responsable de capturarlas si necesita continuar el flujo ante un
+    fallo parcial (ese manejo es responsabilidad del "Orquestador
+    mínimo", ver TASKS.md). Mismo patrón ya usado por
+    `investmentops.analysis_engines.financial_health.analyze_financial_health`.
+
+    Parameters
+    ----------
+    market_data:
+        El `MarketData` normalizado de la empresa a analizar.
+    statement:
+        El `FinancialStatement` normalizado de la misma empresa.
+    metrics:
+        Métricas ya calculadas, si se quiere evitar recalcularlas (por
+        ejemplo, si ya se calcularon antes para otro propósito). Si no
+        se indica, se calculan aquí mismo con
+        `calculate_valuation_metrics`.
+    config:
+        Configuración ya cargada, propagada a `invoke_valuation_agent`.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado estructurado completo del agente de valoración.
+    """
+    resolved_metrics = (
+        metrics
+        if metrics is not None
+        else calculate_valuation_metrics(market_data, statement)
+    )
+    response = invoke_valuation_agent(
+        market_data, statement, resolved_metrics, config=config
+    )
+    return parse_valuation_response(response, resolved_metrics)
