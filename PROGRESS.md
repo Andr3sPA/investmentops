@@ -4,147 +4,161 @@
 
 ## Última tarea completada
 
-Fase 1 → CLI → *"Implementar la impresión en consola del resultado (texto simple, sin formato de reporte todavía)."*
+Fase 1 → CLI → *"Implementar mensajes de error legibles en consola ante fallos del flujo."*
+
+Con esta tarea se completa por entero la sección "CLI" de la Fase 1 en `TASKS.md`.
 
 ## Verificación previa (sin duplicar trabajo)
 
 Antes de implementar, se confirmó que esta tarea **no** estaba satisfecha
-todavía: `dispatch` (`investmentops/cli/__init__.py`) ya devolvía un
-`ResearchResult` completo, pero no existía ninguna función que lo
-tradujera a texto legible para consola, y `investmentops/__main__.py`
-solo probaba la carga de `config.local.toml` (no invocaba `parse_args`
-ni `dispatch`). Por lo tanto, esta tarea sí requería código nuevo.
+todavía: `investmentops/__main__.py` ya capturaba `ConfigError`, pero con
+un mensaje mínimo sin prefijo claro (`f"[config] {exc}"`), impreso con
+`print()` normal (es decir, mezclado con `stdout`, no separado a
+`stderr`), y sin que el proceso terminara con un código de salida
+distinto de `0` ante ese fallo. Además, todo el flujo vivía directamente
+dentro del bloque `if __name__ == "__main__":`, sin una función
+invocable ni testeable de forma aislada — no existía ningún archivo de
+pruebas para `investmentops.__main__`. Por lo tanto, esta tarea sí
+requería código nuevo.
+
+Se revisó también qué otros fallos de flujo podrían llegar a escapar
+hasta este punto: `investigate()` (`investmentops/core/orchestrator.py`)
+ya captura `DataProviderError`, `NormalizationError`, `PromptError`,
+`AgentProviderSelectionError` y `AIProviderError`, traduciéndolos a
+`ResearchFailure` dentro del propio `ResearchResult` (ya presentados por
+`format_research_result`, ver la tarea anterior). El único fallo que
+puede escapar de `dispatch` en el uso normal de la CLI
+(`config=None`, cada pieza del pipeline resuelve `config.local.toml`
+por sí misma) es `ConfigError`. Los argumentos inválidos de `argparse`
+(ticker vacío, subcomando ausente/desconocido, `--help`) ya terminan el
+proceso con un mensaje legible en `stderr` vía el mecanismo estándar de
+`argparse` (`SystemExit`), sin necesidad de intervención adicional.
 
 ## Qué se implementó
 
-**`investmentops/cli/__init__.py`** (modificado) — se agregó:
+**`investmentops/__main__.py`** (modificado) — se extrajo el flujo
+completo a una función `main(argv: Sequence[str] | None = None) -> int`,
+en vez de dejarlo solo en el bloque `if __name__ == "__main__":`:
 
-- `format_research_result(result: ResearchResult) -> str`: traduce un
-  `ResearchResult` a texto plano para consola, sin ningún formato de
-  reporte (Markdown/HTML son capacidades de la Fase 2):
-  - Encabezado con el ticker (`result.company.ticker`) y la fecha de
-    ensamblado (`result.generated_at.isoformat()`).
-  - Por cada `AnalysisResult` en `result.analysis_results`, en el orden
-    en que ya vienen (salud financiera → valoración): su `analysis_id`,
-    sus `findings`, sus `supporting_metrics`, sus `limitations` (solo si
-    la lista no está vacía, para no imprimir una sección vacía), y el
-    proveedor/modelo de IA que generó la interpretación
-    (`AnalysisProvenance`).
-  - Si `analysis_results` está vacío, lo indica explícitamente
-    (`"No se completó ningún análisis."`) en vez de omitir la sección en
-    silencio.
-  - Si `result.failures` no está vacío, una sección final
-    `=== Fallos parciales ===` que lista cada `ResearchFailure` (`stage`,
-    `identifier`, `reason`); se omite por completo si no hay fallos.
-  - La función solo devuelve el texto formateado; no imprime nada por sí
-    misma.
-- Se actualizó el docstring del módulo para documentar esta pieza nueva
-  junto a las ya existentes (`build_parser`, `parse_args`,
-  `_validate_ticker`, `dispatch`), sin modificar el comportamiento de
-  ninguna de ellas.
+- `main()` llama a `parse_args(argv)` (propaga `SystemExit` de
+  `argparse` sin capturarlo, comportamiento estándar y ya legible).
+- Si `dispatch(args)` tiene éxito, imprime
+  `format_research_result(result)` en `stdout` y devuelve `0`.
+- Si `dispatch(args)` levanta `ConfigError`, imprime
+  `f"Error de configuración: {exc}"` en **`stderr`** (con
+  `file=sys.stderr`, para no mezclarlo con la salida normal del programa
+  ni con scripts que redirijan solo `stdout`) y devuelve `1`. El mensaje
+  de `ConfigError` ya trae, desde `investmentops/config/__init__.py`, la
+  instrucción concreta para resolverlo (`cp config.example.toml
+  config.local.toml`), así que el nuevo prefijo `"Error de
+  configuración: "` solo aporta contexto sin reconstruir esa guía.
+- El bloque `if __name__ == "__main__":` quedó reducido a
+  `sys.exit(main())`, propagando el código de salida devuelto por
+  `main()` (mecanismo estándar para que el proceso real termine con el
+  código correcto).
+- Se actualizó por completo el docstring del módulo, documentando el
+  alcance exacto de esta tarea: qué fallos puede dejar escapar
+  `dispatch` (solo `ConfigError`), por qué los argumentos inválidos de
+  `argparse` no requieren manejo adicional, y el contrato de `main()`.
 
-**`investmentops/__main__.py`** (modificado) — se conectó al flujo real:
-`parse_args()` → `dispatch(args)` → `print(format_research_result(result))`.
-Se mantuvo el único manejo de error que ya existía (`ConfigError` si
-falta `config.local.toml`), sin agregar traducción de otros errores:
-`dispatch`/`investigate` ya capturan `DataProviderError`,
-`NormalizationError`, `PromptError`, `AgentProviderSelectionError` y
-`AIProviderError` como `ResearchFailure` dentro del propio
-`ResearchResult`, por lo que esos fallos ya se ven reflejados en la
-salida de `format_research_result` sin necesidad de una excepción.
-Mensajes de error más elaborados (ej. para `ConfigError`) quedan para la
-tarea siguiente, intencionalmente separada.
-
-**`investmentops/tests/test_cli_output.py`** (nuevo) — cubre:
-- El ticker y la fecha de ensamblado aparecen en la salida.
-- `analysis_id` y `findings` de cada análisis aparecen en la salida, en
-  el orden en que se recibieron.
-- `supporting_metrics` aparecen listadas.
-- `limitations` aparecen solo cuando la lista no está vacía (la sección
-  `"Limitaciones:"` se omite si está vacía).
-- El proveedor y modelo de IA (`AnalysisProvenance`) aparecen en la
-  salida.
-- Si no hay `analysis_results`, se indica explícitamente
-  (`"No se completó ningún análisis."`).
-- Si hay `failures`, aparece la sección `"Fallos parciales"` con
-  `stage`, `identifier` y `reason` de cada uno; si no hay `failures`, la
-  sección se omite.
-- Caso típico de `investigate` cuando `fetch_and_normalize` falla:
-  `analysis_results` vacío + un único fallo `stage="data_provider"`.
-- La salida nunca es una cadena vacía, incluso sin resultados ni fallos.
+**`investmentops/tests/test_main.py`** (nuevo) — cubre:
+- Éxito: `main()` devuelve `0` e imprime el resultado formateado en
+  `stdout`, sin nada en `stderr` (mockeando `dispatch` para no depender
+  de una llamada de red real ni de un `config.local.toml` real en
+  disco).
+- `ConfigError`: `main()` devuelve `1`, imprime un mensaje con el
+  prefijo `"Error de configuración"` en `stderr`, y no imprime nada en
+  `stdout`.
+- Argumentos inválidos (`ticker` ausente, subcomando desconocido):
+  `main()` deja escapar `SystemExit` (comportamiento estándar de
+  `argparse`, no interceptado).
+- `main(argv=[...])` no depende de `sys.argv` real (se verifica
+  monkeypencheando `sys.argv` a un valor distinto del `argv` explícito
+  pasado a `main()`).
 
 ## Decisiones tomadas
 
-- **Texto plano, sin plantilla de reporte.** Conforme a `ROADMAP.md`
-  (Fase 1: *"La salida es texto simple en consola (aún sin reportes
-  formales)"*) y a la redacción literal de la tarea. No se introduce
-  ningún encabezado Markdown, tabla ni estructura pensada para
-  archivarse: eso es explícitamente la Fase 2.
-- **`format_research_result` solo formatea, no imprime.** Separar
-  "construir el texto" de "imprimirlo" permite probar la función de
-  forma aislada (comparando substrings del texto devuelto) sin capturar
-  `stdout`, y deja `print(...)` como responsabilidad de quien la invoca
-  (`investmentops/__main__.py`).
-- **Se conectó `investmentops/__main__.py` al flujo real.** La nota
-  dejada en la actualización anterior de `PROGRESS.md` señalaba
-  explícitamente que esta tarea era "un buen momento" para hacerlo, ya
-  que la impresión era la única pieza que faltaba para que el punto de
-  entrada mostrara algo útil. Se mantuvo el alcance mínimo: solo se
-  agregó el flujo `parse_args → dispatch → format_research_result →
-  print`, sin agregar manejo de errores nuevo (eso es la tarea
-  siguiente).
-- **Limitaciones se omiten cuando la lista está vacía.** Ambos agentes
-  de la Fase 1 (`financial_health`, `valuation`) siempre incluyen al
-  menos una limitación fija (liquidez, o P/B y EV/EBITDA), por lo que en
-  la práctica esta sección casi siempre aparece; se probó el caso vacío
-  igualmente por completitud y para no asumir ese detalle de
-  implementación de los agentes.
+- **Extraer `main()` en vez de solo mejorar el mensaje en el bloque
+  `if __name__`.** Sin una función invocable, esta tarea no era testeable
+  sin capturar un proceso completo (`subprocess`), lo cual habría sido
+  más frágil y lento. Extraer `main(argv=None) -> int` es un cambio
+  mínimo y estándar en CLIs de Python, consistente con el patrón ya usado
+  en `investmentops.cli.parse_args` (que también acepta `argv=None`).
+- **Mensaje de error a `stderr`, no a `stdout`.** Antes, el mensaje de
+  `ConfigError` se imprimía con `print()` normal (`stdout`), igual que el
+  resultado exitoso. Separar ambos flujos es una práctica estándar de
+  CLIs: permite a quien invoque el programa distinguir salida útil de
+  mensajes de error (ej. `python -m investmentops investigate AAPL >
+  reporte.txt` no debería terminar con un mensaje de error dentro del
+  archivo de salida).
+- **Código de salida `1` ante `ConfigError`.** Antes, el proceso siempre
+  terminaba con código `0` (por ausencia de `sys.exit(...)` con un valor
+  explícito), incluso cuando el flujo no pudo ejecutarse en absoluto.
+  Devolver `1` sigue la convención estándar de Unix (`0` = éxito, distinto
+  de cero = error) y permite que scripts que invoquen esta CLI detecten
+  el fallo mediante el código de salida, no solo parseando el texto.
+- **No se traduce ningún otro tipo de excepción.** Se revisó
+  explícitamente que `investigate()` ya no deja escapar
+  `DataProviderError`, `NormalizationError`, `PromptError`,
+  `AgentProviderSelectionError` ni `AIProviderError` (los traduce a
+  `ResearchFailure`, ya presentados por `format_research_result`), y que
+  los errores de `argparse` ya son legibles por su propio mecanismo
+  estándar. Agregar un `except Exception` genérico "por si acaso" iría
+  contra el principio de no inventar manejo de errores para casos que no
+  están identificados como reales en esta fase del proyecto (ver
+  `ARCHITECTURE.md`, "Manejo de errores y limitaciones": declarar
+  honestamente lo que se maneja, no aparentar cobertura genérica).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_cli_output.py` (nuevo)
+- `investmentops/tests/test_main.py` (nuevo)
 
 Modificados:
-- `investmentops/cli/__init__.py` (se agregó `format_research_result`;
-  se actualizó el docstring del módulo)
-- `investmentops/__main__.py` (conectado al flujo real: `parse_args` →
-  `dispatch` → `format_research_result` → `print`)
-- `TASKS.md` (tarea "Implementar la impresión en consola del resultado"
-  marcada como completada)
+- `investmentops/__main__.py` (se extrajo `main(argv=None) -> int`; el
+  mensaje de `ConfigError` ahora va a `stderr` con un prefijo claro y el
+  proceso termina con código de salida `1`; docstring del módulo
+  reescrito)
+- `TASKS.md` (tarea "Implementar mensajes de error legibles en consola
+  ante fallos del flujo" marcada como completada; con esto se completa
+  por entero la sección "CLI" de la Fase 1)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`, `investmentops/cli/CLI.md`,
-`investmentops/core/orchestrator.py`, ningún otro módulo de código
-Python existente.
+`investmentops/cli/__init__.py`, `investmentops/core/orchestrator.py`,
+ningún otro módulo de código Python existente.
 
 ## Problemas encontrados
 
-Ninguno. Se mantiene el hallazgo ya anotado en actualizaciones
+Ninguno nuevo. Se mantiene el hallazgo ya anotado en actualizaciones
 anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 `investmentops/tests/`); el archivo de pruebas nuevo de esta tarea se
 colocó en `investmentops/tests/`, consistente con el resto de módulos de
-código de la Fase 1.
+código de la Fase 1 (en particular con `test_cli.py`,
+`test_cli_dispatch.py` y `test_cli_output.py`, que también viven ahí).
 
 ## Próxima tarea recomendada
 
-La siguiente tarea sin marcar en `TASKS.md`, sección "CLI", es:
+Con esta tarea se completa por entero la sección "CLI" de la Fase 1.
+Las tareas restantes de `TASKS.md` para la Fase 1 son las de
+"Verificación" (pruebas manuales de punta a punta, no tareas de código
+nuevo per se: probar con un ticker real, probar con un ticker
+inválido/inexistente, confirmar que las interpretaciones vienen del
+modelo de lenguaje y no de reglas fijas, y confirmar que cambiar el
+proveedor de IA de un agente vía configuración no requiere tocar
+código). Con eso, la Fase 1 completa (`ROADMAP.md`) quedaría cerrada de
+punta a punta.
 
-6. *"Implementar mensajes de error legibles en consola ante fallos del
-   flujo."*
-
-Nota para la próxima conversación:
-- `investmentops/__main__.py` ya captura `ConfigError` (si falta
-  `config.local.toml`) con un mensaje mínimo (`f"[config] {exc}"`).
-  Esta tarea probablemente deba mejorar ese mensaje (ej. sugerir el
-  comando `cp config.example.toml config.local.toml`, ya presente en el
-  propio mensaje de `ConfigError`, ver `investmentops/config/__init__.py`)
-  y/o decidir si hay otros fallos que deban mostrarse de forma distinta
-  a como ya los presenta `format_research_result` (que ya lista
-  `failures` dentro del `ResearchResult`, ver esta entrada).
-- Vale la pena revisar si esta tarea debe cubrir también el caso de
-  argumentos inválidos de `argparse` (que ya terminan el proceso con un
-  mensaje estándar en `stderr` vía `SystemExit`) o si ese mecanismo ya
-  se considera suficientemente legible y la tarea se centra solo en
-  errores que hoy escapan sin traducir (`ConfigError`).
+Nota para la próxima conversación: si se decide abordar la sección
+"Verificación", conviene aclarar primero si el objetivo es (a) dejar
+constancia por escrito de que esas verificaciones manuales se realizaron
+(ej. una sección nueva en `PROGRESS.md` con los resultados observados),
+o (b) tratarlas como fuera de alcance de este flujo de trabajo
+automatizado por tratarse explícitamente de pasos *manuales* (requieren
+una API key real de FMP y de Anthropic, y ejecutar el CLI de verdad).
+Si se prefiere continuar con trabajo de código, la Fase 1 ya está
+completa y la siguiente pieza natural sería iniciar la Fase 2 ("Generar
+un reporte profesional"), comenzando por su primera tarea: "Definir la
+estructura común que consumirán los generadores (a partir del
+'Resultado de investigación')".
