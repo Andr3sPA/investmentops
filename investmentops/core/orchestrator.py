@@ -1,8 +1,9 @@
 """Orquestador mínimo — disparo de la consulta al proveedor de datos, paso
-de esos datos crudos a la capa de normalización, e invocación secuencial
-de los agentes de análisis.
+de esos datos crudos a la capa de normalización, invocación secuencial de
+los agentes de análisis, y ensamblado del "Resultado de investigación"
+final.
 
-Cubre tres tareas de TASKS.md, Fase 1, "Orquestador mínimo":
+Cubre cuatro tareas de TASKS.md, Fase 1, "Orquestador mínimo":
 
 - "Implementar la función que recibe un ticker y dispara la consulta al
   proveedor de Fase 1." (`fetch_raw_data`, ya completada en una
@@ -12,51 +13,95 @@ Cubre tres tareas de TASKS.md, Fase 1, "Orquestador mínimo":
   PROGRESS.md).
 - "Implementar la invocación secuencial de los dos agentes de análisis
   (salud financiera, valoración) sobre el modelo normalizado."
-  (`run_analysis_engines`, esta tarea).
+  (`run_analysis_engines`, ya completada en una conversación anterior, ver
+  PROGRESS.md).
+- "Implementar el ensamblado de ambos resultados en un 'Resultado de
+  investigación' único." (`assemble_research_result`, esta tarea).
 
-Las tres funciones viven en el mismo módulo porque son piezas
+Las cuatro funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
-del flujo de una investigación", pasos 3-5): el orquestador consulta la
-fuente de datos, pasa esos datos crudos a la capa de normalización, y
-luego pasa el modelo normalizado a los motores de análisis.
+del flujo de una investigación", pasos 3-6): el orquestador consulta la
+fuente de datos, pasa esos datos crudos a la capa de normalización, pasa
+el modelo normalizado a los motores de análisis, y finalmente ensambla
+los resultados de todos los análisis en un único "Resultado de
+investigación".
 
-## Invocación secuencial de los agentes de análisis
+## Ensamblado del "Resultado de investigación"
 
-`run_analysis_engines` es intencionalmente una función pequeña que
-encadena piezas ya existentes y ya probadas por separado:
+`assemble_research_result` traduce la lista de `AnalysisResult` que
+produce `run_analysis_engines` (más el `ticker` investigado) a un
+`ResearchResult` (ver `investmentops.core.research_result`), el tipo que
+consumirán los generadores de reportes en la Fase 2.
 
-1. `investmentops.analysis_engines.financial_health.analyze_financial_health`
-   — recibe el `FinancialStatement` normalizado, calcula sus propias
-   métricas deterministas, invoca al proveedor de IA configurado para
-   `"financial_health"` y devuelve un `AnalysisResult`.
-2. `investmentops.analysis_engines.valuation.analyze_valuation` — recibe
-   el `MarketData` y el `FinancialStatement` normalizados, calcula sus
-   propias métricas deterministas, invoca al proveedor de IA configurado
-   para `"valuation"` y devuelve otro `AnalysisResult`.
+### La `Company` de este `ResearchResult`
 
-Ambos agentes ya calculan sus propias métricas internamente a partir de
-`company_data` si no se les pasan precalculadas (ver
-`analyze_financial_health`/`analyze_valuation`, parámetro `metrics`
-opcional); esta función no recalcula nada ni duplica esa lógica, solo
-invoca ambos agentes en el orden en que aparecen en `TASKS.md` (salud
-financiera, luego valoración) y agrupa sus resultados.
+`ResearchResult.company` exige un `investmentops.data_layer.Company`
+completo (`ticker`, `name`, `sector`, `market`), pero **ningún** dato
+normalizado disponible hoy (`NormalizedCompanyData`, es decir
+`FinancialStatement`/`MarketData`) expone nombre, sector o mercado de la
+empresa: ni el payload crudo de `FMPFundamentalsProvider` (estado de
+resultados, balance, cotización) ni la capa de normalización
+(`investmentops.data_layer.normalization`) capturan esos campos, porque
+no forman parte de los modelos "Estados financieros normalizados" ni
+"Datos de mercado" definidos en la Fase 1 (ver ARCHITECTURE.md, "Modelo
+de datos interno").
 
-Alcance deliberadamente mínimo, conforme al desglose de TASKS.md en esta
-misma sección ("Orquestador mínimo"). Esta función NO incluye (tareas
-separadas y posteriores):
+Ante esta ausencia, se decide construir una `Company` **mínima**, con
+solo el `ticker` recibido (normalizado a mayúsculas, mismo criterio ya
+usado por `FMPFundamentalsProvider.fetch` y por la caché local), dejando
+`name`, `sector` y `market` como cadenas vacías (`""`). `Company` no
+impone que estos campos sean no vacíos (son `str` de texto libre, ver
+`investmentops/data_layer/domain.py`), por lo que esto es válido
+estructuralmente. Se prefiere esto a:
 
-- El ensamblado de ambos resultados en un `ResearchResult`
-  (investmentops.core.research_result): esta función devuelve una lista
-  simple de `AnalysisResult`, no la estructura final de "Resultado de
-  investigación" (que además requiere la `Company` investigada y una
-  `generated_at`, ninguna de las cuales es responsabilidad de esta
-  pieza).
-- El manejo de fallos de cualquiera de los dos agentes sin detener el
-  resto del flujo: si `analyze_financial_health` o `analyze_valuation`
-  levantan una excepción (`PromptError`, `AgentProviderSelectionError`,
-  `AIProviderError`), esta función la deja propagar tal cual, sin
-  capturarla ni traducirla a un `ResearchFailure`. Ese manejo es
-  explícitamente la tarea siguiente de esta misma sección de TASKS.md.
+- **Inventar valores** (ej. buscar el nombre en otra fuente no
+  contemplada en el MVP): violaría el principio de
+  `ARCHITECTURE.md`/`GOALS.md` de no inventar datos que no se tienen.
+- **Hacer `name`/`sector`/`market` opcionales (`str | None`)** en el
+  modelo de dominio `Company`: cambiaría un contrato ya definido y usado
+  en otras partes del sistema (`investmentops/data_layer/domain.py`, ya
+  probado en `test_data_layer_domain.py`) por una razón que no aplica a
+  ese módulo en sí (el modelo de dominio es correcto; lo que falta es la
+  *fuente* de esos datos), lo cual sería un rediseño no justificado por
+  esta tarea puntual.
+
+Completar `name`/`sector`/`market` con datos reales (ej. sumando un
+endpoint de perfil de empresa al proveedor de datos fundamentales) queda
+fuera de esta tarea — ver "Fuera de alcance" más abajo.
+
+### Fallos parciales
+
+`assemble_research_result` acepta un parámetro `failures` opcional
+(por defecto una lista vacía). Esta tarea **no** implementa la lógica
+que detecta y captura fallos parciales de la fuente de datos o de los
+agentes de análisis (eso es, de forma explícita, la tarea siguiente de
+esta misma sección de TASKS.md: "Implementar el manejo de fallo del
+proveedor de datos o del proveedor de IA sin detener el resto del
+flujo..."); solo deja el parámetro listo para que esa tarea futura
+pueda pasarle la lista de `ResearchFailure` que detecte, sin tener que
+modificar la firma de esta función.
+
+### Fecha de ensamblado
+
+`generated_at` es opcional; si no se indica, se usa
+`datetime.now(timezone.utc)` en el momento de la llamada. Es distinta de
+`AnalysisProvenance.generated_at` de cada análisis individual (que
+registra cuándo se generó esa interpretación puntual): `generated_at`
+aquí es la fecha en que el orquestador ensambló el resultado final,
+conforme a `investmentops.core.research_result.ResearchResult`.
+
+Fuera de alcance de este módulo (aún):
+- Detectar/capturar fallos parciales de `fetch_and_normalize` o
+  `run_analysis_engines` y traducirlos a `ResearchFailure`: tarea
+  siguiente de esta misma sección de TASKS.md.
+- Completar `Company.name`/`sector`/`market` con datos reales: no hay
+  hoy una fuente de datos que los provea (ver más arriba).
+- Una función que encadene `fetch_and_normalize` → `run_analysis_engines`
+  → `assemble_research_result` en una sola llamada de punta a punta: no
+  es parte del texto de esta tarea ("ensamblar ambos resultados"), y
+  además el manejo de fallos parciales (tarea siguiente) probablemente
+  necesite envolver justo esa cadena; introducirla ahora se adelantaría
+  a esa tarea.
 - Leer o escribir la caché de datos normalizados
   (investmentops.data_layer.cache): fuera de alcance, igual que ya se
   documentó para `fetch_raw_data`/`fetch_and_normalize`.
@@ -65,11 +110,14 @@ separadas y posteriores):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Sequence
 
 from investmentops.analysis_engines.contracts import AnalysisResult
 from investmentops.analysis_engines.financial_health import analyze_financial_health
 from investmentops.analysis_engines.valuation import analyze_valuation
+from investmentops.core.research_result import ResearchFailure, ResearchResult
+from investmentops.data_layer.domain import Company
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
 from investmentops.data_layer.normalization import (
@@ -299,3 +347,68 @@ def run_analysis_engines(
     )
 
     return [financial_health_result, valuation_result]
+
+
+def assemble_research_result(
+    ticker: str,
+    analysis_results: Sequence[AnalysisResult],
+    *,
+    failures: Sequence[ResearchFailure] = (),
+    generated_at: datetime | None = None,
+) -> ResearchResult:
+    """Ensambla los resultados de análisis de una empresa en un `ResearchResult`.
+
+    Traduce el `ticker` investigado y la lista de `AnalysisResult` ya
+    producidos (típicamente el resultado de
+    `run_analysis_engines(company_data, ...)`) al tipo "Resultado de
+    investigación" (ver `investmentops.core.research_result.ResearchResult`
+    y ARCHITECTURE.md, "Modelo de datos interno"), que consumirán los
+    generadores de reportes en la Fase 2.
+
+    La `Company` incluida en el resultado es **mínima**: solo lleva el
+    `ticker` recibido (normalizado a mayúsculas), con `name`, `sector` y
+    `market` vacíos, porque ningún dato normalizado disponible en la Fase
+    1 (`FinancialStatement`, `MarketData`) expone esos campos (ver
+    docstring del módulo, sección "La `Company` de este
+    `ResearchResult`", para la justificación completa de esta decisión).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa investigada (ej. ``"AAPL"``). Se
+        normaliza a mayúsculas para construir la `Company` del
+        resultado, mismo criterio ya usado en
+        `FMPFundamentalsProvider.fetch` y en la caché local
+        (`investmentops.data_layer.cache`).
+    analysis_results:
+        Los `AnalysisResult` ya producidos para esta empresa (ej. el
+        resultado de `run_analysis_engines(...)`). Se incluyen tal cual,
+        sin recalcular ni reinterpretar ningún hallazgo o métrica.
+    failures:
+        Fallos parciales ya detectados durante la investigación (ver
+        `investmentops.core.research_result.ResearchFailure`). Por
+        defecto, una lista vacía: esta tarea no implementa la detección
+        de fallos parciales (ver "Fuera de alcance" en el docstring del
+        módulo); este parámetro solo deja el ensamblado listo para
+        recibirlos cuando esa tarea futura los produzca.
+    generated_at:
+        Fecha y hora de ensamblado de este `ResearchResult`. Si no se
+        indica, se usa `datetime.now(timezone.utc)` en el momento de la
+        llamada.
+
+    Returns
+    -------
+    ResearchResult
+        El resultado de investigación ensamblado: `company` (mínima, solo
+        con `ticker`), `analysis_results` (tal cual se recibieron),
+        `failures` (tal cual se recibieron, vacío por defecto) y
+        `generated_at`.
+    """
+    company = Company(ticker=ticker.strip().upper(), name="", sector="", market="")
+
+    return ResearchResult(
+        company=company,
+        analysis_results=list(analysis_results),
+        failures=list(failures),
+        generated_at=generated_at if generated_at is not None else datetime.now(timezone.utc),
+    )
