@@ -1,19 +1,44 @@
-"""Pruebas para la plantilla base del generador Markdown
-(investmentops.reports.markdown.render_markdown).
+"""Pruebas para el generador Markdown (investmentops.reports.markdown.render_markdown).
 
-Cubre la tarea "Implementar la plantilla base de reporte en Markdown
-(encabezados, secciones vacías)" (TASKS.md, Fase 2, "Generador
-Markdown"). No prueba el volcado de hallazgos/métricas/limitaciones ni
-la sección de fuentes/procedencia, ni el guardado en disco: esas son
-tareas separadas y posteriores de la misma sección.
+Cubre dos tareas de TASKS.md, Fase 2, "Generador Markdown":
+
+- "Implementar la plantilla base de reporte en Markdown (encabezados,
+  secciones vacías)."
+- "Implementar el volcado de los hallazgos de salud financiera en la
+  sección correspondiente." (nuevas pruebas en este archivo).
+
+No prueba el volcado de valoración, la sección de fuentes/procedencia,
+ni el guardado en disco: esas son tareas separadas y posteriores de la
+misma sección.
 """
 
 from datetime import datetime, timezone
 
+from investmentops.analysis_engines.contracts import AnalysisProvenance, AnalysisResult
 from investmentops.core.orchestrator import assemble_research_result
 from investmentops.data_layer import Company
 from investmentops.core.research_result import ResearchResult
 from investmentops.reports import render_markdown
+
+
+def _financial_health_result(
+    findings: list[str] | None = None,
+    supporting_metrics: dict | None = None,
+    limitations: list[str] | None = None,
+) -> AnalysisResult:
+    return AnalysisResult(
+        analysis_id="financial_health",
+        findings=findings if findings is not None else ["La empresa muestra un margen saludable."],
+        supporting_metrics=(
+            supporting_metrics if supporting_metrics is not None else {"net_margin": 0.15}
+        ),
+        limitations=limitations if limitations is not None else [],
+        provenance=AnalysisProvenance(
+            ai_provider="anthropic",
+            ai_model="claude-sonnet-5",
+            generated_at=datetime.now(timezone.utc),
+        ),
+    )
 
 
 def test_render_includes_company_ticker_as_title() -> None:
@@ -93,3 +118,114 @@ def test_render_ends_with_a_single_trailing_newline() -> None:
 
     assert output.endswith("\n")
     assert not output.endswith("\n\n")
+
+
+# --- Volcado de hallazgos de salud financiera --------------------------------
+
+
+def test_render_includes_financial_health_findings_when_present() -> None:
+    result = assemble_research_result(
+        "AAPL", [_financial_health_result(findings=["Texto de interpretación del modelo."])]
+    )
+
+    output = render_markdown(result)
+
+    assert "Texto de interpretación del modelo." in output
+
+
+def test_render_places_financial_health_findings_under_its_own_section() -> None:
+    result = assemble_research_result(
+        "AAPL", [_financial_health_result(findings=["hallazgo de salud financiera"])]
+    )
+
+    output = render_markdown(result)
+
+    section_start = output.index("## Salud financiera")
+    section_end = output.index("## Valoración")
+    assert "hallazgo de salud financiera" in output[section_start:section_end]
+
+
+def test_render_includes_financial_health_supporting_metrics() -> None:
+    result = assemble_research_result(
+        "AAPL",
+        [
+            _financial_health_result(
+                supporting_metrics={"net_margin": 0.15, "debt_to_revenue": 0.4}
+            )
+        ],
+    )
+
+    output = render_markdown(result)
+
+    assert "net_margin" in output
+    assert "0.15" in output
+    assert "debt_to_revenue" in output
+    assert "0.4" in output
+
+
+def test_render_includes_financial_health_limitations_when_present() -> None:
+    result = assemble_research_result(
+        "AAPL",
+        [_financial_health_result(limitations=["Sin datos de liquidez."])],
+    )
+
+    output = render_markdown(result)
+
+    assert "Sin datos de liquidez." in output
+
+
+def test_render_omits_limitations_subsection_when_empty() -> None:
+    result = assemble_research_result(
+        "AAPL", [_financial_health_result(limitations=[])]
+    )
+
+    output = render_markdown(result)
+
+    assert "**Limitaciones:**" not in output
+
+
+def test_render_does_not_include_financial_health_provenance_yet() -> None:
+    """La procedencia de IA es alcance de la tarea siguiente
+    ('fuentes/procedencia'), no de esta."""
+    result = assemble_research_result("AAPL", [_financial_health_result()])
+
+    output = render_markdown(result)
+
+    assert "anthropic" not in output
+    assert "claude-sonnet-5" not in output
+
+
+def test_render_keeps_empty_financial_health_section_when_agent_absent() -> None:
+    """Si el agente de salud financiera no está en `analysis_results`
+    (ej. falló), la sección conserva solo su encabezado vacío."""
+    result = assemble_research_result("AAPL", [])
+
+    output = render_markdown(result)
+
+    section_start = output.index("## Salud financiera")
+    section_end = output.index("## Valoración")
+    section_body = output[section_start:section_end].replace("## Salud financiera", "").strip()
+    assert section_body == ""
+
+
+def test_render_financial_health_section_ignores_other_analysis_results() -> None:
+    """Un `AnalysisResult` de valoración no debe volcarse en la sección de
+    salud financiera (esa sección solo lee `analysis_id == 'financial_health'`)."""
+    valuation_result = AnalysisResult(
+        analysis_id="valuation",
+        findings=["hallazgo de valoración"],
+        supporting_metrics={"price_to_earnings": 20.0},
+        limitations=[],
+        provenance=AnalysisProvenance(
+            ai_provider="anthropic",
+            ai_model="claude-sonnet-5",
+            generated_at=datetime.now(timezone.utc),
+        ),
+    )
+    result = assemble_research_result("AAPL", [valuation_result])
+
+    output = render_markdown(result)
+
+    section_start = output.index("## Salud financiera")
+    section_end = output.index("## Valoración")
+    assert "hallazgo de valoración" not in output[section_start:section_end]

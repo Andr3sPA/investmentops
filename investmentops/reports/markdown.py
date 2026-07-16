@@ -1,81 +1,123 @@
-"""Generador de reportes en Markdown — plantilla base (encabezados, secciones vacías).
+"""Generador de reportes en Markdown.
 
-Cubre la tarea "Implementar la plantilla base de reporte en Markdown
-(encabezados, secciones vacías)" (TASKS.md, Fase 2, "Generador
-Markdown"), la primera tarea de código de esa sección.
+Cubre, hasta ahora, dos tareas de TASKS.md, Fase 2, "Generador Markdown":
 
-Este módulo construye únicamente el **andamiaje** del reporte: los
-encabezados de las secciones ya fijadas en
-`investmentops/reports/REPORT_SECTIONS.md` (encabezado de la empresa,
-"Salud financiera", "Valoración"), sin volcar todavía el contenido de
-cada sección. El volcado de contenido real es alcance de tareas
-separadas y posteriores, ya desglosadas en TASKS.md, "Generador
-Markdown":
-
+- "Implementar la plantilla base de reporte en Markdown (encabezados,
+  secciones vacías)." (ya completada, ver PROGRESS.md).
 - "Implementar el volcado de los hallazgos de salud financiera en la
-  sección correspondiente." (pendiente)
-- "Implementar el volcado de los hallazgos de valoración en la sección
-  correspondiente." (pendiente)
-- "Implementar la sección de fuentes/procedencia (qué proveedor, qué
-  fecha) al final del reporte." (pendiente)
-- "Implementar el guardado del archivo Markdown generado en una ruta
-  local configurable." (pendiente)
+  sección correspondiente." (esta tarea).
 
-Por qué esta plantilla base ya incluye los encabezados de ambas
-secciones de análisis, en vez de omitirlos hasta que exista contenido:
-`REPORT_SECTIONS.md` fija el orden completo del reporte (encabezado →
-salud financiera → valoración → fallos parciales); dejar ya ese
-andamiaje construido es lo que permite que las tareas siguientes solo
-tengan que *rellenar* cada sección, sin tener que rediseñar la
-estructura del documento.
+Conforme al orden ya fijado en `investmentops/reports/REPORT_SECTIONS.md`
+para la sección "Salud financiera" (hallazgos → métricas de soporte →
+limitaciones → procedencia de IA), esta tarea rellena las **tres
+primeras** subsecciones a partir del `AnalysisResult` con
+`analysis_id == "financial_health"`, si está presente en
+`ResearchResult.analysis_results`. La procedencia de IA (`provenance`)
+se deja deliberadamente fuera: es el contenido de la tarea siguiente en
+la misma sección de `TASKS.md` ("Implementar la sección de
+fuentes/procedencia... al final del reporte"), consistente con cómo se
+desglosó esa tarea por separado.
 
-La sección "Fallos parciales" (`REPORT_SECTIONS.md`, sección 4) **no**
-se incluye todavía en esta plantilla base: es una sección condicional
-(solo aparece si `ResearchResult.failures` no está vacío), y volcar su
-contenido real depende de datos que esta tarea de plantilla no procesa
-todavía. Se deja para cuando se implemente el volcado de contenido de
-las demás secciones, siguiendo el mismo criterio ya usado en
-`investmentops.cli.format_research_result` (Fase 1), que sí construye
-esa sección condicionalmente.
+Si el agente de salud financiera no aparece en `analysis_results` (por
+ejemplo, porque falló y quedó registrado en `ResearchResult.failures`),
+la sección conserva su encabezado vacío (mismo comportamiento ya cubierto
+por la plantilla base): esta tarea no toca la sección "Fallos parciales"
+(tarea separada y posterior, ver `render_markdown` y
+`investmentops.cli.format_research_result` para el criterio ya usado en
+la Fase 1).
 
 Fuera de alcance de este módulo (aún):
-- Volcar `AnalysisResult.findings`/`supporting_metrics`/`limitations`
-  dentro de las secciones "Salud financiera"/"Valoración": tareas
-  separadas y posteriores (ver arriba).
-- La sección de fuentes/procedencia al final del reporte: tarea
-  separada y posterior.
+- El volcado de los hallazgos de valoración: tarea separada y siguiente
+  en la misma sección de `TASKS.md`.
+- La sección de fuentes/procedencia (proveedor y modelo de IA) al final
+  del reporte: tarea separada y siguiente.
 - Guardar el Markdown generado en disco: tarea separada y posterior.
-- El generador HTML: sección separada de TASKS.md.
+- El generador HTML: sección separada de `TASKS.md`.
 """
 
 from __future__ import annotations
 
+from investmentops.analysis_engines.contracts import AnalysisResult
 from investmentops.core.research_result import ResearchResult
+
+#: Identificador del agente de salud financiera, el mismo usado en
+#: `investmentops.analysis_engines.financial_health.AGENT_ID`. No se
+#: importa directamente desde ese módulo para no acoplar este generador
+#: a la implementación concreta del agente (basta con el identificador
+#: de texto, ya estable como parte de `AnalysisResult.analysis_id`).
+FINANCIAL_HEALTH_AGENT_ID = "financial_health"
+
+
+def _find_analysis(
+    result: ResearchResult, analysis_id: str
+) -> AnalysisResult | None:
+    """Busca, dentro de `result.analysis_results`, el análisis con `analysis_id`.
+
+    Devuelve ``None`` si ese agente no completó su análisis (no aparece
+    en la lista), en cuyo caso la sección correspondiente del reporte
+    conserva solo su encabezado vacío.
+    """
+    return next(
+        (analysis for analysis in result.analysis_results if analysis.analysis_id == analysis_id),
+        None,
+    )
+
+
+def _render_analysis_body(analysis: AnalysisResult) -> list[str]:
+    """Construye las líneas de hallazgos, métricas y limitaciones de un análisis.
+
+    Orden fijado en `REPORT_SECTIONS.md` (sin la procedencia de IA,
+    fuera de alcance de esta tarea): hallazgos → métricas de soporte →
+    limitaciones.
+    """
+    lines: list[str] = []
+
+    for finding in analysis.findings:
+        lines.append(finding)
+    lines.append("")
+
+    if analysis.supporting_metrics:
+        lines.append("**Métricas de soporte:**")
+        lines.append("")
+        for key, value in analysis.supporting_metrics.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+
+    if analysis.limitations:
+        lines.append("**Limitaciones:**")
+        lines.append("")
+        for limitation in analysis.limitations:
+            lines.append(f"- {limitation}")
+        lines.append("")
+
+    return lines
 
 
 def render_markdown(result: ResearchResult) -> str:
-    """Construye la plantilla base en Markdown de un `ResearchResult`.
+    """Renderiza un `ResearchResult` como reporte Markdown.
 
-    Genera únicamente el encabezado (identidad de la empresa investigada
-    y fecha de ensamblado) y los encabezados vacíos de las secciones
-    "Salud financiera" y "Valoración", conforme al orden fijado en
-    `investmentops/reports/REPORT_SECTIONS.md`. No vuelca todavía
-    ningún hallazgo, métrica, limitación ni procedencia: ver el
-    docstring del módulo para las tareas que completan cada sección.
+    Construye el encabezado (identidad de la empresa investigada y fecha
+    de ensamblado) y las secciones "Salud financiera" y "Valoración",
+    conforme al orden fijado en `investmentops/reports/REPORT_SECTIONS.md`.
+
+    "Salud financiera" ya vuelca su contenido (hallazgos, métricas de
+    soporte, limitaciones) cuando el `AnalysisResult` correspondiente
+    está presente; "Valoración" mantiene por ahora solo su encabezado
+    vacío (tarea separada y posterior). Tampoco se incluye todavía la
+    procedencia de IA de ningún análisis, ni la sección condicional de
+    "Fallos parciales" (ver docstring del módulo).
 
     Parameters
     ----------
     result:
         El `ResearchResult` ya ensamblado (ver
-        `investmentops.core.orchestrator.investigate`), del que esta
-        plantilla base solo toma `company` y `generated_at`.
+        `investmentops.core.orchestrator.investigate`).
 
     Returns
     -------
     str
-        Texto Markdown con el encabezado de la empresa y los
-        encabezados vacíos de "Salud financiera" y "Valoración",
-        terminado en un único salto de línea final.
+        Texto Markdown del reporte, terminado en un único salto de línea
+        final.
     """
     lines: list[str] = []
 
@@ -96,6 +138,9 @@ def render_markdown(result: ResearchResult) -> str:
 
     lines.append("## Salud financiera")
     lines.append("")
+    financial_health_result = _find_analysis(result, FINANCIAL_HEALTH_AGENT_ID)
+    if financial_health_result is not None:
+        lines.extend(_render_analysis_body(financial_health_result))
 
     lines.append("## Valoración")
     lines.append("")
