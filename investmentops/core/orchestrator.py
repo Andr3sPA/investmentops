@@ -1,44 +1,65 @@
-"""Orquestador mínimo — disparo de la consulta al proveedor de datos y
-paso de esos datos crudos a la capa de normalización.
+"""Orquestador mínimo — disparo de la consulta al proveedor de datos, paso
+de esos datos crudos a la capa de normalización, e invocación secuencial
+de los agentes de análisis.
 
-Cubre dos tareas de TASKS.md, Fase 1, "Orquestador mínimo":
+Cubre tres tareas de TASKS.md, Fase 1, "Orquestador mínimo":
 
 - "Implementar la función que recibe un ticker y dispara la consulta al
   proveedor de Fase 1." (`fetch_raw_data`, ya completada en una
   conversación anterior, ver PROGRESS.md).
 - "Implementar el paso de datos crudos a la capa de normalización."
-  (`fetch_and_normalize`, esta tarea).
+  (`fetch_and_normalize`, ya completada en una conversación anterior, ver
+  PROGRESS.md).
+- "Implementar la invocación secuencial de los dos agentes de análisis
+  (salud financiera, valoración) sobre el modelo normalizado."
+  (`run_analysis_engines`, esta tarea).
 
-Ambas funciones viven en el mismo módulo porque son la primera y segunda
-pieza del mismo pipeline secuencial descrito en ARCHITECTURE.md
-("Resumen del flujo de una investigación", pasos 3-4): el orquestador
-consulta la fuente de datos y luego pasa esos datos crudos a la capa de
-normalización, antes de invocar a los agentes de análisis.
+Las tres funciones viven en el mismo módulo porque son piezas
+consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
+del flujo de una investigación", pasos 3-5): el orquestador consulta la
+fuente de datos, pasa esos datos crudos a la capa de normalización, y
+luego pasa el modelo normalizado a los motores de análisis.
 
-`fetch_and_normalize` es intencionalmente una función pequeña que
+## Invocación secuencial de los agentes de análisis
+
+`run_analysis_engines` es intencionalmente una función pequeña que
 encadena piezas ya existentes y ya probadas por separado:
 
-1. `fetch_raw_data(ticker, ...)` (este mismo módulo) — obtiene
-   `RawProviderData` desde el proveedor de datos fundamentales.
-2. `investmentops.data_layer.normalization.financial_statement_from_raw`
-   y `...market_data_from_raw` — transforman ese `RawProviderData` a los
-   modelos de dominio normalizados `FinancialStatement` y `MarketData`.
+1. `investmentops.analysis_engines.financial_health.analyze_financial_health`
+   — recibe el `FinancialStatement` normalizado, calcula sus propias
+   métricas deterministas, invoca al proveedor de IA configurado para
+   `"financial_health"` y devuelve un `AnalysisResult`.
+2. `investmentops.analysis_engines.valuation.analyze_valuation` — recibe
+   el `MarketData` y el `FinancialStatement` normalizados, calcula sus
+   propias métricas deterministas, invoca al proveedor de IA configurado
+   para `"valuation"` y devuelve otro `AnalysisResult`.
+
+Ambos agentes ya calculan sus propias métricas internamente a partir de
+`company_data` si no se les pasan precalculadas (ver
+`analyze_financial_health`/`analyze_valuation`, parámetro `metrics`
+opcional); esta función no recalcula nada ni duplica esa lógica, solo
+invoca ambos agentes en el orden en que aparecen en `TASKS.md` (salud
+financiera, luego valoración) y agrupa sus resultados.
 
 Alcance deliberadamente mínimo, conforme al desglose de TASKS.md en esta
 misma sección ("Orquestador mínimo"). Esta función NO incluye (tareas
 separadas y posteriores):
 
+- El ensamblado de ambos resultados en un `ResearchResult`
+  (investmentops.core.research_result): esta función devuelve una lista
+  simple de `AnalysisResult`, no la estructura final de "Resultado de
+  investigación" (que además requiere la `Company` investigada y una
+  `generated_at`, ninguna de las cuales es responsabilidad de esta
+  pieza).
+- El manejo de fallos de cualquiera de los dos agentes sin detener el
+  resto del flujo: si `analyze_financial_health` o `analyze_valuation`
+  levantan una excepción (`PromptError`, `AgentProviderSelectionError`,
+  `AIProviderError`), esta función la deja propagar tal cual, sin
+  capturarla ni traducirla a un `ResearchFailure`. Ese manejo es
+  explícitamente la tarea siguiente de esta misma sección de TASKS.md.
 - Leer o escribir la caché de datos normalizados
-  (investmentops.data_layer.cache): decidir cuándo evitar la llamada al
-  proveedor por tener ya un dato normalizado reciente en caché es una
-  decisión de una tarea posterior que también involucra esta pieza, no
-  algo que deba resolverse aquí de forma implícita.
-- La invocación de los agentes de análisis (salud financiera, valoración).
-- El ensamblado en un `ResearchResult` (investmentops.core.research_result).
-- El manejo de fallos del proveedor de datos o de normalización sin
-  detener el resto del flujo (esta función deja propagar
-  `DataProviderError` y `NormalizationError` tal cual, sin capturarlas ni
-  traducirlas a un `ResearchFailure`).
+  (investmentops.data_layer.cache): fuera de alcance, igual que ya se
+  documentó para `fetch_raw_data`/`fetch_and_normalize`.
 """
 
 from __future__ import annotations
@@ -46,6 +67,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from investmentops.analysis_engines.contracts import AnalysisResult
+from investmentops.analysis_engines.financial_health import analyze_financial_health
+from investmentops.analysis_engines.valuation import analyze_valuation
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
 from investmentops.data_layer.normalization import (
@@ -199,3 +223,79 @@ def fetch_and_normalize(
         financial_statement=financial_statement,
         market_data=market_data,
     )
+
+
+def run_analysis_engines(
+    company_data: NormalizedCompanyData,
+    *,
+    config: dict[str, Any] | None = None,
+) -> list[AnalysisResult]:
+    """Invoca secuencialmente los agentes de salud financiera y valoración.
+
+    Encadena, en este orden, `analyze_financial_health` (sobre
+    `company_data.financial_statement`) y `analyze_valuation` (sobre
+    `company_data.market_data` y `company_data.financial_statement`),
+    devolviendo los dos `AnalysisResult` obtenidos. Cada agente calcula
+    sus propias métricas deterministas internamente (no se le pasan
+    precalculadas): esta función no duplica ese cálculo, solo encadena la
+    invocación de ambos agentes ya completos.
+
+    Parameters
+    ----------
+    company_data:
+        El `NormalizedCompanyData` de la empresa a analizar (típicamente
+        el resultado de `fetch_and_normalize(ticker, ...)`), con el
+        `FinancialStatement` y el `MarketData` ya normalizados.
+    config:
+        Configuración ya cargada (como la que devuelve
+        `investmentops.config.load_config`), propagada tal cual a ambos
+        agentes para resolver su proveedor de IA configurado (ver
+        `investmentops.ai_providers.selection.resolve_agent_provider`).
+        Útil para pruebas, para no depender de un `config.local.toml`
+        real en disco. Si no se indica, cada agente llama internamente a
+        `load_config()`.
+
+    Returns
+    -------
+    list[AnalysisResult]
+        Una lista con exactamente dos elementos, en este orden: el
+        resultado del agente de salud financiera
+        (`analysis_id="financial_health"`) y el resultado del agente de
+        valoración (`analysis_id="valuation"`).
+
+    Raises
+    ------
+    PromptError
+        Si no se puede cargar el archivo de prompt de alguno de los dos
+        agentes (ver `investmentops.analysis_engines.prompts.load_prompt`).
+    AgentProviderSelectionError
+        Si no se puede resolver ningún proveedor de IA para alguno de los
+        dos agentes según la configuración.
+    AIProviderError
+        Si el proveedor de IA resuelto para alguno de los dos agentes no
+        tiene una integración concreta implementada, faltan credenciales
+        imprescindibles, o la invocación al modelo de lenguaje falla.
+    ConfigError
+        Si `config` no se indica y no se puede cargar
+        `config.local.toml`.
+
+    Notes
+    -----
+    Esta función no captura ninguna de las excepciones anteriores: si el
+    agente de salud financiera falla, el agente de valoración no llega a
+    invocarse. Detener el flujo ante un fallo parcial de uno de los dos
+    agentes (en vez de continuar con el otro y dejarlo explícito) es, de
+    forma deliberada, el comportamiento de esta tarea; capturar esos
+    fallos para no detener el resto del flujo es la tarea siguiente de
+    esta misma sección de TASKS.md ("Orquestador mínimo").
+    """
+    financial_health_result = analyze_financial_health(
+        company_data.financial_statement, config=config
+    )
+    valuation_result = analyze_valuation(
+        company_data.market_data,
+        company_data.financial_statement,
+        config=config,
+    )
+
+    return [financial_health_result, valuation_result]
