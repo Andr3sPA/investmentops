@@ -67,7 +67,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 ### Orquestador mínimo
 - [x] Implementar la función que recibe un ticker y dispara la consulta al proveedor de Fase 1. — `fetch_raw_data` en `investmentops/core/orchestrator.py` (ver PROGRESS.md). Recibe un `ticker` y llama a `DataProvider.fetch(ticker)`; por defecto construye un `FMPFundamentalsProvider` (el proveedor ya elegido para el MVP), pero acepta un `provider` inyectado para pruebas u otros usos futuros. No traduce `DataProviderError` ni realiza normalización/caché: eso corresponde a las tareas siguientes de esta misma sección.
-- [ ] Implementar el paso de datos crudos a la capa de normalización.
+- [x] Implementar el paso de datos crudos a la capa de normalización. — `fetch_and_normalize`/`NormalizedCompanyData` en `investmentops/core/orchestrator.py` (ver PROGRESS.md). Encadena `fetch_raw_data(ticker, ...)` con `investmentops.data_layer.normalization.financial_statement_from_raw` y `...market_data_from_raw`, devolviendo ambos modelos normalizados agrupados en `NormalizedCompanyData`. No lee ni escribe la caché de datos normalizados, no invoca agentes de análisis, y no traduce `DataProviderError`/`NormalizationError`: las propaga tal cual (manejo de fallos es una tarea separada y posterior de esta misma sección).
 - [ ] Implementar la invocación secuencial de los dos agentes de análisis (salud financiera, valoración) sobre el modelo normalizado.
 - [ ] Implementar el ensamblado de ambos resultados en un "Resultado de investigación" único.
 - [ ] Implementar el manejo de fallo del proveedor de datos o del proveedor de IA sin detener el resto del flujo, dejándolo explícito en el resultado.
