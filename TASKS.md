@@ -91,9 +91,9 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 2 — Generar un reporte profesional
 
 ### Modelo de reporte
-- Definir la estructura común que consumirán los generadores (a partir del "Resultado de investigación").
-- Definir qué secciones tendrá el reporte (identidad de la empresa, salud financiera, valoración, fuentes y fecha de cada dato, incluyendo qué proveedor de IA generó cada interpretación).
-- (Opcional) Escribir el archivo de prompt del agente de reporte y definir su alcance: solo redacción a partir de los resultados ya existentes, sin nuevos hallazgos ni veredictos.
+- [x] Definir la estructura común que consumirán los generadores (a partir del "Resultado de investigación"). — `investmentops/reports/REPORT_MODEL.md` (ver PROGRESS.md). Decisión: los generadores (Markdown, HTML, y JSON si aplica) consumen directamente `ResearchResult`/`ResearchFailure` (`investmentops/core/research_result.py`, ya definido en Fase 1), sin introducir un tipo intermedio nuevo. `ARCHITECTURE.md` ya documentaba que `ResearchResult` "es lo que finalmente consumen los generadores de reportes"; esta tarea deja registrada esa decisión explícitamente y confirma, campo por campo, que ya expone todo lo necesario (identidad de la empresa, hallazgos/métricas/limitaciones por análisis, procedencia de IA, fallos parciales).
+- [ ] Definir qué secciones tendrá el reporte (identidad de la empresa, salud financiera, valoración, fuentes y fecha de cada dato, incluyendo qué proveedor de IA generó cada interpretación).
+- [ ] (Opcional) Escribir el archivo de prompt del agente de reporte y definir su alcance: solo redacción a partir de los resultados ya existentes, sin nuevos hallazgos ni veredictos.
 
 ### Generador Markdown
 - Implementar la plantilla base de reporte en Markdown (encabezados, secciones vacías).

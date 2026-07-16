@@ -4,161 +4,109 @@
 
 ## Última tarea completada
 
-Fase 1 → CLI → *"Implementar mensajes de error legibles en consola ante fallos del flujo."*
+Fase 2 → Modelo de reporte → *"Definir la estructura común que consumirán los generadores (a partir del 'Resultado de investigación')."*
 
-Con esta tarea se completa por entero la sección "CLI" de la Fase 1 en `TASKS.md`.
+Con esta tarea inicia la Fase 2 en `TASKS.md`.
 
 ## Verificación previa (sin duplicar trabajo)
 
-Antes de implementar, se confirmó que esta tarea **no** estaba satisfecha
-todavía: `investmentops/__main__.py` ya capturaba `ConfigError`, pero con
-un mensaje mínimo sin prefijo claro (`f"[config] {exc}"`), impreso con
-`print()` normal (es decir, mezclado con `stdout`, no separado a
-`stderr`), y sin que el proceso terminara con un código de salida
-distinto de `0` ante ese fallo. Además, todo el flujo vivía directamente
-dentro del bloque `if __name__ == "__main__":`, sin una función
-invocable ni testeable de forma aislada — no existía ningún archivo de
-pruebas para `investmentops.__main__`. Por lo tanto, esta tarea sí
-requería código nuevo.
+Antes de escribir nada, se confirmó qué tan satisfecha estaba ya esta
+tarea. `ARCHITECTURE.md`, sección "Modelo de datos interno (conceptual)",
+ya documentaba desde la Fase 1 que "Resultado de investigación... es lo
+que finalmente consumen los generadores de reportes". El propio
+`ResearchResult`/`ResearchFailure`
+(`investmentops/core/research_result.py`) ya existían con todos los
+campos que un generador necesitaría: identidad de la empresa
+(`Company`), los `AnalysisResult` de cada agente (con `findings`,
+`supporting_metrics`, `limitations`, `provenance`), y los fallos
+parciales (`ResearchFailure`).
 
-Se revisó también qué otros fallos de flujo podrían llegar a escapar
-hasta este punto: `investigate()` (`investmentops/core/orchestrator.py`)
-ya captura `DataProviderError`, `NormalizationError`, `PromptError`,
-`AgentProviderSelectionError` y `AIProviderError`, traduciéndolos a
-`ResearchFailure` dentro del propio `ResearchResult` (ya presentados por
-`format_research_result`, ver la tarea anterior). El único fallo que
-puede escapar de `dispatch` en el uso normal de la CLI
-(`config=None`, cada pieza del pipeline resuelve `config.local.toml`
-por sí misma) es `ConfigError`. Los argumentos inválidos de `argparse`
-(ticker vacío, subcomando ausente/desconocido, `--help`) ya terminan el
-proceso con un mensaje legible en `stderr` vía el mecanismo estándar de
-`argparse` (`SystemExit`), sin necesidad de intervención adicional.
+Es decir: la **estructura en sí** ya existía y ya estaba documentada como
+destino de los generadores. Pero esta tarea de `TASKS.md` (Fase 2,
+"Modelo de reporte") pide explícitamente **definir/decidir** esa
+estructura como parte del trabajo de esta fase — mismo patrón usado en
+otras tareas de diseño del proyecto (`CACHE.md`, `VALUATION_METRICS.md`,
+`FINANCIAL_HEALTH_METRICS.md`, `CONFIGURATION.md`): dejar la decisión
+registrada explícitamente, no solo inferible de otro documento, para que
+ninguna conversación futura reintroduzca una estructura intermedia
+redundante sin saber que ya se evaluó y se descartó.
+
+Por eso esta tarea sí requería un artefacto nuevo (un documento de
+decisión), aunque no requiriera ningún código Python nuevo.
 
 ## Qué se implementó
 
-**`investmentops/__main__.py`** (modificado) — se extrajo el flujo
-completo a una función `main(argv: Sequence[str] | None = None) -> int`,
-en vez de dejarlo solo en el bloque `if __name__ == "__main__":`:
+**`investmentops/reports/REPORT_MODEL.md`** (nuevo) — documento de
+decisión que:
 
-- `main()` llama a `parse_args(argv)` (propaga `SystemExit` de
-  `argparse` sin capturarlo, comportamiento estándar y ya legible).
-- Si `dispatch(args)` tiene éxito, imprime
-  `format_research_result(result)` en `stdout` y devuelve `0`.
-- Si `dispatch(args)` levanta `ConfigError`, imprime
-  `f"Error de configuración: {exc}"` en **`stderr`** (con
-  `file=sys.stderr`, para no mezclarlo con la salida normal del programa
-  ni con scripts que redirijan solo `stdout`) y devuelve `1`. El mensaje
-  de `ConfigError` ya trae, desde `investmentops/config/__init__.py`, la
-  instrucción concreta para resolverlo (`cp config.example.toml
-  config.local.toml`), así que el nuevo prefijo `"Error de
-  configuración: "` solo aporta contexto sin reconstruir esa guía.
-- El bloque `if __name__ == "__main__":` quedó reducido a
-  `sys.exit(main())`, propagando el código de salida devuelto por
-  `main()` (mecanismo estándar para que el proceso real termine con el
-  código correcto).
-- Se actualizó por completo el docstring del módulo, documentando el
-  alcance exacto de esta tarea: qué fallos puede dejar escapar
-  `dispatch` (solo `ConfigError`), por qué los argumentos inválidos de
-  `argparse` no requieren manejo adicional, y el contrato de `main()`.
-
-**`investmentops/tests/test_main.py`** (nuevo) — cubre:
-- Éxito: `main()` devuelve `0` e imprime el resultado formateado en
-  `stdout`, sin nada en `stderr` (mockeando `dispatch` para no depender
-  de una llamada de red real ni de un `config.local.toml` real en
-  disco).
-- `ConfigError`: `main()` devuelve `1`, imprime un mensaje con el
-  prefijo `"Error de configuración"` en `stderr`, y no imprime nada en
-  `stdout`.
-- Argumentos inválidos (`ticker` ausente, subcomando desconocido):
-  `main()` deja escapar `SystemExit` (comportamiento estándar de
-  `argparse`, no interceptado).
-- `main(argv=[...])` no depende de `sys.argv` real (se verifica
-  monkeypencheando `sys.argv` a un valor distinto del `argv` explícito
-  pasado a `main()`).
+- Decide explícitamente que los generadores de reportes (Markdown, HTML,
+  y JSON si aplica en el futuro) consumirán **directamente**
+  `ResearchResult`, sin introducir ningún tipo intermedio nuevo
+  (`ReportInput`, `ReportData`, etc.).
+- Justifica la decisión citando `ARCHITECTURE.md` y el propio docstring
+  de `research_result.py`, que ya anticipaban este uso desde la Fase 1.
+- Incluye una tabla explícita que mapea cada sección de reporte prevista
+  en `TASKS.md`/`ROADMAP.md` (identidad de la empresa, salud financiera,
+  valoración, fuentes/procedencia de IA, fallos/limitaciones) al campo
+  concreto de `ResearchResult` del que sale, confirmando que no falta
+  ningún dato.
+- Documenta el criterio de "no sobre-diseñar antes de tener el caso de
+  uso real" (ya aplicado en otros módulos del proyecto) como motivo para
+  no crear una capa de indirección sin beneficio demostrado todavía.
+- Deja explícitamente fuera de alcance: qué secciones concretas tendrá
+  el reporte y en qué orden (tarea siguiente en la misma sección de
+  `TASKS.md`), la implementación de cualquier plantilla concreta, el
+  agente de reporte opcional, y la serialización a JSON.
 
 ## Decisiones tomadas
 
-- **Extraer `main()` en vez de solo mejorar el mensaje en el bloque
-  `if __name__`.** Sin una función invocable, esta tarea no era testeable
-  sin capturar un proceso completo (`subprocess`), lo cual habría sido
-  más frágil y lento. Extraer `main(argv=None) -> int` es un cambio
-  mínimo y estándar en CLIs de Python, consistente con el patrón ya usado
-  en `investmentops.cli.parse_args` (que también acepta `argv=None`).
-- **Mensaje de error a `stderr`, no a `stdout`.** Antes, el mensaje de
-  `ConfigError` se imprimía con `print()` normal (`stdout`), igual que el
-  resultado exitoso. Separar ambos flujos es una práctica estándar de
-  CLIs: permite a quien invoque el programa distinguir salida útil de
-  mensajes de error (ej. `python -m investmentops investigate AAPL >
-  reporte.txt` no debería terminar con un mensaje de error dentro del
-  archivo de salida).
-- **Código de salida `1` ante `ConfigError`.** Antes, el proceso siempre
-  terminaba con código `0` (por ausencia de `sys.exit(...)` con un valor
-  explícito), incluso cuando el flujo no pudo ejecutarse en absoluto.
-  Devolver `1` sigue la convención estándar de Unix (`0` = éxito, distinto
-  de cero = error) y permite que scripts que invoquen esta CLI detecten
-  el fallo mediante el código de salida, no solo parseando el texto.
-- **No se traduce ningún otro tipo de excepción.** Se revisó
-  explícitamente que `investigate()` ya no deja escapar
-  `DataProviderError`, `NormalizationError`, `PromptError`,
-  `AgentProviderSelectionError` ni `AIProviderError` (los traduce a
-  `ResearchFailure`, ya presentados por `format_research_result`), y que
-  los errores de `argparse` ya son legibles por su propio mecanismo
-  estándar. Agregar un `except Exception` genérico "por si acaso" iría
-  contra el principio de no inventar manejo de errores para casos que no
-  están identificados como reales en esta fase del proyecto (ver
-  `ARCHITECTURE.md`, "Manejo de errores y limitaciones": declarar
-  honestamente lo que se maneja, no aparentar cobertura genérica).
+- **Reutilizar `ResearchResult` tal cual, sin tipo intermedio nuevo.**
+  Introducir una estructura de "modelo de reporte" separada antes de
+  escribir la primera plantilla concreta habría sido anticipar una
+  necesidad no demostrada. Si en el futuro un generador necesita un dato
+  derivado que `ResearchResult` no expone, esa sería una extensión
+  explícita y posterior de esta decisión, documentada cuando surja el
+  caso de uso real.
+- **Documentar la decisión aunque la estructura ya existiera.** Se
+  consideró marcar la tarea como satisfecha sin ningún artefacto nuevo
+  (ya que `ARCHITECTURE.md` ya decía que `ResearchResult` es lo que
+  consumen los generadores), pero se prefirió dejar un documento
+  explícito de esta fase, siguiendo el mismo patrón ya establecido en el
+  proyecto para tareas de "definir estructura/mecanismo" (ver `CACHE.md`,
+  `VALUATION_METRICS.md`), para que quede trazable como parte del trabajo
+  de la Fase 2 y no se pierda en un documento de una fase anterior.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_main.py` (nuevo)
+- `investmentops/reports/REPORT_MODEL.md` (nuevo)
 
 Modificados:
-- `investmentops/__main__.py` (se extrajo `main(argv=None) -> int`; el
-  mensaje de `ConfigError` ahora va a `stderr` con un prefijo claro y el
-  proceso termina con código de salida `1`; docstring del módulo
-  reescrito)
-- `TASKS.md` (tarea "Implementar mensajes de error legibles en consola
-  ante fallos del flujo" marcada como completada; con esto se completa
-  por entero la sección "CLI" de la Fase 1)
+- `TASKS.md` (tarea "Definir la estructura común que consumirán los
+  generadores..." marcada como completada, Fase 2, "Modelo de reporte")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`, `investmentops/cli/CLI.md`,
-`investmentops/cli/__init__.py`, `investmentops/core/orchestrator.py`,
-ningún otro módulo de código Python existente.
+`CONFIGURATION.md`, `config.example.toml`, ningún módulo de código
+Python existente (esta tarea es puramente de diseño/documentación, sin
+cambios de código).
 
 ## Problemas encontrados
 
-Ninguno nuevo. Se mantiene el hallazgo ya anotado en actualizaciones
+Ninguno. Se mantiene el hallazgo ya anotado en actualizaciones
 anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
-`investmentops/tests/`); el archivo de pruebas nuevo de esta tarea se
-colocó en `investmentops/tests/`, consistente con el resto de módulos de
-código de la Fase 1 (en particular con `test_cli.py`,
-`test_cli_dispatch.py` y `test_cli_output.py`, que también viven ahí).
+`investmentops/tests/`); no aplica a esta tarea, que no agrega pruebas.
 
 ## Próxima tarea recomendada
 
-Con esta tarea se completa por entero la sección "CLI" de la Fase 1.
-Las tareas restantes de `TASKS.md` para la Fase 1 son las de
-"Verificación" (pruebas manuales de punta a punta, no tareas de código
-nuevo per se: probar con un ticker real, probar con un ticker
-inválido/inexistente, confirmar que las interpretaciones vienen del
-modelo de lenguaje y no de reglas fijas, y confirmar que cambiar el
-proveedor de IA de un agente vía configuración no requiere tocar
-código). Con eso, la Fase 1 completa (`ROADMAP.md`) quedaría cerrada de
-punta a punta.
+Fase 2 → Modelo de reporte → *"Definir qué secciones tendrá el reporte
+(identidad de la empresa, salud financiera, valoración, fuentes y fecha
+de cada dato, incluyendo qué proveedor de IA generó cada
+interpretación)."*
 
-Nota para la próxima conversación: si se decide abordar la sección
-"Verificación", conviene aclarar primero si el objetivo es (a) dejar
-constancia por escrito de que esas verificaciones manuales se realizaron
-(ej. una sección nueva en `PROGRESS.md` con los resultados observados),
-o (b) tratarlas como fuera de alcance de este flujo de trabajo
-automatizado por tratarse explícitamente de pasos *manuales* (requieren
-una API key real de FMP y de Anthropic, y ejecutar el CLI de verdad).
-Si se prefiere continuar con trabajo de código, la Fase 1 ya está
-completa y la siguiente pieza natural sería iniciar la Fase 2 ("Generar
-un reporte profesional"), comenzando por su primera tarea: "Definir la
-estructura común que consumirán los generadores (a partir del
-'Resultado de investigación')".
+Esta tarea sigue siendo de diseño/documentación (no de código): decidir
+el orden y contenido exacto de cada sección antes de implementar la
+primera plantilla concreta (Generador Markdown, tarea siguiente en esa
+misma sección). `REPORT_MODEL.md` (esta tarea) ya deja mapeadas las
+secciones a los campos de `ResearchResult`; la tarea siguiente debe fijar
+el orden de presentación y el nivel de detalle de cada una.
