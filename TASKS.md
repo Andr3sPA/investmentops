@@ -66,11 +66,11 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente de valoración. — `parse_valuation_response` en `investmentops/analysis_engines/valuation.py` (ver PROGRESS.md). Traduce el `AIProviderResponse` crudo (más las `ValuationMetrics` ya calculadas) a un `AnalysisResult`: `analysis_id="valuation"`, `findings=[response.content]`, `supporting_metrics` con `price_to_earnings`/`price_to_sales`, `limitations` con `PRICE_TO_BOOK_LIMITATION` y `EV_EBITDA_LIMITATION` (siempre presentes) más cualquier advertencia de `metrics.warnings`, y `provenance` construida desde los metadatos del proveedor de IA. Se agregó también `analyze_valuation`, una función de conveniencia que encadena calcular métricas → invocar al proveedor → parsear la respuesta, análoga a `analyze_financial_health`.
 
 ### Orquestador mínimo
-- Implementar la función que recibe un ticker y dispara la consulta al proveedor de Fase 1.
-- Implementar el paso de datos crudos a la capa de normalización.
-- Implementar la invocación secuencial de los dos agentes de análisis (salud financiera, valoración) sobre el modelo normalizado.
-- Implementar el ensamblado de ambos resultados en un "Resultado de investigación" único.
-- Implementar el manejo de fallo del proveedor de datos o del proveedor de IA sin detener el resto del flujo, dejándolo explícito en el resultado.
+- [x] Implementar la función que recibe un ticker y dispara la consulta al proveedor de Fase 1. — `fetch_raw_data` en `investmentops/core/orchestrator.py` (ver PROGRESS.md). Recibe un `ticker` y llama a `DataProvider.fetch(ticker)`; por defecto construye un `FMPFundamentalsProvider` (el proveedor ya elegido para el MVP), pero acepta un `provider` inyectado para pruebas u otros usos futuros. No traduce `DataProviderError` ni realiza normalización/caché: eso corresponde a las tareas siguientes de esta misma sección.
+- [ ] Implementar el paso de datos crudos a la capa de normalización.
+- [ ] Implementar la invocación secuencial de los dos agentes de análisis (salud financiera, valoración) sobre el modelo normalizado.
+- [ ] Implementar el ensamblado de ambos resultados en un "Resultado de investigación" único.
+- [ ] Implementar el manejo de fallo del proveedor de datos o del proveedor de IA sin detener el resto del flujo, dejándolo explícito en el resultado.
 
 ### CLI
 - Definir la sintaxis del comando de investigación (ej. investigar una empresa por ticker).

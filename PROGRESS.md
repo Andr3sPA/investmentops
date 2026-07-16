@@ -4,133 +4,109 @@
 
 ## Última tarea completada
 
-Fase 1 → Agente de análisis: valoración → *"Implementar el parseo de la
-respuesta del modelo al resultado estructurado del agente de
-valoración."*
+Fase 1 → Orquestador mínimo → *"Implementar la función que recibe un
+ticker y dispara la consulta al proveedor de Fase 1."*
 
 Antes de implementarla, se verificó que no estuviera ya satisfecha:
-`investmentops/analysis_engines/valuation.py` solo contenía
-`ValuationMetrics`, `calculate_valuation_metrics` (cálculo determinístico
-de P/E y P/S) e `invoke_valuation_agent` (invocación al proveedor de IA,
-tarea anterior ya completada), sin ninguna función que tradujera el
-`AIProviderResponse` crudo a un `AnalysisResult`. Quedaba disponible toda
-la infraestructura reutilizable de `investmentops.analysis_engines.contracts`
-(`AnalysisResult`, `AnalysisProvenance`) y el patrón ya validado de
-`parse_financial_health_response` en
-`investmentops/analysis_engines/financial_health.py`, señalado como nota
-para esta tarea en la actualización anterior de este archivo.
+`investmentops/core/__init__.py` solo re-exporta las estructuras
+`ResearchFailure`/`ResearchResult` (definidas para una tarea anterior de
+"Contratos e interfaces"), sin ninguna lógica que invoque a
+`FMPFundamentalsProvider` ni a ningún otro `DataProvider`. Con esto
+comienza la sección "Orquestador mínimo" de TASKS.md (la sección de
+"Agente de análisis: valoración" quedó completa en la conversación
+anterior).
 
 ## Qué se implementó
 
-**`investmentops/analysis_engines/valuation.py`** (modificado) — se
-agregaron `PRICE_TO_BOOK_LIMITATION`, `EV_EBITDA_LIMITATION`,
-`parse_valuation_response` y `analyze_valuation`, siguiendo exactamente
-el mismo patrón ya usado en `parse_financial_health_response` y
-`analyze_financial_health` (`investmentops/analysis_engines/financial_health.py`):
+**`investmentops/core/orchestrator.py`** (nuevo) — `fetch_raw_data(ticker,
+*, config=None, provider=None) -> RawProviderData`:
 
-- `PRICE_TO_BOOK_LIMITATION` y `EV_EBITDA_LIMITATION`: constantes de
-  texto, análogas a `LIQUIDITY_LIMITATION` en `financial_health.py`,
-  declarando las limitaciones ya documentadas en
-  `VALUATION_METRICS.md` (el modelo de dominio no expone `equity` ni
-  `ebitda`/`cash`). Se usan dos constantes separadas (no una sola,
-  como en `financial_health.py`) porque son dos ausencias distintas e
-  independientes (P/B y EV/EBITDA), cada una con su propia explicación.
-- `parse_valuation_response(response, metrics) -> AnalysisResult`:
-  - `analysis_id="valuation"` (`AGENT_ID`).
-  - `findings=[response.content]` (texto libre del modelo, sin
-    recortar ni reformatear, igual que en `financial_health.py`).
-  - `supporting_metrics` con `price_to_earnings`/`price_to_sales`,
-    tomados directamente de `metrics` (las mismas `ValuationMetrics`
-    ya calculadas de forma determinística), nunca del texto del
-    modelo.
-  - `limitations` con `PRICE_TO_BOOK_LIMITATION` y
-    `EV_EBITDA_LIMITATION` siempre presentes (en ese orden), seguidas
-    de cualquier advertencia en `metrics.warnings` (ej. los casos
-    `net_income <= 0` o `revenue == 0`).
-  - `provenance` construida desde `response.provider`/`response.model`/
-    `response.generated_at`.
-- `analyze_valuation(market_data, statement, metrics=None, *, config=None) -> AnalysisResult`:
-  función de conveniencia que encadena `calculate_valuation_metrics`
-  (solo si `metrics` no se indica) → `invoke_valuation_agent` →
-  `parse_valuation_response`, análoga a `analyze_financial_health`. No
-  traduce las excepciones de las funciones que invoca.
-- El docstring del módulo se actualizó para documentar las tres piezas
-  (cálculo determinístico + invocación + parseo), mismo criterio ya
-  usado en `financial_health.py`.
-- No se modificaron `ValuationMetrics`, `calculate_valuation_metrics` ni
-  `invoke_valuation_agent` (ya estaban completos y correctos de tareas
-  anteriores).
+- Recibe un `ticker` y llama a `DataProvider.fetch(ticker)`.
+- Por defecto construye un `FMPFundamentalsProvider(config=config)` (el
+  proveedor ya elegido para el MVP, ver TASKS.md "Fuente de datos
+  fundamentales" y `investmentops/data_providers/fundamentals.py`).
+- Acepta un parámetro `provider` opcional para inyectar cualquier objeto
+  que cumpla el contrato `DataProvider`
+  (investmentops.data_providers.contracts), pensado principalmente para
+  pruebas (sin llamadas de red reales) pero dejando la puerta abierta a
+  que una tarea futura del orquestador elija entre varios proveedores sin
+  tener que modificar esta función.
+- No captura ni traduce `DataProviderError`: la propaga tal cual. El
+  manejo de fallos "sin detener el resto del flujo" es una tarea
+  explícita y posterior de esta misma sección de TASKS.md ("Implementar
+  el manejo de fallo del proveedor de datos o del proveedor de IA...").
+- No consulta la caché de datos normalizados
+  (`investmentops.data_layer.cache`): esa caché guarda modelos ya
+  normalizados (`FinancialStatement`/`MarketData`), no `RawProviderData`;
+  decidir cuándo evitar la llamada al proveedor por tener ya un dato
+  normalizado reciente en caché le corresponde a una tarea posterior que
+  también involucre el paso de normalización ("Implementar el paso de
+  datos crudos a la capa de normalización"), no a esta tarea aislada de
+  "disparar la consulta".
 
-**`investmentops/tests/test_analysis_engines_valuation_parse.py`**
-(nuevo) — pruebas para `parse_valuation_response` y `analyze_valuation`,
-análogas a `test_analysis_engines_financial_health_parse.py`:
+**`investmentops/tests/test_core_orchestrator.py`** (nuevo) — pruebas
+para `fetch_raw_data`:
 
-- Que `parse_valuation_response` devuelve un `AnalysisResult` con
-  `analysis_id="valuation"`.
-- Que `findings` usa el texto crudo del modelo.
-- Que `supporting_metrics` viene de `metrics` (las ya calculadas), no
-  del texto del modelo, aunque el modelo "sugiera" otro valor.
-- Que `limitations` siempre incluye `PRICE_TO_BOOK_LIMITATION` y
-  `EV_EBITDA_LIMITATION`, y que se agregan las advertencias de
-  `metrics.warnings` a continuación cuando existen (ej. `net_income <= 0`
-  y `revenue == 0` simultáneos: 4 limitaciones en total).
-- Que `provenance` se construye desde los metadatos de la respuesta.
-- Que el `AnalysisResult` resultante es inmutable.
-- Pruebas de punta a punta para `analyze_valuation` (mockeando
-  `requests.post`, nunca una llamada de red real): resultado completo,
-  reutilización de métricas ya calculadas sin recalcular, y propagación
-  de advertencias de casos degenerados hasta las `limitations` finales.
+- Que usa un `provider` inyectado y le pasa el `ticker` recibido.
+- Que propaga `DataProviderError` sin traducirla cuando el proveedor
+  inyectado falla.
+- Que, sin `provider` explícito, construye y usa `FMPFundamentalsProvider`
+  por defecto (mockeando `requests.get`, nunca una llamada de red real),
+  confirmando `metadata.source == "fmp"`.
+- Que un ticker inexistente contra el proveedor por defecto sigue
+  propagando `DataProviderError` con el mensaje ya validado en
+  `test_data_providers_fundamentals.py`.
 
 ## Decisiones tomadas
 
-- **Mismo patrón que `parse_financial_health_response`/
-  `analyze_financial_health`**, sin desviaciones: mismo orden de
-  campos en `AnalysisResult`, mismo criterio de no recalcular ni
-  derivar métricas del texto del modelo, mismo criterio de no traducir
-  excepciones en la función de conveniencia.
-- **Dos constantes de limitación separadas** (`PRICE_TO_BOOK_LIMITATION`,
-  `EV_EBITDA_LIMITATION`) en vez de una sola combinada: a diferencia de
-  la liquidez en `financial_health.py` (una única ausencia), aquí hay
-  dos múltiplos distintos y no calculables por razones distintas
-  (`equity` ausente vs. `ebitda`/`cash` ausentes), documentados por
-  separado en `VALUATION_METRICS.md`; mantenerlas como constantes
-  separadas conserva esa distinción y facilita que pruebas o reportes
-  futuros verifiquen cada una de forma independiente.
-- **`analyze_valuation` se agregó en la misma tarea** (no se difirió),
-  siguiendo la nota dejada en la actualización anterior de este archivo
-  y el precedente ya sentado por `analyze_financial_health`, que
-  también se agregó como parte de la tarea de parseo de su propio
-  agente.
+- **Alcance estrictamente limitado a "disparar la consulta".** TASKS.md
+  desglosa el orquestador mínimo en 5 tareas pequeñas separadas (disparar
+  consulta → normalización → invocar agentes → ensamblar
+  `ResearchResult` → manejo de fallos). Esta tarea implementa
+  únicamente la primera, sin adelantar ninguna de las siguientes, tal
+  como quedó anotado como nota para esta conversación en la actualización
+  anterior de este archivo.
+- **Parámetro `provider` inyectable en vez de acoplar la función a
+  `FMPFundamentalsProvider`.** Aunque hoy solo existe un proveedor de
+  datos fundamentales concreto, el contrato `DataProvider` ya es
+  estructural (`Protocol`, ver
+  `investmentops/data_providers/contracts.py`) y el resto del proyecto ya
+  usa ese patrón de inyección para pruebas (ver
+  `AnthropicAIProvider`/`build_ai_provider`). Mantiene la función testeable
+  sin mockear HTTP en cada prueba, y no le cierra la puerta a que el
+  "Orquestador mínimo" decida más adelante construir el proveedor de otra
+  forma, sin tener que modificar esta función.
+- **No se integra con la caché en esta tarea.** Ver justificación en el
+  docstring del módulo: la caché opera sobre modelos normalizados, no
+  sobre datos crudos, por lo que mezclar esa decisión aquí adelantaría
+  trabajo de la tarea de normalización.
 
 ## Validación realizada
 
 Revisión manual del código y las pruebas nuevas contra el patrón ya
-validado de `parse_financial_health_response`/`analyze_financial_health`
-y sus pruebas (`test_analysis_engines_financial_health_parse.py`). No se
-ejecutó la suite completa en este entorno (Claude Web, sin acceso al
-repositorio real); se dejan los archivos para que el usuario los integre
-y corra `pytest` localmente.
+usado en otros clientes/pruebas del proyecto (`FMPFundamentalsProvider`,
+`test_data_providers_fundamentals.py`,
+`test_data_providers_contracts.py`). No se ejecutó la suite completa en
+este entorno (Claude Web, sin acceso al repositorio real); se dejan los
+archivos para que el usuario los integre y corra `pytest` localmente.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_analysis_engines_valuation_parse.py`
+- `investmentops/core/orchestrator.py`
+- `investmentops/tests/test_core_orchestrator.py`
 
 Modificados:
-- `investmentops/analysis_engines/valuation.py` (se agregaron
-  `PRICE_TO_BOOK_LIMITATION`, `EV_EBITDA_LIMITATION`,
-  `parse_valuation_response` y `analyze_valuation`; `ValuationMetrics`,
-  `calculate_valuation_metrics` e `invoke_valuation_agent` se mantienen
-  sin cambios funcionales)
-- `TASKS.md` (tarea marcada como completada, con referencia inline)
+- `TASKS.md` (primera tarea de "Orquestador mínimo" marcada como
+  completada, con referencia inline)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`, `prompts/README.md`,
-`prompts/valuation.md`, `VALUATION_METRICS.md`, ningún otro módulo de
-código Python existente (`investmentops/analysis_engines/
-financial_health.py`, `investmentops/data_layer/*`,
-`investmentops/ai_providers/*`, etc.).
+`CONFIGURATION.md`, `config.example.toml`, `investmentops/core/__init__.py`
+(no se re-exportó `fetch_raw_data` todavía: `__init__.py` re-exporta hoy
+estructuras de datos, no funciones de orquestación; decidir si conviene
+re-exportarla puede revisarse cuando el orquestador tenga más de una
+pieza), ningún otro módulo de código Python existente.
 
 ## Problemas encontrados
 
@@ -138,33 +114,25 @@ Ninguno.
 
 ## Próxima tarea recomendada
 
-Con esta tarea, la sección "Agente de análisis: valoración" de la Fase 1
-queda completa (mismo estado que "Agente de análisis: salud
-financiera"). La siguiente sección sin empezar en `TASKS.md` es
-**"Orquestador mínimo"**, cuya primera tarea es:
+La siguiente tarea sin empezar en "Orquestador mínimo" (TASKS.md) es:
 
-1. *"Implementar la función que recibe un ticker y dispara la consulta
-   al proveedor de Fase 1."*
+2. *"Implementar el paso de datos crudos a la capa de normalización."*
 
 Nota para la próxima conversación:
-- Ya existe toda la infraestructura que esta función debe orquestar:
-  `FMPFundamentalsProvider.fetch` (`investmentops/data_providers/
-  fundamentals.py`), la lectura/escritura de caché
-  (`investmentops.data_layer.cache.load_financial_statement`/
-  `load_market_data`/`save_financial_statement`/`save_market_data`) y
-  la normalización (`investmentops.data_layer.normalization.
-  financial_statement_from_raw`/`market_data_from_raw`).
-- Esta primera tarea del orquestador probablemente deba: intentar leer
-  desde caché primero (evitar la llamada al proveedor si el dato es
-  reciente), y si no hay dato reciente, consultar
-  `FMPFundamentalsProvider.fetch(ticker)`, normalizar el resultado y
-  guardarlo en caché — pero confirmar el alcance exacto en la próxima
-  conversación antes de implementar, ya que TASKS.md desglosa esto en
-  varias tareas pequeñas ("recibe un ticker y dispara la consulta",
-  "paso a normalización", "invocación de los dos agentes", "ensamblado
-  en ResearchResult", "manejo de fallos"): esta primera tarea concreta
-  debería limitarse solo a disparar la consulta al proveedor, sin
-  adelantar el resto.
+- Ya existe toda la infraestructura que esta función debe encadenar tras
+  `fetch_raw_data`: `investmentops.data_layer.normalization.
+  financial_statement_from_raw`/`market_data_from_raw`, que ya reciben un
+  `RawProviderData` (el mismo tipo que devuelve `fetch_raw_data`) y
+  devuelven `FinancialStatement`/`MarketData` respectivamente, señalando
+  `NormalizationError` si faltan campos.
+- Esta tarea probablemente deba limitarse a encadenar
+  `fetch_raw_data(ticker)` → `financial_statement_from_raw(raw)` +
+  `market_data_from_raw(raw)`, dejando fuera todavía la lectura/escritura
+  de caché (aunque ambas ya existen en
+  `investmentops.data_layer.cache`), la invocación de los agentes de
+  análisis, el ensamblado en `ResearchResult` y el manejo de fallos: cada
+  uno es su propia tarea siguiente en la misma sección de TASKS.md.
 - Los dos agentes de análisis (`analyze_financial_health`,
-  `analyze_valuation`) ya están completos y listos para ser invocados
-  por el orquestador en una tarea posterior de la misma sección.
+  `analyze_valuation`) y la caché de datos normalizados
+  (`investmentops.data_layer.cache`) ya están completos y listos para ser
+  usados por tareas posteriores del orquestador.
