@@ -8,7 +8,7 @@ Responsabilidad (ver ARCHITECTURE.md, componente 1):
 - No contiene lógica financiera ni de formateo de reportes; todo eso se
   delega a las capas correspondientes.
 
-Cubre tres tareas de TASKS.md, Fase 1, "CLI":
+Cubre cuatro tareas de TASKS.md, Fase 1, "CLI":
 
 - "Implementar el parseo del argumento ticker." (`build_parser`,
   `parse_args`), siguiendo la sintaxis ya decidida y documentada en
@@ -17,6 +17,8 @@ Cubre tres tareas de TASKS.md, Fase 1, "CLI":
 - "Implementar la validación básica del ticker (no vacío, formato
   esperado)." (`_validate_ticker`).
 - "Conectar el comando con el orquestador." (`dispatch`).
+- "Implementar la impresión en consola del resultado (texto simple, sin
+  formato de reporte todavía)." (`format_research_result`).
 
 ```
 python -m investmentops investigate TICKER
@@ -62,9 +64,9 @@ mercado colombiano como `"ECOPETROL.CL"`).
 - Para el subcomando `investigate`, invoca
   `investigate(args.ticker, config=config, provider=provider)` y
   devuelve el `ResearchResult` obtenido tal cual, sin transformarlo.
-- **No imprime nada en consola.** Cómo y qué se imprime del
-  `ResearchResult` devuelto es la tarea siguiente en `TASKS.md`
-  ("Implementar la impresión en consola del resultado").
+- **No imprime nada en consola** (eso es responsabilidad de
+  `format_research_result`, ver más abajo, y de quien invoque `dispatch`,
+  ver `investmentops/__main__.py`).
 - **No traduce ni maneja ningún error.** `investigate(...)` ya no deja
   escapar `DataProviderError`, `NormalizationError`, `PromptError`,
   `AgentProviderSelectionError` ni `AIProviderError` (los captura
@@ -87,8 +89,38 @@ mercado colombiano como `"ECOPETROL.CL"`).
   uno de los subcomandos definidos; es una salvaguarda defensiva, no un
   camino esperado del flujo normal.
 
+## Impresión en consola (`format_research_result`)
+
+`format_research_result(result)` traduce un `ResearchResult` (la salida
+de `dispatch`/`investigate`) a un texto simple y legible, pensado para
+imprimirse directamente en consola (`print(format_research_result(result))`).
+Es deliberadamente texto plano sin formato de reporte (Markdown/HTML son
+capacidades de la Fase 2, ver `ROADMAP.md`):
+
+- Encabezado con el ticker de la empresa (`result.company.ticker`) y la
+  fecha de ensamblado (`result.generated_at`).
+- Por cada `AnalysisResult` en `result.analysis_results`, en el orden en
+  que ya vienen (salud financiera → valoración, ver
+  `investmentops.core.orchestrator.run_analysis_engines`/`investigate`):
+  su `analysis_id`, sus `findings` (texto de interpretación de la IA),
+  sus `supporting_metrics` (métricas calculadas de forma
+  determinística), sus `limitations` (si las hay) y el
+  proveedor/modelo de IA que generó la interpretación
+  (`AnalysisProvenance`).
+- Si `result.analysis_results` está vacío, lo indica explícitamente en
+  vez de imprimir una sección vacía en silencio.
+- Si `result.failures` no está vacío, una sección final que lista cada
+  `ResearchFailure` (`stage`, `identifier`, `reason`), conforme a
+  `ARCHITECTURE.md`, "Manejo de errores y limitaciones": el fallo debe
+  quedar explícito, no omitido.
+
+Esta función solo formatea; no imprime nada por sí misma (`print(...)` es
+responsabilidad de quien la invoque, ver `investmentops/__main__.py`) ni
+decide qué hacer ante errores que `dispatch` pueda dejar escapar (ej.
+`ConfigError`): eso es la tarea siguiente ("Implementar mensajes de error
+legibles en consola ante fallos del flujo").
+
 Fuera de alcance de este módulo (aún, ver TASKS.md, sección "CLI"):
-- La impresión en consola del resultado.
 - Los mensajes de error legibles ante fallos del flujo (más allá del
   mensaje estándar que ya produce `argparse` ante un ticker inválido, o
   de que una excepción como `ConfigError` se propague sin traducir).
@@ -270,3 +302,74 @@ def dispatch(
         return investigate(args.ticker, config=config, provider=provider)
 
     raise ValueError(f"Comando desconocido: {args.command!r}")
+
+
+def format_research_result(result: ResearchResult) -> str:
+    """Formatea un `ResearchResult` como texto simple para consola.
+
+    Cubre la tarea "Implementar la impresión en consola del resultado
+    (texto simple, sin formato de reporte todavía)" (TASKS.md, Fase 1,
+    "CLI"). Ver "Impresión en consola (`format_research_result`)" en el
+    docstring del módulo para el detalle completo de qué incluye cada
+    sección.
+
+    Esta función solo produce el texto: no imprime nada por sí misma
+    (`print(format_research_result(result))` es responsabilidad de quien
+    la invoque, ver `investmentops/__main__.py`).
+
+    Parameters
+    ----------
+    result:
+        El `ResearchResult` a formatear, típicamente la salida de
+        `dispatch(...)`/`investigate(...)`.
+
+    Returns
+    -------
+    str
+        Texto plano, multilínea, listo para imprimirse en consola. Nunca
+        está vacío: si no hay `analysis_results`, lo indica
+        explícitamente; si no hay `failures`, simplemente omite esa
+        sección (no imprime un encabezado vacío).
+    """
+    lines: list[str] = []
+
+    lines.append(f"Investigación: {result.company.ticker}")
+    lines.append(f"Generado: {result.generated_at.isoformat()}")
+    lines.append("")
+
+    if not result.analysis_results:
+        lines.append("No se completó ningún análisis.")
+    else:
+        for analysis in result.analysis_results:
+            lines.append(f"=== {analysis.analysis_id} ===")
+            for finding in analysis.findings:
+                lines.append(finding)
+            lines.append("")
+
+            lines.append("Métricas de soporte:")
+            if analysis.supporting_metrics:
+                for key, value in analysis.supporting_metrics.items():
+                    lines.append(f"  - {key}: {value}")
+            else:
+                lines.append("  (ninguna)")
+
+            if analysis.limitations:
+                lines.append("Limitaciones:")
+                for limitation in analysis.limitations:
+                    lines.append(f"  - {limitation}")
+
+            lines.append(
+                f"(Proveedor de IA: {analysis.provenance.ai_provider}, "
+                f"modelo: {analysis.provenance.ai_model})"
+            )
+            lines.append("")
+
+    if result.failures:
+        lines.append("=== Fallos parciales ===")
+        for failure in result.failures:
+            lines.append(
+                f"  - [{failure.stage}] {failure.identifier}: {failure.reason}"
+            )
+        lines.append("")
+
+    return "\n".join(lines).rstrip("\n")

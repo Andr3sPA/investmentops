@@ -4,114 +4,120 @@
 
 ## Última tarea completada
 
-Fase 1 → CLI → *"Conectar el comando con el orquestador."*
+Fase 1 → CLI → *"Implementar la impresión en consola del resultado (texto simple, sin formato de reporte todavía)."*
 
 ## Verificación previa (sin duplicar trabajo)
 
 Antes de implementar, se confirmó que esta tarea **no** estaba satisfecha
-todavía: `investmentops/cli/__init__.py` solo exponía `build_parser` y
-`parse_args` (parseo y validación del ticker), sin ningún punto de
-conexión con `investmentops.core.orchestrator.investigate`, y
-`investmentops/__main__.py` solo probaba la carga de
-`config.local.toml`. El resto de piezas necesarias para esta tarea
-(`investigate(ticker, config=None, provider=None)`, ya con manejo de
-fallos parciales) ya existían completas desde la sección "Orquestador
-mínimo" (ver entradas anteriores de este archivo). Por lo tanto, esta
-tarea sí requería código nuevo.
+todavía: `dispatch` (`investmentops/cli/__init__.py`) ya devolvía un
+`ResearchResult` completo, pero no existía ninguna función que lo
+tradujera a texto legible para consola, y `investmentops/__main__.py`
+solo probaba la carga de `config.local.toml` (no invocaba `parse_args`
+ni `dispatch`). Por lo tanto, esta tarea sí requería código nuevo.
 
 ## Qué se implementó
 
 **`investmentops/cli/__init__.py`** (modificado) — se agregó:
 
-- `dispatch(args, *, config=None, provider=None) -> ResearchResult`:
-  recibe el `argparse.Namespace` ya producido por `parse_args` y, para
-  el subcomando `"investigate"`, invoca
-  `investmentops.core.orchestrator.investigate(args.ticker, config=config,
-  provider=provider)`, devolviendo el `ResearchResult` obtenido sin
-  transformarlo. `config`/`provider` son parámetros opcionales,
-  pensados sobre todo para pruebas (para no depender de un
-  `config.local.toml` real en disco ni de una llamada de red real); en
-  uso normal ambos se dejan en `None` y `investigate` resuelve la
-  configuración real y el proveedor por defecto (FMP) por sí mismo. Si
-  `args.command` no es un comando reconocido, levanta `ValueError` como
-  salvaguarda defensiva (no debería ocurrir en la práctica, ya que
-  `argparse` ya exige un subcomando válido).
-- Deliberadamente, `dispatch` **no imprime nada en consola** y **no
-  traduce ningún error**: `investigate(...)` ya captura
-  `DataProviderError`, `NormalizationError`, `PromptError`,
-  `AgentProviderSelectionError` y `AIProviderError` como
-  `ResearchFailure` dentro del propio `ResearchResult` (ver
-  `investmentops/core/orchestrator.py`); lo único que puede seguir
-  escapando (ej. `ConfigError` si falta `config.local.toml` por
-  completo) se propaga tal cual desde `dispatch`, sin envolver. Decidir
-  qué se imprime y qué mensaje legible mostrar ante ese tipo de fallo
-  son las dos tareas siguientes de la misma sección, intencionalmente
-  separadas.
-- `build_parser`, `parse_args` y `_validate_ticker` no cambiaron de
-  comportamiento; solo se actualizó el docstring del módulo para
-  reflejar el alcance de la nueva pieza (`dispatch`).
+- `format_research_result(result: ResearchResult) -> str`: traduce un
+  `ResearchResult` a texto plano para consola, sin ningún formato de
+  reporte (Markdown/HTML son capacidades de la Fase 2):
+  - Encabezado con el ticker (`result.company.ticker`) y la fecha de
+    ensamblado (`result.generated_at.isoformat()`).
+  - Por cada `AnalysisResult` en `result.analysis_results`, en el orden
+    en que ya vienen (salud financiera → valoración): su `analysis_id`,
+    sus `findings`, sus `supporting_metrics`, sus `limitations` (solo si
+    la lista no está vacía, para no imprimir una sección vacía), y el
+    proveedor/modelo de IA que generó la interpretación
+    (`AnalysisProvenance`).
+  - Si `analysis_results` está vacío, lo indica explícitamente
+    (`"No se completó ningún análisis."`) en vez de omitir la sección en
+    silencio.
+  - Si `result.failures` no está vacío, una sección final
+    `=== Fallos parciales ===` que lista cada `ResearchFailure` (`stage`,
+    `identifier`, `reason`); se omite por completo si no hay fallos.
+  - La función solo devuelve el texto formateado; no imprime nada por sí
+    misma.
+- Se actualizó el docstring del módulo para documentar esta pieza nueva
+  junto a las ya existentes (`build_parser`, `parse_args`,
+  `_validate_ticker`, `dispatch`), sin modificar el comportamiento de
+  ninguna de ellas.
 
-**`investmentops/tests/test_cli_dispatch.py`** (nuevo) — cubre:
-- `dispatch` con el subcomando `investigate` devuelve un `ResearchResult`
-  con ambos análisis completados (usando un `DataProvider` de prueba y
-  mockeando `requests.post` de Anthropic, mismo patrón ya usado en
-  `test_core_orchestrator.py`).
-- El ticker parseado (`args.ticker`) se pasa tal cual al proveedor
-  inyectado, sin normalizar a mayúsculas (esa normalización sigue
-  ocurriendo más abajo en el pipeline, no en `dispatch`).
-- Un fallo del proveedor de datos (`DataProviderError`) se traduce a un
-  `ResearchFailure` dentro del `ResearchResult` devuelto, sin que
-  `dispatch` levante ninguna excepción.
-- `dispatch` levanta `ValueError` ante un comando no reconocido
-  (salvaguarda defensiva).
+**`investmentops/__main__.py`** (modificado) — se conectó al flujo real:
+`parse_args()` → `dispatch(args)` → `print(format_research_result(result))`.
+Se mantuvo el único manejo de error que ya existía (`ConfigError` si
+falta `config.local.toml`), sin agregar traducción de otros errores:
+`dispatch`/`investigate` ya capturan `DataProviderError`,
+`NormalizationError`, `PromptError`, `AgentProviderSelectionError` y
+`AIProviderError` como `ResearchFailure` dentro del propio
+`ResearchResult`, por lo que esos fallos ya se ven reflejados en la
+salida de `format_research_result` sin necesidad de una excepción.
+Mensajes de error más elaborados (ej. para `ConfigError`) quedan para la
+tarea siguiente, intencionalmente separada.
+
+**`investmentops/tests/test_cli_output.py`** (nuevo) — cubre:
+- El ticker y la fecha de ensamblado aparecen en la salida.
+- `analysis_id` y `findings` de cada análisis aparecen en la salida, en
+  el orden en que se recibieron.
+- `supporting_metrics` aparecen listadas.
+- `limitations` aparecen solo cuando la lista no está vacía (la sección
+  `"Limitaciones:"` se omite si está vacía).
+- El proveedor y modelo de IA (`AnalysisProvenance`) aparecen en la
+  salida.
+- Si no hay `analysis_results`, se indica explícitamente
+  (`"No se completó ningún análisis."`).
+- Si hay `failures`, aparece la sección `"Fallos parciales"` con
+  `stage`, `identifier` y `reason` de cada uno; si no hay `failures`, la
+  sección se omite.
+- Caso típico de `investigate` cuando `fetch_and_normalize` falla:
+  `analysis_results` vacío + un único fallo `stage="data_provider"`.
+- La salida nunca es una cadena vacía, incluso sin resultados ni fallos.
 
 ## Decisiones tomadas
 
-- **`dispatch` vive en `investmentops/cli/__init__.py`, no en
-  `investmentops/__main__.py`.** `investmentops/__main__.py` sigue sin
-  tocarse: hoy solo prueba la carga de configuración como humo del
-  entorno, y conectar ese punto de entrada real al flujo completo
-  (parsear → `dispatch` → imprimir) corresponde de forma más natural a
-  cuando también exista la impresión en consola (tarea siguiente), para
-  no dejar un `__main__.py` a medias que llama al orquestador pero no
-  muestra nada útil todavía.
-- **Firma simétrica a `investigate(...)`.** `dispatch` expone los mismos
-  parámetros opcionales `config`/`provider` que ya tiene `investigate`,
-  en vez de ocultarlos, para que las pruebas (y cualquier futuro llamador
-  que lo necesite) puedan inyectar un proveedor/configuración de prueba
-  sin depender de I/O real, mismo criterio ya aplicado en todo el resto
-  del proyecto (`fetch_raw_data`, `fetch_and_normalize`, etc.).
-- **Sin impresión ni manejo de errores en esta tarea.** Aunque hubiera
-  sido tentador imprimir el `ResearchResult` directamente desde
-  `dispatch` para "ver algo" de inmediato, `TASKS.md` separa
-  explícitamente esa responsabilidad en la tarea siguiente
-  ("Implementar la impresión en consola del resultado"). Mezclarlas
-  hubiera hecho esta tarea más grande de lo necesario y hubiera
-  duplicado trabajo de diseño (formato de impresión) que corresponde a
-  otra tarea.
-- **`ValueError` para comando desconocido, no una excepción propia
-  nueva.** No existe hoy ningún caso de uso real en el que `args.command`
-  llegue a `dispatch` con un valor fuera de `{"investigate"}` (`argparse`
-  ya lo impide), por lo que introducir una jerarquía de excepciones
-  específica para este caso sería sobre-diseño; `ValueError` es
-  suficientemente claro como salvaguarda defensiva.
+- **Texto plano, sin plantilla de reporte.** Conforme a `ROADMAP.md`
+  (Fase 1: *"La salida es texto simple en consola (aún sin reportes
+  formales)"*) y a la redacción literal de la tarea. No se introduce
+  ningún encabezado Markdown, tabla ni estructura pensada para
+  archivarse: eso es explícitamente la Fase 2.
+- **`format_research_result` solo formatea, no imprime.** Separar
+  "construir el texto" de "imprimirlo" permite probar la función de
+  forma aislada (comparando substrings del texto devuelto) sin capturar
+  `stdout`, y deja `print(...)` como responsabilidad de quien la invoca
+  (`investmentops/__main__.py`).
+- **Se conectó `investmentops/__main__.py` al flujo real.** La nota
+  dejada en la actualización anterior de `PROGRESS.md` señalaba
+  explícitamente que esta tarea era "un buen momento" para hacerlo, ya
+  que la impresión era la única pieza que faltaba para que el punto de
+  entrada mostrara algo útil. Se mantuvo el alcance mínimo: solo se
+  agregó el flujo `parse_args → dispatch → format_research_result →
+  print`, sin agregar manejo de errores nuevo (eso es la tarea
+  siguiente).
+- **Limitaciones se omiten cuando la lista está vacía.** Ambos agentes
+  de la Fase 1 (`financial_health`, `valuation`) siempre incluyen al
+  menos una limitación fija (liquidez, o P/B y EV/EBITDA), por lo que en
+  la práctica esta sección casi siempre aparece; se probó el caso vacío
+  igualmente por completitud y para no asumir ese detalle de
+  implementación de los agentes.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_cli_dispatch.py` (nuevo)
+- `investmentops/tests/test_cli_output.py` (nuevo)
 
 Modificados:
-- `investmentops/cli/__init__.py` (se agregó `dispatch`; se actualizó el
-  docstring del módulo)
-- `TASKS.md` (tarea "Conectar el comando con el orquestador" marcada
-  como completada)
+- `investmentops/cli/__init__.py` (se agregó `format_research_result`;
+  se actualizó el docstring del módulo)
+- `investmentops/__main__.py` (conectado al flujo real: `parse_args` →
+  `dispatch` → `format_research_result` → `print`)
+- `TASKS.md` (tarea "Implementar la impresión en consola del resultado"
+  marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`, `investmentops/cli/CLI.md`,
-`investmentops/core/orchestrator.py`, `investmentops/__main__.py`,
-ningún otro módulo de código Python existente.
+`investmentops/core/orchestrator.py`, ningún otro módulo de código
+Python existente.
 
 ## Problemas encontrados
 
@@ -125,23 +131,20 @@ código de la Fase 1.
 
 La siguiente tarea sin marcar en `TASKS.md`, sección "CLI", es:
 
-5. *"Implementar la impresión en consola del resultado (texto simple,
-   sin formato de reporte todavía)."*
+6. *"Implementar mensajes de error legibles en consola ante fallos del
+   flujo."*
 
 Nota para la próxima conversación:
-- Ya existe `dispatch(args, ...)` en `investmentops/cli/__init__.py`,
-  que devuelve un `ResearchResult` completo (con `company`,
-  `analysis_results` y `failures`). Esta tarea debe decidir e
-  implementar cómo se imprime ese objeto en consola como texto simple
-  (sin plantillas de reporte, eso es la Fase 2): probablemente una
-  función nueva (ej. `format_research_result` o similar) que recorra
-  `analysis_results` (mostrando `analysis_id`, `findings`,
-  `supporting_metrics`, `limitations`) y, si aplica, mencione
-  `failures` de forma explícita.
-- Sigue sin conectarse `investmentops/__main__.py` al flujo real
-  (parsear → `dispatch` → imprimir): esta tarea es un buen momento para
-  hacerlo, ya que la impresión es la pieza que faltaba para que
-  `__main__.py` tenga algo útil que mostrar.
-- La tarea de mensajes de error legibles ante fallos del flujo (ej.
-  `ConfigError` si falta `config.local.toml`) sigue siendo la tarea
-  siguiente a esta, intencionalmente separada.
+- `investmentops/__main__.py` ya captura `ConfigError` (si falta
+  `config.local.toml`) con un mensaje mínimo (`f"[config] {exc}"`).
+  Esta tarea probablemente deba mejorar ese mensaje (ej. sugerir el
+  comando `cp config.example.toml config.local.toml`, ya presente en el
+  propio mensaje de `ConfigError`, ver `investmentops/config/__init__.py`)
+  y/o decidir si hay otros fallos que deban mostrarse de forma distinta
+  a como ya los presenta `format_research_result` (que ya lista
+  `failures` dentro del `ResearchResult`, ver esta entrada).
+- Vale la pena revisar si esta tarea debe cubrir también el caso de
+  argumentos inválidos de `argparse` (que ya terminan el proceso con un
+  mensaje estándar en `stderr` vía `SystemExit`) o si ese mecanismo ya
+  se considera suficientemente legible y la tarea se centra solo en
+  errores que hoy escapan sin traducir (`ConfigError`).
