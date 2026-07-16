@@ -1,110 +1,88 @@
 """Orquestador mínimo — disparo de la consulta al proveedor de datos, paso
 de esos datos crudos a la capa de normalización, invocación secuencial de
-los agentes de análisis, y ensamblado del "Resultado de investigación"
-final.
+los agentes de análisis, ensamblado del "Resultado de investigación"
+final, y manejo de fallos parciales sin detener el resto del flujo.
 
-Cubre cuatro tareas de TASKS.md, Fase 1, "Orquestador mínimo":
+Cubre cinco tareas de TASKS.md, Fase 1, "Orquestador mínimo":
 
 - "Implementar la función que recibe un ticker y dispara la consulta al
-  proveedor de Fase 1." (`fetch_raw_data`, ya completada en una
-  conversación anterior, ver PROGRESS.md).
+  proveedor de Fase 1." (`fetch_raw_data`, ya completada, ver PROGRESS.md).
 - "Implementar el paso de datos crudos a la capa de normalización."
-  (`fetch_and_normalize`, ya completada en una conversación anterior, ver
-  PROGRESS.md).
+  (`fetch_and_normalize`, ya completada, ver PROGRESS.md).
 - "Implementar la invocación secuencial de los dos agentes de análisis
   (salud financiera, valoración) sobre el modelo normalizado."
-  (`run_analysis_engines`, ya completada en una conversación anterior, ver
-  PROGRESS.md).
+  (`run_analysis_engines`, ya completada, ver PROGRESS.md).
 - "Implementar el ensamblado de ambos resultados en un 'Resultado de
-  investigación' único." (`assemble_research_result`, esta tarea).
+  investigación' único." (`assemble_research_result`, ya completada, ver
+  PROGRESS.md).
+- "Implementar el manejo de fallo del proveedor de datos o del proveedor
+  de IA sin detener el resto del flujo, dejándolo explícito en el
+  resultado." (`investigate`, esta tarea).
 
-Las cuatro funciones viven en el mismo módulo porque son piezas
+Las cinco funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
-del flujo de una investigación", pasos 3-6): el orquestador consulta la
-fuente de datos, pasa esos datos crudos a la capa de normalización, pasa
-el modelo normalizado a los motores de análisis, y finalmente ensambla
-los resultados de todos los análisis en un único "Resultado de
-investigación".
+del flujo de una investigación", pasos 3-6).
 
-## Ensamblado del "Resultado de investigación"
+## Manejo de fallos parciales (`investigate`)
 
-`assemble_research_result` traduce la lista de `AnalysisResult` que
-produce `run_analysis_engines` (más el `ticker` investigado) a un
-`ResearchResult` (ver `investmentops.core.research_result`), el tipo que
-consumirán los generadores de reportes en la Fase 2.
+`fetch_and_normalize` y `run_analysis_engines` documentan explícitamente
+que **no** capturan las excepciones de sus propias piezas (`DataProviderError`,
+`NormalizationError`, `PromptError`, `AgentProviderSelectionError`,
+`AIProviderError`): las propagan tal cual, y `run_analysis_engines` en
+particular detiene el flujo si el primer agente (salud financiera)
+falla, sin llegar a invocar el segundo (valoración). Esa fue una decisión
+deliberada de esas tareas, dejando explícitamente esta tarea (la última
+de "Orquestador mínimo") como la responsable de envolver el flujo
+completo y decidir qué pasa ante cada tipo de fallo sin detener el
+resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
 
-### La `Company` de este `ResearchResult`
+`investigate(ticker, ...)` es esa función de flujo completo:
 
-`ResearchResult.company` exige un `investmentops.data_layer.Company`
-completo (`ticker`, `name`, `sector`, `market`), pero **ningún** dato
-normalizado disponible hoy (`NormalizedCompanyData`, es decir
-`FinancialStatement`/`MarketData`) expone nombre, sector o mercado de la
-empresa: ni el payload crudo de `FMPFundamentalsProvider` (estado de
-resultados, balance, cotización) ni la capa de normalización
-(`investmentops.data_layer.normalization`) capturan esos campos, porque
-no forman parte de los modelos "Estados financieros normalizados" ni
-"Datos de mercado" definidos en la Fase 1 (ver ARCHITECTURE.md, "Modelo
-de datos interno").
+1. **Consulta y normalización** (`fetch_and_normalize`): si falla con
+   `DataProviderError` (la fuente de datos no respondió, el ticker no
+   existe) o `NormalizationError` (el payload crudo no trae los campos
+   imprescindibles), **no tiene sentido invocar ningún agente** — ambos
+   agentes de análisis necesitan el modelo normalizado como entrada. En
+   este caso se devuelve de inmediato un `ResearchResult` con
+   `analysis_results=[]` y un único `ResearchFailure(stage="data_provider",
+   identifier=<ticker normalizado>, reason=<mensaje del error>)`. Esto
+   responde explícitamente la pregunta que `PROGRESS.md` dejó abierta
+   ("¿tiene sentido producir un `ResearchResult` en absoluto?"): sí, con
+   la etapa de datos marcada como fallida y ningún análisis disponible,
+   en vez de no devolver nada — conforme a ARCHITECTURE.md, "el reporte
+   final debe reflejar explícitamente qué información no pudo
+   obtenerse, en vez de fallar silenciosamente".
+2. **Agentes de análisis, uno por uno**: si la normalización tuvo éxito,
+   se invoca `analyze_financial_health` y, en un `try/except` **separado**,
+   `analyze_valuation`. Un fallo de cualquiera de los dos
+   (`PromptError`, `AgentProviderSelectionError` o `AIProviderError`) se
+   captura y se traduce a `ResearchFailure(stage="analysis_engine",
+   identifier=<AGENT_ID del agente que falló>, reason=<mensaje>)`, sin
+   impedir que el otro agente se ejecute — a diferencia de
+   `run_analysis_engines`, que se detiene ante el primer fallo. Los
+   resultados exitosos (puede haber cero, uno o dos) se recolectan en
+   orden.
+3. **Ensamblado final**: se llama a `assemble_research_result(ticker,
+   <resultados exitosos>, failures=<fallos capturados>)`, reutilizando
+   la función ya existente sin modificarla.
 
-Ante esta ausencia, se decide construir una `Company` **mínima**, con
-solo el `ticker` recibido (normalizado a mayúsculas, mismo criterio ya
-usado por `FMPFundamentalsProvider.fetch` y por la caché local), dejando
-`name`, `sector` y `market` como cadenas vacías (`""`). `Company` no
-impone que estos campos sean no vacíos (son `str` de texto libre, ver
-`investmentops/data_layer/domain.py`), por lo que esto es válido
-estructuralmente. Se prefiere esto a:
-
-- **Inventar valores** (ej. buscar el nombre en otra fuente no
-  contemplada en el MVP): violaría el principio de
-  `ARCHITECTURE.md`/`GOALS.md` de no inventar datos que no se tienen.
-- **Hacer `name`/`sector`/`market` opcionales (`str | None`)** en el
-  modelo de dominio `Company`: cambiaría un contrato ya definido y usado
-  en otras partes del sistema (`investmentops/data_layer/domain.py`, ya
-  probado en `test_data_layer_domain.py`) por una razón que no aplica a
-  ese módulo en sí (el modelo de dominio es correcto; lo que falta es la
-  *fuente* de esos datos), lo cual sería un rediseño no justificado por
-  esta tarea puntual.
-
-Completar `name`/`sector`/`market` con datos reales (ej. sumando un
-endpoint de perfil de empresa al proveedor de datos fundamentales) queda
-fuera de esta tarea — ver "Fuera de alcance" más abajo.
-
-### Fallos parciales
-
-`assemble_research_result` acepta un parámetro `failures` opcional
-(por defecto una lista vacía). Esta tarea **no** implementa la lógica
-que detecta y captura fallos parciales de la fuente de datos o de los
-agentes de análisis (eso es, de forma explícita, la tarea siguiente de
-esta misma sección de TASKS.md: "Implementar el manejo de fallo del
-proveedor de datos o del proveedor de IA sin detener el resto del
-flujo..."); solo deja el parámetro listo para que esa tarea futura
-pueda pasarle la lista de `ResearchFailure` que detecte, sin tener que
-modificar la firma de esta función.
-
-### Fecha de ensamblado
-
-`generated_at` es opcional; si no se indica, se usa
-`datetime.now(timezone.utc)` en el momento de la llamada. Es distinta de
-`AnalysisProvenance.generated_at` de cada análisis individual (que
-registra cuándo se generó esa interpretación puntual): `generated_at`
-aquí es la fecha en que el orquestador ensambló el resultado final,
-conforme a `investmentops.core.research_result.ResearchResult`.
+`investigate` no reemplaza a `run_analysis_engines` ni a
+`fetch_and_normalize`: ambas se mantienen sin cambios, con su
+comportamiento "se detiene ante el primer fallo" documentado, para
+quien lo necesite explícitamente (ej. un script que sí quiera fallar
+rápido). `investigate` es la nueva pieza que sí ofrece resiliencia ante
+fallos parciales, componiendo las piezas ya existentes de una forma
+distinta (agente por agente, en vez de vía `run_analysis_engines`).
 
 Fuera de alcance de este módulo (aún):
-- Detectar/capturar fallos parciales de `fetch_and_normalize` o
-  `run_analysis_engines` y traducirlos a `ResearchFailure`: tarea
-  siguiente de esta misma sección de TASKS.md.
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
-  hoy una fuente de datos que los provea (ver más arriba).
-- Una función que encadene `fetch_and_normalize` → `run_analysis_engines`
-  → `assemble_research_result` en una sola llamada de punta a punta: no
-  es parte del texto de esta tarea ("ensamblar ambos resultados"), y
-  además el manejo de fallos parciales (tarea siguiente) probablemente
-  necesite envolver justo esa cadena; introducirla ahora se adelantaría
-  a esa tarea.
+  hoy una fuente de datos que los provea (ver docstring de
+  `assemble_research_result`).
 - Leer o escribir la caché de datos normalizados
   (investmentops.data_layer.cache): fuera de alcance, igual que ya se
   documentó para `fetch_raw_data`/`fetch_and_normalize`.
+- Conectar `investigate` con la CLI: tarea separada y posterior (ver
+  TASKS.md, sección "CLI").
 """
 
 from __future__ import annotations
@@ -113,18 +91,31 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from investmentops.ai_providers import AgentProviderSelectionError, AIProviderError
 from investmentops.analysis_engines.contracts import AnalysisResult
-from investmentops.analysis_engines.financial_health import analyze_financial_health
-from investmentops.analysis_engines.valuation import analyze_valuation
+from investmentops.analysis_engines.financial_health import (
+    AGENT_ID as FINANCIAL_HEALTH_AGENT_ID,
+    analyze_financial_health,
+)
+from investmentops.analysis_engines.prompts import PromptError
+from investmentops.analysis_engines.valuation import (
+    AGENT_ID as VALUATION_AGENT_ID,
+    analyze_valuation,
+)
 from investmentops.core.research_result import ResearchFailure, ResearchResult
 from investmentops.data_layer.domain import Company
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
 from investmentops.data_layer.normalization import (
+    NormalizationError,
     financial_statement_from_raw,
     market_data_from_raw,
 )
-from investmentops.data_providers.contracts import DataProvider, RawProviderData
+from investmentops.data_providers.contracts import (
+    DataProvider,
+    DataProviderError,
+    RawProviderData,
+)
 from investmentops.data_providers.fundamentals import FMPFundamentalsProvider
 
 
@@ -151,13 +142,9 @@ def fetch_raw_data(
     provider:
         Proveedor de datos ya construido a usar en vez del proveedor por
         defecto. Cumple el contrato `DataProvider`
-        (investmentops.data_providers.contracts). Pensado sobre todo para
-        pruebas (inyectar un proveedor mínimo de prueba, ver
-        `investmentops/tests/test_data_providers_contracts.py`), pero
-        también deja la puerta abierta a que una tarea futura del
-        orquestador elija entre varios proveedores sin modificar esta
-        función. Si no se indica, se usa `FMPFundamentalsProvider`, el
-        proveedor concreto ya elegido para el MVP.
+        (investmentops.data_providers.contracts). Si no se indica, se usa
+        `FMPFundamentalsProvider`, el proveedor concreto ya elegido para
+        el MVP.
 
     Returns
     -------
@@ -170,15 +157,11 @@ def fetch_raw_data(
     DataProviderError
         Si el proveedor no responde, el ticker no existe, o la respuesta
         no se puede interpretar (ver `DataProvider.fetch`). Esta función
-        no captura ni traduce esa excepción: el manejo de fallos sin
-        detener el resto del flujo es una tarea separada y posterior
-        (ver TASKS.md, "Orquestador mínimo").
+        no captura ni traduce esa excepción; ver `investigate` para el
+        manejo de fallos sin detener el resto del flujo.
     ConfigError
         Si `provider` no se indica, `config` tampoco, y no se puede
-        cargar `config.local.toml` (ver
-        `investmentops.config.load_config`, invocado internamente por
-        `FMPFundamentalsProvider` cuando no se le pasan credenciales
-        explícitas).
+        cargar `config.local.toml`.
     """
     data_provider = provider if provider is not None else FMPFundamentalsProvider(config=config)
     return data_provider.fetch(ticker)
@@ -187,13 +170,6 @@ def fetch_raw_data(
 @dataclass(frozen=True)
 class NormalizedCompanyData:
     """Datos normalizados de una empresa, listos para los agentes de análisis.
-
-    Es el tipo de salida de `fetch_and_normalize`: agrupa los dos modelos
-    de dominio normalizados que hoy consumen los agentes de análisis ya
-    implementados (`investmentops.analysis_engines.financial_health.
-    analyze_financial_health` y `...valuation.analyze_valuation`), para
-    que quien invoque el orquestador no tenga que manejar dos valores
-    sueltos.
 
     Attributes
     ----------
@@ -219,49 +195,20 @@ def fetch_and_normalize(
 
     Encadena `fetch_raw_data(ticker, ...)` con
     `investmentops.data_layer.normalization.financial_statement_from_raw`
-    y `...market_data_from_raw`, de forma que quien invoque esta función
-    reciba directamente los modelos de dominio normalizados, sin tener
-    que conocer la forma del `payload` crudo que entrega el proveedor de
-    datos fundamentales.
-
-    Parameters
-    ----------
-    ticker:
-        Identificador de la empresa a consultar (ej. ``"AAPL"``). Se
-        propaga tal cual a `fetch_raw_data`.
-    config:
-        Configuración ya cargada, propagada a `fetch_raw_data` para
-        construir el proveedor por defecto si no se indica `provider`.
-        Útil para pruebas, para no depender de un `config.local.toml`
-        real en disco.
-    provider:
-        Proveedor de datos ya construido, propagado a `fetch_raw_data`.
-        Pensado sobre todo para pruebas (inyectar un proveedor mínimo de
-        prueba), sin depender de una llamada de red real.
-
-    Returns
-    -------
-    NormalizedCompanyData
-        Los `FinancialStatement` y `MarketData` normalizados de la
-        empresa, listos para pasarse a los agentes de análisis ya
-        implementados (`analyze_financial_health`, `analyze_valuation`).
+    y `...market_data_from_raw`.
 
     Raises
     ------
     DataProviderError
-        Si `fetch_raw_data` no puede obtener los datos crudos (proveedor
-        caído, ticker inexistente, respuesta no interpretable). Ver
-        `fetch_raw_data`.
+        Ver `fetch_raw_data`.
     NormalizationError
         Si los datos crudos obtenidos no traen los campos imprescindibles
-        para construir `FinancialStatement` o `MarketData` (ver
-        `investmentops.data_layer.normalization`). Esta función no
-        captura ni traduce esa excepción: el manejo de fallos sin
-        detener el resto del flujo es una tarea separada y posterior
-        (ver TASKS.md, "Orquestador mínimo").
+        para construir `FinancialStatement` o `MarketData`. Esta función
+        no captura ni traduce esa excepción; ver `investigate` para el
+        manejo de fallos sin detener el resto del flujo.
     ConfigError
         Si `provider` no se indica, `config` tampoco, y no se puede
-        cargar `config.local.toml` (propagado desde `fetch_raw_data`).
+        cargar `config.local.toml`.
     """
     raw = fetch_raw_data(ticker, config=config, provider=provider)
     financial_statement = financial_statement_from_raw(raw)
@@ -280,62 +227,14 @@ def run_analysis_engines(
 ) -> list[AnalysisResult]:
     """Invoca secuencialmente los agentes de salud financiera y valoración.
 
-    Encadena, en este orden, `analyze_financial_health` (sobre
-    `company_data.financial_statement`) y `analyze_valuation` (sobre
-    `company_data.market_data` y `company_data.financial_statement`),
-    devolviendo los dos `AnalysisResult` obtenidos. Cada agente calcula
-    sus propias métricas deterministas internamente (no se le pasan
-    precalculadas): esta función no duplica ese cálculo, solo encadena la
-    invocación de ambos agentes ya completos.
-
-    Parameters
-    ----------
-    company_data:
-        El `NormalizedCompanyData` de la empresa a analizar (típicamente
-        el resultado de `fetch_and_normalize(ticker, ...)`), con el
-        `FinancialStatement` y el `MarketData` ya normalizados.
-    config:
-        Configuración ya cargada (como la que devuelve
-        `investmentops.config.load_config`), propagada tal cual a ambos
-        agentes para resolver su proveedor de IA configurado (ver
-        `investmentops.ai_providers.selection.resolve_agent_provider`).
-        Útil para pruebas, para no depender de un `config.local.toml`
-        real en disco. Si no se indica, cada agente llama internamente a
-        `load_config()`.
-
-    Returns
-    -------
-    list[AnalysisResult]
-        Una lista con exactamente dos elementos, en este orden: el
-        resultado del agente de salud financiera
-        (`analysis_id="financial_health"`) y el resultado del agente de
-        valoración (`analysis_id="valuation"`).
-
-    Raises
-    ------
-    PromptError
-        Si no se puede cargar el archivo de prompt de alguno de los dos
-        agentes (ver `investmentops.analysis_engines.prompts.load_prompt`).
-    AgentProviderSelectionError
-        Si no se puede resolver ningún proveedor de IA para alguno de los
-        dos agentes según la configuración.
-    AIProviderError
-        Si el proveedor de IA resuelto para alguno de los dos agentes no
-        tiene una integración concreta implementada, faltan credenciales
-        imprescindibles, o la invocación al modelo de lenguaje falla.
-    ConfigError
-        Si `config` no se indica y no se puede cargar
-        `config.local.toml`.
-
     Notes
     -----
-    Esta función no captura ninguna de las excepciones anteriores: si el
+    Esta función no captura ninguna excepción de los agentes: si el
     agente de salud financiera falla, el agente de valoración no llega a
-    invocarse. Detener el flujo ante un fallo parcial de uno de los dos
-    agentes (en vez de continuar con el otro y dejarlo explícito) es, de
-    forma deliberada, el comportamiento de esta tarea; capturar esos
-    fallos para no detener el resto del flujo es la tarea siguiente de
-    esta misma sección de TASKS.md ("Orquestador mínimo").
+    invocarse. Ese comportamiento "todo o nada" se mantiene intacto para
+    quien lo necesite explícitamente; `investigate` (en este mismo
+    módulo) ofrece en cambio manejo de fallos parciales, invocando cada
+    agente por separado en vez de usar esta función.
     """
     financial_health_result = analyze_financial_health(
         company_data.financial_statement, config=config
@@ -358,51 +257,10 @@ def assemble_research_result(
 ) -> ResearchResult:
     """Ensambla los resultados de análisis de una empresa en un `ResearchResult`.
 
-    Traduce el `ticker` investigado y la lista de `AnalysisResult` ya
-    producidos (típicamente el resultado de
-    `run_analysis_engines(company_data, ...)`) al tipo "Resultado de
-    investigación" (ver `investmentops.core.research_result.ResearchResult`
-    y ARCHITECTURE.md, "Modelo de datos interno"), que consumirán los
-    generadores de reportes en la Fase 2.
-
     La `Company` incluida en el resultado es **mínima**: solo lleva el
     `ticker` recibido (normalizado a mayúsculas), con `name`, `sector` y
     `market` vacíos, porque ningún dato normalizado disponible en la Fase
-    1 (`FinancialStatement`, `MarketData`) expone esos campos (ver
-    docstring del módulo, sección "La `Company` de este
-    `ResearchResult`", para la justificación completa de esta decisión).
-
-    Parameters
-    ----------
-    ticker:
-        Identificador de la empresa investigada (ej. ``"AAPL"``). Se
-        normaliza a mayúsculas para construir la `Company` del
-        resultado, mismo criterio ya usado en
-        `FMPFundamentalsProvider.fetch` y en la caché local
-        (`investmentops.data_layer.cache`).
-    analysis_results:
-        Los `AnalysisResult` ya producidos para esta empresa (ej. el
-        resultado de `run_analysis_engines(...)`). Se incluyen tal cual,
-        sin recalcular ni reinterpretar ningún hallazgo o métrica.
-    failures:
-        Fallos parciales ya detectados durante la investigación (ver
-        `investmentops.core.research_result.ResearchFailure`). Por
-        defecto, una lista vacía: esta tarea no implementa la detección
-        de fallos parciales (ver "Fuera de alcance" en el docstring del
-        módulo); este parámetro solo deja el ensamblado listo para
-        recibirlos cuando esa tarea futura los produzca.
-    generated_at:
-        Fecha y hora de ensamblado de este `ResearchResult`. Si no se
-        indica, se usa `datetime.now(timezone.utc)` en el momento de la
-        llamada.
-
-    Returns
-    -------
-    ResearchResult
-        El resultado de investigación ensamblado: `company` (mínima, solo
-        con `ticker`), `analysis_results` (tal cual se recibieron),
-        `failures` (tal cual se recibieron, vacío por defecto) y
-        `generated_at`.
+    1 (`FinancialStatement`, `MarketData`) expone esos campos.
     """
     company = Company(ticker=ticker.strip().upper(), name="", sector="", market="")
 
@@ -412,3 +270,104 @@ def assemble_research_result(
         failures=list(failures),
         generated_at=generated_at if generated_at is not None else datetime.now(timezone.utc),
     )
+
+
+def investigate(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: DataProvider | None = None,
+) -> ResearchResult:
+    """Ejecuta el flujo completo de investigación para `ticker`, sin que un
+    fallo parcial (fuente de datos o proveedor de IA de un agente) detenga
+    el resto del flujo.
+
+    Ver el docstring del módulo, sección "Manejo de fallos parciales
+    (`investigate`)", para la explicación completa de las tres etapas
+    (consulta+normalización, agentes por separado, ensamblado) y de por
+    qué un fallo en la primera etapa impide continuar (ningún agente
+    tiene datos con los que trabajar) mientras que un fallo en un agente
+    de la segunda etapa no impide que el otro se ejecute.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a investigar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a `fetch_and_normalize` y a
+        cada agente de análisis. Útil para pruebas, para no depender de
+        un `config.local.toml` real en disco.
+    provider:
+        Proveedor de datos ya construido, propagado a `fetch_and_normalize`.
+        Pensado sobre todo para pruebas.
+
+    Returns
+    -------
+    ResearchResult
+        - Si `fetch_and_normalize` falla (`DataProviderError` o
+          `NormalizationError`): `analysis_results=[]` y un único
+          `ResearchFailure(stage="data_provider", identifier=<ticker
+          normalizado>, reason=<mensaje del error>)`.
+        - Si la normalización tiene éxito: `analysis_results` contiene
+          los resultados de los agentes que sí completaron su análisis
+          (cero, uno o dos, en el orden salud financiera → valoración), y
+          `failures` contiene un `ResearchFailure(stage="analysis_engine",
+          identifier=<analysis_id del agente>, reason=<mensaje del
+          error>)` por cada agente que falló
+          (`PromptError`, `AgentProviderSelectionError` o
+          `AIProviderError`).
+
+    Notes
+    -----
+    Esta función nunca deja escapar `DataProviderError`,
+    `NormalizationError`, `PromptError`, `AgentProviderSelectionError` ni
+    `AIProviderError`: todas se capturan y se traducen a
+    `ResearchFailure`. Otras excepciones (ej. `ConfigError` si no se
+    puede cargar `config.local.toml` en absoluto) sí se propagan, ya que
+    representan un problema de configuración del entorno, no un fallo
+    parcial de una fuente o un agente concretos.
+    """
+    try:
+        company_data = fetch_and_normalize(ticker, config=config, provider=provider)
+    except (DataProviderError, NormalizationError) as exc:
+        failure = ResearchFailure(
+            stage="data_provider",
+            identifier=ticker.strip().upper() if ticker else ticker,
+            reason=str(exc),
+        )
+        return assemble_research_result(ticker, [], failures=[failure])
+
+    analysis_results: list[AnalysisResult] = []
+    failures: list[ResearchFailure] = []
+
+    try:
+        analysis_results.append(
+            analyze_financial_health(company_data.financial_statement, config=config)
+        )
+    except (PromptError, AgentProviderSelectionError, AIProviderError) as exc:
+        failures.append(
+            ResearchFailure(
+                stage="analysis_engine",
+                identifier=FINANCIAL_HEALTH_AGENT_ID,
+                reason=str(exc),
+            )
+        )
+
+    try:
+        analysis_results.append(
+            analyze_valuation(
+                company_data.market_data,
+                company_data.financial_statement,
+                config=config,
+            )
+        )
+    except (PromptError, AgentProviderSelectionError, AIProviderError) as exc:
+        failures.append(
+            ResearchFailure(
+                stage="analysis_engine",
+                identifier=VALUATION_AGENT_ID,
+                reason=str(exc),
+            )
+        )
+
+    return assemble_research_result(ticker, analysis_results, failures=failures)

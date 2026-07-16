@@ -4,152 +4,178 @@
 
 ## Última tarea completada
 
-Fase 1 → Orquestador mínimo → *"Implementar el ensamblado de ambos
-resultados en un 'Resultado de investigación' único."*
+Fase 1 → Orquestador mínimo → *"Implementar el manejo de fallo del
+proveedor de datos o del proveedor de IA sin detener el resto del
+flujo, dejándolo explícito en el resultado."*
 
-Antes de implementarla, se verificó que no estuviera ya satisfecha:
-`ResearchResult`/`ResearchFailure` (`investmentops/core/research_result.py`)
-ya existían desde la sección "Contratos e interfaces", y `run_analysis_engines`
-ya producía los dos `AnalysisResult` esperados, pero ningún módulo del
-proyecto los combinaba efectivamente en un `ResearchResult`. Con esto
-continúa la sección "Orquestador mínimo" de TASKS.md (queda pendiente
-únicamente la última tarea de esa sección: manejo de fallos parciales).
+Con esta tarea **queda completa la sección "Orquestador mínimo"** de
+`TASKS.md`. Se verificó antes de implementar que no estuviera ya
+satisfecha: `fetch_and_normalize` y `run_analysis_engines` documentan
+explícitamente que propagan sus excepciones tal cual (ver sus propios
+docstrings y `PROGRESS.md` de la conversación anterior), y
+`assemble_research_result` solo acepta `failures` como parámetro pasivo
+— nada en el proyecto detectaba fallos parciales todavía.
 
 ## Qué se implementó
 
-**`investmentops/core/orchestrator.py`** (modificado) — se agregó:
+**`investmentops/core/orchestrator.py`** (modificado) — se agregó una
+única función nueva, reutilizando sin cambios `fetch_raw_data`,
+`NormalizedCompanyData`, `fetch_and_normalize`, `run_analysis_engines` y
+`assemble_research_result`:
 
-- **`assemble_research_result(ticker, analysis_results, *, failures=(),
-  generated_at=None) -> ResearchResult`** (nueva): recibe el `ticker`
-  investigado y la lista de `AnalysisResult` ya producida (típicamente
-  el resultado de `run_analysis_engines(...)`), y construye un
-  `ResearchResult` completo:
-  - **`company`**: una `Company` (investmentops.data_layer.Company)
-    **mínima**, con solo el `ticker` recibido (normalizado a
-    mayúsculas, mismo criterio que `FMPFundamentalsProvider.fetch` y la
-    caché local), dejando `name`, `sector` y `market` como cadenas
-    vacías (`""`). Se documentó extensamente en el docstring del módulo
-    por qué: ni el payload crudo de FMP ni ningún modelo normalizado de
-    la Fase 1 (`FinancialStatement`, `MarketData`) exponen esos campos;
-    inventarlos violaría el principio de no inventar datos
-    (`ARCHITECTURE.md`, "Manejo de errores y limitaciones"), y hacerlos
-    opcionales en `Company` habría sido un cambio de contrato no
-    justificado por esta tarea.
-  - **`analysis_results`**: los `AnalysisResult` recibidos, tal cual
-    (sin recalcular ni reinterpretar nada).
-  - **`failures`**: parámetro opcional, por defecto una lista vacía.
-    Esta tarea no implementa la detección de fallos parciales (eso es,
-    de forma explícita, la última tarea pendiente de "Orquestador
-    mínimo"); el parámetro solo deja el ensamblado listo para
-    recibirlos.
-  - **`generated_at`**: parámetro opcional; si no se indica, se usa
-    `datetime.now(timezone.utc)` en el momento de la llamada.
-  - `fetch_raw_data`, `NormalizedCompanyData`, `fetch_and_normalize` y
-    `run_analysis_engines` se mantienen sin cambios en su firma ni
-    comportamiento; se reescribió íntegramente el archivo para agregar
-    la nueva función y su documentación, pero el cuerpo de las cuatro
-    piezas existentes es idéntico al de la conversación anterior.
+- **`investigate(ticker, *, config=None, provider=None) -> ResearchResult`**
+  (nueva): función de flujo completo que envuelve las piezas ya
+  existentes y decide qué hacer ante cada tipo de fallo, sin detener el
+  resto del flujo:
+
+  1. **Consulta + normalización** (`fetch_and_normalize`): si falla con
+     `DataProviderError` o `NormalizationError`, se devuelve de
+     inmediato un `ResearchResult` con `analysis_results=[]` y un único
+     `ResearchFailure(stage="data_provider", identifier=<ticker
+     normalizado>, reason=<mensaje del error>)`. Decisión explícita
+     (dejada pendiente en la actualización anterior de este archivo):
+     **sí** tiene sentido producir un `ResearchResult` en este caso,
+     con la etapa de datos marcada como fallida, en vez de no producir
+     ningún resultado — conforme a `ARCHITECTURE.md`, "el reporte final
+     debe reflejar explícitamente qué información no pudo obtenerse, en
+     vez de fallar silenciosamente".
+  2. **Agentes de análisis, invocados por separado** (no vía
+     `run_analysis_engines`, que se detiene ante el primer fallo): se
+     llama a `analyze_financial_health` y, en un `try/except`
+     independiente, a `analyze_valuation`. Cada uno captura
+     `PromptError`, `AgentProviderSelectionError` y `AIProviderError` de
+     forma aislada, traduciéndolos a `ResearchFailure(stage=
+     "analysis_engine", identifier=<analysis_id del agente>,
+     reason=<mensaje>)`. Un fallo en un agente no impide que el otro se
+     ejecute; los resultados exitosos (cero, uno o dos) se recolectan
+     en orden.
+  3. **Ensamblado final**: se llama a `assemble_research_result(ticker,
+     <resultados exitosos>, failures=<fallos capturados>)`, sin
+     modificar esa función.
+
+  Otras excepciones (ej. `ConfigError` si no se puede cargar
+  `config.local.toml` en absoluto) no se capturan: representan un
+  problema de configuración del entorno, no un fallo parcial de una
+  fuente o agente concretos, y se documentó así explícitamente en el
+  docstring de la función.
+
+  `run_analysis_engines` se mantiene **sin cambios** en su firma ni
+  comportamiento ("todo o nada" ante el primer fallo), documentado como
+  tal para quien lo necesite explícitamente; `investigate` es la nueva
+  pieza que ofrece resiliencia ante fallos parciales.
 
 **`tests/test_core_orchestrator.py`** (modificado, reescrito) — se
-mantuvieron todas las pruebas ya existentes de `fetch_raw_data`,
-`fetch_and_normalize` y `run_analysis_engines`, y se agregaron pruebas
-nuevas para `assemble_research_result`:
+mantuvieron íntegramente todas las pruebas ya existentes de
+`fetch_raw_data`, `fetch_and_normalize`, `run_analysis_engines` y
+`assemble_research_result`, y se agregaron pruebas nuevas para
+`investigate`:
 
-- Que devuelve una instancia de `ResearchResult`.
-- Que la `Company` construida solo lleva el `ticker` (normalizado a
-  mayúsculas), con `name`/`sector`/`market` vacíos.
-- Que `analysis_results` se incluye tal cual se recibió (sin
-  transformación).
-- Que `failures` es `[]` por defecto, y que acepta una lista explícita
-  de `ResearchFailure`.
-- Que `generated_at` por defecto cae dentro de una ventana razonable
-  alrededor de "ahora" (UTC), y que acepta un valor explícito.
-- Que el `ResearchResult` devuelto es inmutable (hereda el
-  comportamiento de `investmentops.core.research_result`, ya probado
-  por separado en `test_core_research_result.py`).
-- Una prueba de punta a punta que encadena `run_analysis_engines(...)`
-  (con `requests.post` mockeado) directamente hacia
-  `assemble_research_result(...)`, confirmando que la lista de
-  `AnalysisResult` se puede pasar sin transformación intermedia.
+- Que devuelve un `ResearchResult` completo (dos `analysis_results`, sin
+  `failures`) cuando todo el flujo tiene éxito.
+- Que captura un fallo de `DataProviderError` (`_FailingProvider`) sin
+  propagar la excepción, devolviendo `analysis_results=[]` y un
+  `ResearchFailure(stage="data_provider", ...)` con el `ticker`
+  normalizado como `identifier`.
+- Que captura un fallo de `NormalizationError` (payload incompleto) de
+  la misma forma.
+- Que, si el agente de salud financiera falla (mock de `requests.post`
+  con status 500 en la primera llamada), el agente de valoración
+  **igual se invoca** (segunda llamada a `requests.post`) y su
+  resultado exitoso queda en `analysis_results`, mientras el fallo del
+  primero queda registrado en `failures` con
+  `identifier="financial_health"`.
+- El caso simétrico: valoración falla, salud financiera se mantiene en
+  `analysis_results`.
+- Que ambos agentes pueden fallar a la vez, produciendo dos
+  `ResearchFailure` (uno por `analysis_id`) y `analysis_results=[]`.
+- Que `AgentProviderSelectionError` (configuración incompleta para
+  ambos agentes) se captura igual que `AIProviderError`, sin propagarse.
+- Que `PromptError` (mockeando `load_prompt` para que falle en el
+  agente de salud financiera) se captura igual, dejando que valoración
+  se ejecute con éxito.
+- Que el `ResearchResult` devuelto por `investigate` es inmutable
+  (mismo comportamiento ya heredado de `ResearchResult`).
 
-Nota: igual que en la conversación anterior, el archivo se actualizó en
-`tests/` (la carpeta declarada en `testpaths` de `pyproject.toml`), no en
-`investmentops/tests/` (carpeta duplicada más antigua, fuera de
-`testpaths`; ver "Problemas encontrados" más abajo, ya anotado
-previamente).
+Nota: igual que en conversaciones anteriores, el archivo se actualizó
+en `tests/` (la carpeta declarada en `testpaths` de `pyproject.toml`),
+no en `investmentops/tests/` (carpeta duplicada más antigua, fuera de
+`testpaths`; ver "Problemas encontrados").
 
 ## Decisiones tomadas
 
-- **`Company` mínima, solo con `ticker`, en vez de rediseñar el modelo
-  de dominio o inventar datos.** Es la decisión explícitamente anotada
-  como pendiente en la actualización anterior de este archivo ("Próxima
-  tarea recomendada"). Se prefirió sobre las alternativas consideradas:
-  inventar nombre/sector/mercado (violaría "no inventar datos"), o
-  hacer esos campos opcionales en `Company` (cambiaría un contrato ya
-  usado y probado en otras partes del sistema, un rediseño no
-  justificado por esta tarea puntual). Completar esos campos con datos
-  reales queda documentado como fuera de alcance, a resolver en una
-  tarea futura si se agrega una fuente que los provea (ej. un endpoint
-  de perfil de empresa).
-- **`failures` como parámetro opcional con valor por defecto vacío**, no
-  como algo que esta función calcule. El texto de la tarea es
-  "ensamblar ambos resultados en un... único", no "detectar y manejar
-  fallos parciales" (esa es, literalmente, la tarea siguiente en
-  TASKS.md). Dejar el parámetro ya presente evita que la tarea de manejo
-  de fallos tenga que cambiar la firma de `assemble_research_result`.
-- **`generated_at` opcional, con `datetime.now(timezone.utc)` como
-  valor por defecto.** Mismo patrón ya usado en otras partes del
-  proyecto para fechas de "ahora" (ej. `AnthropicAIProvider.complete`,
-  que usa `datetime.now(timezone.utc)` para `AIProviderResponse.
-  generated_at`); se deja como parámetro explícito para que las pruebas
-  (y una tarea futura que necesite fijar la fecha, ej. para comparar con
-  un histórico) no dependan del reloj real.
-- **No se agregó una función que encadene `fetch_and_normalize` →
-  `run_analysis_engines` → `assemble_research_result` de punta a
-  punta.** El texto de esta tarea es específicamente "el ensamblado",
-  no "el flujo completo"; además, la tarea siguiente (manejo de fallos
-  parciales) probablemente necesite envolver justo esa cadena para
-  capturar excepciones de cualquiera de los pasos y traducirlas a
-  `ResearchFailure` — introducir esa función ahora se habría adelantado
-  a esa tarea y probablemente habría requerido deshacerla o modificarla
-  en la siguiente conversación.
+- **Un fallo en `fetch_and_normalize` produce un `ResearchResult` con
+  `analysis_results=[]` y un único `ResearchFailure`, en vez de no
+  producir ningún resultado.** Era la pregunta explícitamente dejada
+  abierta en la actualización anterior de este archivo. Se prefirió
+  esta opción porque mantiene un tipo de retorno consistente
+  (`ResearchResult` siempre, nunca `None` ni una excepción) para quien
+  invoque `investigate` (la futura CLI, ver TASKS.md, sección "CLI"),
+  y porque es la lectura más directa de "dejarlo explícito en el
+  resultado" del texto de la propia tarea.
+- **Invocar cada agente por separado dentro de `investigate`, en vez de
+  modificar `run_analysis_engines` para que capture sus propios
+  fallos.** Ambas alternativas quedaron explícitamente abiertas en la
+  actualización anterior. Se prefirió no modificar
+  `run_analysis_engines`: varias pruebas ya existentes dependen
+  deliberadamente de su comportamiento "todo o nada" (ej.
+  `test_run_analysis_engines_does_not_invoke_valuation_if_financial_health_fails`),
+  y ese comportamiento sigue siendo válido para quien lo necesite
+  explícitamente. Introducir `investigate` como una función nueva evita
+  romper ese contrato y dimensiona el cambio a exactamente lo que pide
+  la tarea.
+- **`identifier` de cada `ResearchFailure` de tipo `analysis_engine` es
+  el `analysis_id` del agente** (`"financial_health"` o `"valuation"`,
+  reutilizando las constantes `AGENT_ID` ya existentes en cada módulo de
+  agente, importadas con alias para evitar colisión de nombres), no un
+  texto libre inventado en este módulo — consistente con
+  `ResearchFailure.identifier`, documentado en
+  `investmentops/core/research_result.py` como "el `analysis_id` del
+  agente de análisis que no pudo completarse".
+- **No se agregó manejo especial para el caso en que ambos agentes
+  fallan.** Se comporta igual que un fallo individual, repetido por
+  cada agente: dos `ResearchFailure`, `analysis_results=[]`. No hace
+  falta un caso especial porque cada `try/except` es independiente.
 
 ## Validación realizada
 
 Revisión manual del código y las pruebas nuevas contra el patrón ya
-usado en `test_core_research_result.py` (mismas aserciones de
-inmutabilidad y de agregación de `ResearchFailure`/`AnalysisResult`) y
-en `test_data_layer_domain.py` (mismo patrón de verificación de campos
-de `Company`). No se ejecutó la suite completa en este entorno (Claude
-Web, sin acceso al repositorio real ni red en el sandbox); se dejan los
-archivos para que el usuario los integre y corra `pytest` localmente.
+usado en las pruebas existentes de `run_analysis_engines` (mocks de
+`requests.post` con `side_effect` para simular llamadas sucesivas,
+alguna exitosa y alguna fallida) y de `assemble_research_result` (mismas
+aserciones de inmutabilidad). No se ejecutó la suite completa en este
+entorno (Claude Web, sin acceso al repositorio real ni red en el
+sandbox); se dejan los archivos para que el usuario los integre y corra
+`pytest` localmente.
 
 ## Archivos creados o modificados
 
 Modificados:
-- `investmentops/core/orchestrator.py` (se agregó `assemble_research_result`;
-  `fetch_raw_data`, `NormalizedCompanyData`, `fetch_and_normalize` y
-  `run_analysis_engines` no cambiaron de comportamiento)
+- `investmentops/core/orchestrator.py` (se agregó `investigate`;
+  `fetch_raw_data`, `NormalizedCompanyData`, `fetch_and_normalize`,
+  `run_analysis_engines` y `assemble_research_result` no cambiaron de
+  comportamiento, solo se reescribió el docstring del módulo para
+  reflejar el estado completo de las 5 tareas de "Orquestador mínimo")
 - `tests/test_core_orchestrator.py` (se agregaron pruebas para
-  `assemble_research_result`; las pruebas ya existentes se mantuvieron)
-- `TASKS.md` (cuarta tarea de "Orquestador mínimo" marcada como
-  completada, con referencia inline)
+  `investigate`; las pruebas ya existentes se mantuvieron)
+- `TASKS.md` (quinta y última tarea de "Orquestador mínimo" marcada
+  como completada, con referencia inline)
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`, `investmentops/core/__init__.py`
 (sigue re-exportando solo `ResearchFailure`/`ResearchResult`; mismo
-criterio ya dejado anotado en actualizaciones anteriores — `__init__.py`
-re-exporta estructuras de datos, no funciones de orquestación),
-`investmentops/data_layer/domain.py` (el modelo `Company` no cambió; se
-reutiliza tal cual, con campos vacíos donde no hay datos disponibles),
-`investmentops/tests/test_core_orchestrator.py` (versión duplicada más
-antigua, fuera del `testpaths` declarado en `pyproject.toml`; no se
-tocó), ningún otro módulo de código Python existente.
+criterio ya dejado anotado en actualizaciones anteriores),
+`investmentops/core/research_result.py`, `investmentops/analysis_engines/`,
+`investmentops/ai_providers/`, `investmentops/data_layer/`,
+`investmentops/data_providers/` (ningún contrato ni implementación de
+capas inferiores cambió), `investmentops/tests/test_core_orchestrator.py`
+(versión duplicada más antigua, fuera del `testpaths` declarado en
+`pyproject.toml`; no se tocó), ningún otro módulo de código Python
+existente.
 
 ## Problemas encontrados
 
-Se mantiene el mismo hallazgo ya anotado en la actualización anterior:
+Se mantiene el mismo hallazgo ya anotado en actualizaciones anteriores:
 el repositorio tiene dos carpetas de pruebas paralelas (`tests/` e
 `investmentops/tests/`) con contenido parcialmente duplicado, pero solo
 `tests/` está declarada en `testpaths` de `pyproject.toml`. No se
@@ -159,36 +185,30 @@ arquitectónico crítico).
 
 ## Próxima tarea recomendada
 
-La siguiente tarea sin empezar en "Orquestador mínimo" (TASKS.md), y la
-última de esa sección, es:
+Con "Orquestador mínimo" completo, la siguiente sección sin empezar de
+`TASKS.md` es **"CLI"** (Fase 1), cuya primera tarea es:
 
-5. *"Implementar el manejo de fallo del proveedor de datos o del
-   proveedor de IA sin detener el resto del flujo, dejándolo explícito
-   en el resultado."*
+1. *"Definir la sintaxis del comando de investigación (ej. investigar
+   una empresa por ticker)."*
 
 Nota para la próxima conversación:
-- Ya existen todas las piezas que esa tarea necesita envolver:
-  `fetch_and_normalize` (puede levantar `DataProviderError` o
-  `NormalizationError`), `run_analysis_engines` (puede levantar
-  `PromptError`, `AgentProviderSelectionError` o `AIProviderError` desde
-  cualquiera de los dos agentes) y `assemble_research_result` (ya acepta
-  `failures` como parámetro, listo para recibir los `ResearchFailure`
-  que esta tarea detecte).
-- Esa tarea probablemente deba introducir la función de flujo completo
-  que se decidió *no* introducir en esta conversación (ver "Decisiones
-  tomadas"): algo como `investigate(ticker, ...) -> ResearchResult` que
-  encadene `fetch_and_normalize` → (agente por agente, capturando fallos
-  individuales) → `assemble_research_result`, ya que capturar fallos
-  parciales de agentes individuales requiere invocar
-  `analyze_financial_health`/`analyze_valuation` por separado (no via
-  `run_analysis_engines`, que hoy detiene el flujo ante el primer
-  fallo) o modificar `run_analysis_engines` para que capture sus propios
-  fallos — esa decisión de diseño (modificar `run_analysis_engines` vs.
-  introducir una función nueva que no lo use) queda para esa tarea.
-- Considerar también si un fallo en `fetch_and_normalize` (antes de
-  poder invocar cualquier agente) debe representarse como un
-  `ResearchFailure` con `stage="data_provider"` y un `ResearchResult`
-  con `analysis_results=[]`, o si en ese caso no tiene sentido producir
-  un `ResearchResult` en absoluto — ambas lecturas son coherentes con
-  `ARCHITECTURE.md` ("Manejo de errores y limitaciones"), y la tarea
-  deberá decidir explícitamente cuál sigue.
+- Es una tarea de **diseño/documentación** (igual patrón que
+  `FINANCIAL_HEALTH_METRICS.md`, `VALUATION_METRICS.md` o `CACHE.md`):
+  no se espera código todavía, solo decidir la sintaxis del comando
+  (nombre del comando, cómo se pasa el ticker, si hay flags opcionales
+  para esta fase) antes de implementar el parseo real en la tarea
+  siguiente ("Implementar el parseo del argumento ticker").
+- `investigate(ticker, ...)` (`investmentops/core/orchestrator.py`,
+  esta conversación) ya es la función de entrada natural que la CLI
+  invocará: recibe un ticker y devuelve un `ResearchResult` completo,
+  sin dejar escapar fallos parciales de la fuente de datos ni de los
+  agentes de análisis. La sintaxis del comando debería considerar cómo
+  exponer `config`/`provider` (típicamente `config=None` para que la
+  CLI cargue `config.local.toml` por defecto, sin necesidad de un
+  parámetro de línea de comandos para esto en el MVP).
+- Al definir la sintaxis, considerar que `ARCHITECTURE.md` (componente
+  1, "CLI") exige que la CLI "no contiene lógica financiera ni de
+  formateo de reportes; delega todo" — la sintaxis debe limitarse a
+  qué argumentos recibe el comando, no a cómo se presenta la salida
+  (esa es la tarea posterior "Implementar la impresión en consola del
+  resultado").
