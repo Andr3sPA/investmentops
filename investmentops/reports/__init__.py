@@ -14,5 +14,28 @@ Responsabilidad (ver ARCHITECTURE.md, componente 6):
 - Agregar un nuevo formato de salida implica añadir un generador nuevo, no
   tocar los existentes.
 
-Aún sin implementación (llega en la Fase 2, ver ROADMAP.md y TASKS.md).
+La estructura de entrada que consumen todos los generadores ya está
+decidida en `investmentops/reports/REPORT_MODEL.md`: `ResearchResult`
+tal cual (investmentops.core.research_result), sin un tipo intermedio
+nuevo. El orden y contenido de las secciones del reporte ya está fijado
+en `investmentops/reports/REPORT_SECTIONS.md`.
+
+El primer generador concreto (Markdown) ya tiene su plantilla base
+implementada en `investmentops.reports.markdown` (ver TASKS.md, Fase 2,
+"Generador Markdown" > "Implementar la plantilla base de reporte en
+Markdown (encabezados, secciones vacías)") y se re-exporta aquí:
+
+- `render_markdown`: construye el encabezado de la empresa y los
+  encabezados vacíos de "Salud financiera"/"Valoración". Todavía no
+  vuelca hallazgos, métricas, limitaciones, procedencia ni guarda nada
+  en disco: esas son tareas separadas y posteriores de la misma sección.
+
+Aún sin implementación: el generador HTML (ver TASKS.md, Fase 2,
+"Generador HTML").
 """
+
+from investmentops.reports.markdown import render_markdown
+
+__all__ = [
+    "render_markdown",
+]

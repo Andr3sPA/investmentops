@@ -4,103 +4,117 @@
 
 ## Última tarea completada
 
-Fase 2 → Modelo de reporte → *"Definir qué secciones tendrá el reporte
-(identidad de la empresa, salud financiera, valoración, fuentes y fecha
-de cada dato, incluyendo qué proveedor de IA generó cada
-interpretación)."*
+Fase 2 → Generador Markdown → *"Implementar la plantilla base de reporte
+en Markdown (encabezados, secciones vacías)."*
 
 ## Verificación previa (sin duplicar trabajo)
 
-Se confirmó que esta tarea **no** estaba ya satisfecha:
-`investmentops/reports/REPORT_MODEL.md` (tarea anterior) solo mapea
-secciones a campos de `ResearchResult`, pero no fija el **orden de
-presentación** ni el **nivel de detalle** de cada sección — el propio
-`PROGRESS.md` (versión anterior) dejaba esto explícitamente como la
-siguiente tarea recomendada. Por eso sí requería un artefacto nuevo.
+Se confirmó que esta tarea **no** estaba satisfecha: `investmentops/reports/__init__.py`
+solo tenía el docstring de la capa (sin implementación, tal como lo dejó
+la Fase 1), y no existía ningún módulo de generación de reportes
+concreto. Las dos tareas anteriores de esta misma sección
+("Definir la estructura común...", "Definir qué secciones tendrá el
+reporte...") ya estaban marcadas como completadas y correspondían a
+documentos de diseño (`REPORT_MODEL.md`, `REPORT_SECTIONS.md`), no a
+código; la tercera tarea de esa lista está marcada explícitamente como
+opcional en `TASKS.md` y no bloquea el avance a "Generador Markdown".
+Por eso sí se requería un artefacto de código nuevo para esta tarea.
 
 ## Qué se implementó
 
-**`investmentops/reports/REPORT_SECTIONS.md`** (nuevo) — documento de
-decisión que:
+**`investmentops/reports/markdown.py`** (nuevo) — `render_markdown(result:
+ResearchResult) -> str`, la plantilla base del reporte Markdown:
 
-- Fija el orden de cuatro secciones que compartirán todos los formatos
-  de reporte (Markdown, HTML, y JSON si aplica a futuro):
-  1. Encabezado (identidad de la empresa + fecha de ensamblado).
-  2. Salud financiera (hallazgos → métricas de soporte → limitaciones →
-     procedencia de IA).
-  3. Valoración (misma estructura que la sección anterior).
-  4. Fallos parciales (solo si `ResearchResult.failures` no está vacío).
-- Reutiliza el mismo orden ya usado por
-  `investmentops.cli.format_research_result` (Fase 1, texto plano de
-  consola), en vez de inventar un orden distinto para los generadores de
-  reporte de la Fase 2.
-- Documenta explícitamente una limitación real encontrada al diseñar
-  esta tarea: `ResearchResult` expone la procedencia de la
-  **interpretación de IA** (`AnalysisProvenance`: proveedor, modelo,
-  fecha) pero no la fuente/fecha del **dato normalizado subyacente**
-  (`FinancialStatement.source`/`period_end`, `MarketData.source`/`as_of`),
-  ya que esos modelos no se propagan hacia `ResearchResult` (solo se
-  usan internamente para calcular métricas). Se documenta como
-  limitación aceptable para el MVP de esta fase (en Fase 1 solo existe un
-  proveedor de datos fijo, FMP, por lo que la fuente es implícitamente
-  uniforme), en vez de rediseñar `ResearchResult` sin un caso de uso
-  concreto que lo justifique todavía.
-- Deja explícitamente fuera de alcance: la implementación de cualquier
-  plantilla concreta (tarea siguiente, "Generador Markdown"), resolver la
-  limitación de fuente/fecha del dato subyacente, y el agente de reporte
-  opcional.
+- Encabezado `# Investigación: <ticker>`.
+- Línea de identidad de la empresa (`name · sector · market`), solo si
+  alguno de esos campos no está vacío — en la Fase 1,
+  `assemble_research_result` siempre construye una `Company` mínima con
+  esos tres campos vacíos, por lo que en la práctica esta línea no
+  aparece todavía; queda lista para cuando una fuente de datos futura
+  los complete.
+- Línea `Generado: <fecha ISO 8601>` (`ResearchResult.generated_at`).
+- Encabezados vacíos `## Salud financiera` y `## Valoración`, en el
+  orden ya fijado en `REPORT_SECTIONS.md`.
+
+Deliberadamente **no** incluye todavía: los hallazgos/métricas/limitaciones
+de cada análisis, la procedencia de IA, ni la sección condicional de
+"Fallos parciales" — esas son las cuatro tareas siguientes, ya
+desglosadas por separado en `TASKS.md` bajo la misma sección
+("Generador Markdown").
+
+**`investmentops/reports/__init__.py`** (modificado) — re-exporta
+`render_markdown`, siguiendo el mismo patrón de re-exportación ya usado
+por el resto de los `__init__.py` del proyecto (`investmentops.core`,
+`investmentops.data_layer`, `investmentops.ai_providers`, etc.).
+
+**`investmentops/tests/test_reports_markdown.py`** (nuevo) — cubre: el
+título con el ticker, la fecha de ensamblado, la presencia y el orden de
+los encabezados de "Salud financiera"/"Valoración", la omisión de la
+línea de identidad cuando `name`/`sector`/`market` están vacíos (caso
+actual de Fase 1) y su inclusión cuando sí hay datos, la ausencia
+todavía de la sección de fallos parciales, y que el texto termina en un
+único salto de línea final (sin líneas en blanco sobrantes al final).
 
 ## Decisiones tomadas
 
-- **Reutilizar el orden ya usado por `format_research_result` (Fase 1).**
-  En vez de diseñar un orden nuevo para los generadores de reporte, se
-  fija el mismo orden que ya demostró ser legible en la salida de
-  consola: encabezado → salud financiera → valoración → fallos
-  parciales. Esto evita inconsistencias entre la salida de consola (Fase
-  1) y los reportes formales (Fase 2).
-- **Documentar la ausencia de fuente/fecha del dato normalizado como
-  limitación explícita, no como un problema a resolver ahora.** Se
-  consideró extender `ResearchResult`/`AnalysisResult` para propagar
-  `FinancialStatement`/`MarketData` completos, pero se descartó por ir
-  contra el criterio de "no sobre-diseñar antes de tener el caso de uso
-  real" ya aplicado en el proyecto: en Fase 1 solo hay un proveedor de
-  datos (FMP), por lo que la fuente es uniforme e implícita para todo el
-  reporte. Si en el futuro se agregan múltiples proveedores de datos
-  fundamentales, esta limitación se resolvería como una tarea explícita
-  y separada.
+- **Andamiaje completo desde ya, contenido vacío.** En vez de esperar a
+  la primera tarea de volcado de contenido para introducir los
+  encabezados de "Salud financiera"/"Valoración", esta plantilla base ya
+  los construye ambos (vacíos). Esto sigue literalmente el enunciado de
+  la tarea ("encabezados, secciones vacías") y deja que las tareas
+  siguientes solo tengan que *rellenar*, sin rediseñar la estructura del
+  documento.
+- **La sección "Fallos parciales" queda fuera de la plantilla base.** A
+  diferencia de "Salud financiera"/"Valoración" (secciones fijas que
+  siempre aparecen, aunque vacías por ahora), "Fallos parciales" es
+  condicional (solo se muestra si `ResearchResult.failures` no está
+  vacío, ver `REPORT_SECTIONS.md`). Incluir ya su encabezado sin lógica
+  condicional sería inconsistente con esa regla; se deja para cuando se
+  implemente el volcado de contenido real, mismo criterio que ya aplica
+  `investmentops.cli.format_research_result` en la Fase 1.
+- **Reutilizar `ResearchResult` directamente, sin nueva estructura
+  intermedia.** Consistente con la decisión ya tomada en
+  `REPORT_MODEL.md`: `render_markdown` recibe un `ResearchResult` tal
+  cual, sin ningún tipo de entrada nuevo.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/reports/REPORT_SECTIONS.md` (nuevo)
+- `investmentops/reports/markdown.py` (nuevo)
+- `investmentops/tests/test_reports_markdown.py` (nuevo)
 
 Modificados:
-- `TASKS.md` (tarea "Definir qué secciones tendrá el reporte..." marcada
-  como completada, Fase 2, "Modelo de reporte")
+- `investmentops/reports/__init__.py` (re-exporta `render_markdown`)
+- `TASKS.md` (tarea "Implementar la plantilla base de reporte en
+  Markdown (encabezados, secciones vacías)" marcada como completada,
+  Fase 2, "Generador Markdown")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`,
-`investmentops/reports/REPORT_MODEL.md`, ningún módulo de código Python
-existente (esta tarea es puramente de diseño/documentación, sin cambios
-de código).
+`investmentops/reports/REPORT_MODEL.md`,
+`investmentops/reports/REPORT_SECTIONS.md`, ningún otro módulo de código
+Python existente.
 
 ## Problemas encontrados
 
-Ninguno nuevo, más allá de la limitación ya documentada arriba (ausencia
-de fuente/fecha del dato normalizado subyacente en `ResearchResult`),
-que se deja registrada como decisión consciente, no como un defecto sin
-resolver. Se mantiene el hallazgo ya anotado en actualizaciones
+Ninguno nuevo. Se mantiene el hallazgo ya anotado en actualizaciones
 anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
-`investmentops/tests/`); no aplica a esta tarea, que no agrega pruebas.
+`investmentops/tests/`); esta tarea agregó su prueba nueva bajo
+`investmentops/tests/`, siguiendo la ubicación ya usada por el resto de
+pruebas de módulos de `investmentops/` (`data_layer`, `analysis_engines`,
+`ai_providers`, `cli`, `core`), a diferencia de las pruebas de
+`core.orchestrator` que están duplicadas en ambas carpetas.
 
 ## Próxima tarea recomendada
 
-Fase 2 → Generador Markdown → *"Implementar la plantilla base de reporte
-en Markdown (encabezados, secciones vacías)."*
+Fase 2 → Generador Markdown → *"Implementar el volcado de los hallazgos
+de salud financiera en la sección correspondiente."*
 
-Esta es la primera tarea de código de la Fase 2: construir el andamiaje
-Markdown (encabezados para las cuatro secciones ya fijadas en
-`REPORT_SECTIONS.md`, con las secciones "salud financiera" y "valoración"
-inicialmente vacías) antes de volcar el contenido real de cada sección
-(tareas siguientes en la misma parte de `TASKS.md`).
+Esta tarea rellenará la sección `## Salud financiera` ya creada por
+`render_markdown` con el contenido del `AnalysisResult` correspondiente
+(`analysis_id == "financial_health"`): hallazgos, métricas de soporte y
+limitaciones, siguiendo el orden ya fijado en `REPORT_SECTIONS.md` (la
+procedencia de IA se deja para la tarea de "fuentes/procedencia" que le
+sigue en la misma sección de `TASKS.md`, salvo que se decida incluirla
+ya en esta misma tarea por cohesión — a evaluar al implementarla).

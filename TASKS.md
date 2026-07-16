@@ -96,11 +96,11 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [ ] (Opcional) Escribir el archivo de prompt del agente de reporte y definir su alcance: solo redacción a partir de los resultados ya existentes, sin nuevos hallazgos ni veredictos.
 
 ### Generador Markdown
-- Implementar la plantilla base de reporte en Markdown (encabezados, secciones vacías).
-- Implementar el volcado de los hallazgos de salud financiera en la sección correspondiente.
-- Implementar el volcado de los hallazgos de valoración en la sección correspondiente.
-- Implementar la sección de fuentes/procedencia (qué proveedor, qué fecha) al final del reporte.
-- Implementar el guardado del archivo Markdown generado en una ruta local configurable.
+- [x] Implementar la plantilla base de reporte en Markdown (encabezados, secciones vacías). — `render_markdown` en `investmentops/reports/markdown.py` (nuevo). Construye el encabezado (`# Investigación: <ticker>`, identidad de la empresa si `name`/`sector`/`market` no están vacíos, y fecha de ensamblado) más los encabezados vacíos `## Salud financiera` y `## Valoración`, en el orden ya fijado en `REPORT_SECTIONS.md`. No vuelca todavía hallazgos, métricas, limitaciones ni procedencia, ni incluye la sección de fallos parciales (condicional): esas son las tareas siguientes de esta misma sección. Re-exportado desde `investmentops/reports/__init__.py`.
+- [ ] Implementar el volcado de los hallazgos de salud financiera en la sección correspondiente.
+- [ ] Implementar el volcado de los hallazgos de valoración en la sección correspondiente.
+- [ ] Implementar la sección de fuentes/procedencia (qué proveedor, qué fecha) al final del reporte.
+- [ ] Implementar el guardado del archivo Markdown generado en una ruta local configurable.
 
 ### Generador HTML
 - Definir la plantilla base HTML (estructura mínima, sin diseño elaborado).
