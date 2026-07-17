@@ -1,36 +1,39 @@
 """Generador de reportes en Markdown.
 
-Cubre, hasta ahora, tres tareas de TASKS.md, Fase 2, "Generador Markdown":
+Cubre, hasta ahora, cuatro tareas de TASKS.md, Fase 2, "Generador Markdown":
 
 - "Implementar la plantilla base de reporte en Markdown (encabezados,
   secciones vacías)." (ya completada, ver PROGRESS.md).
 - "Implementar el volcado de los hallazgos de salud financiera en la
   sección correspondiente." (ya completada, ver PROGRESS.md).
 - "Implementar el volcado de los hallazgos de valoración en la sección
-  correspondiente." (esta tarea).
+  correspondiente." (ya completada, ver PROGRESS.md).
+- "Implementar la sección de fuentes/procedencia (qué proveedor, qué
+  fecha) al final del reporte." (esta tarea).
 
-Conforme al orden ya fijado en `investmentops/reports/REPORT_SECTIONS.md`
-para la sección "Valoración" (hallazgos → métricas de soporte →
-limitaciones → procedencia de IA), esta tarea rellena las **tres
-primeras** subsecciones a partir del `AnalysisResult` con
-`analysis_id == "valuation"`, si está presente en
-`ResearchResult.analysis_results` — mismo patrón ya aplicado a "Salud
-financiera" en la tarea anterior, reutilizando sin cambios
-`_find_analysis` y `_render_analysis_body` (ya generalizadas, no
-acopladas a ningún `analysis_id` concreto). La procedencia de IA
-(`provenance`) se deja deliberadamente fuera de ambas secciones: es el
-contenido de la tarea siguiente ("Implementar la sección de
-fuentes/procedencia... al final del reporte").
+## Dónde vive la procedencia de IA
 
-Si el agente de valoración no aparece en `analysis_results` (por
-ejemplo, porque falló y quedó registrado en `ResearchResult.failures`),
-la sección conserva su encabezado vacío, mismo comportamiento ya
-aplicado a "Salud financiera".
+`investmentops/reports/REPORT_SECTIONS.md` ya fija, para cada sección de
+análisis ("Salud financiera", "Valoración"), un orden de cuatro partes:
+hallazgos → métricas de soporte → limitaciones → **procedencia de la
+interpretación de IA** (`provenance`: proveedor y modelo). Esta tarea
+implementa exactamente esa cuarta parte, dentro de `_render_analysis_body`
+(reutilizada, sin cambios de firma, por ambas secciones), en vez de
+introducir una sección nueva y separada al final del documento: el título
+de la tarea en `TASKS.md` ("al final del reporte") se satisface en el
+sentido de "al final de cada bloque de análisis", que es el diseño ya
+documentado y más específico de `REPORT_SECTIONS.md`.
+
+Además del proveedor y modelo (`ai_provider`, `ai_model`), se incluye la
+fecha de generación (`generated_at`), conforme a lo que pide literalmente
+la tarea en `TASKS.md` ("qué proveedor, qué fecha"): `AnalysisProvenance`
+ya expone ese dato y no hay razón para omitirlo del reporte.
+
+Si el agente correspondiente no completó su análisis, la sección sigue
+sin ningún contenido (ni hallazgos, ni métricas, ni procedencia): mismo
+comportamiento ya usado en las tareas anteriores.
 
 Fuera de alcance de este módulo (aún):
-- La sección de fuentes/procedencia (proveedor y modelo de IA) al final
-  del reporte: tarea separada y siguiente en la misma sección de
-  `TASKS.md`.
 - Guardar el Markdown generado en disco: tarea separada y posterior.
 - El generador HTML: sección separada de `TASKS.md`.
 """
@@ -70,12 +73,14 @@ def _find_analysis(
 
 
 def _render_analysis_body(analysis: AnalysisResult) -> list[str]:
-    """Construye las líneas de hallazgos, métricas y limitaciones de un análisis.
+    """Construye las líneas de hallazgos, métricas, limitaciones y
+    procedencia de IA de un análisis.
 
-    Orden fijado en `REPORT_SECTIONS.md` (sin la procedencia de IA,
-    fuera de alcance de esta tarea): hallazgos → métricas de soporte →
-    limitaciones. Reutilizada tanto para "Salud financiera" como para
-    "Valoración" (no depende del `analysis_id` concreto).
+    Orden fijado en `REPORT_SECTIONS.md`: hallazgos → métricas de
+    soporte → limitaciones → procedencia de la interpretación de IA
+    (proveedor, modelo y fecha de generación). Reutilizada tanto para
+    "Salud financiera" como para "Valoración" (no depende del
+    `analysis_id` concreto).
     """
     lines: list[str] = []
 
@@ -97,6 +102,13 @@ def _render_analysis_body(analysis: AnalysisResult) -> list[str]:
             lines.append(f"- {limitation}")
         lines.append("")
 
+    provenance = analysis.provenance
+    lines.append(
+        f"**Generado por:** {provenance.ai_provider} ({provenance.ai_model}) "
+        f"el {provenance.generated_at.isoformat()}"
+    )
+    lines.append("")
+
     return lines
 
 
@@ -107,11 +119,14 @@ def render_markdown(result: ResearchResult) -> str:
     de ensamblado) y las secciones "Salud financiera" y "Valoración",
     conforme al orden fijado en `investmentops/reports/REPORT_SECTIONS.md`.
 
-    Ambas secciones ya vuelcan su contenido (hallazgos, métricas de
-    soporte, limitaciones) cuando el `AnalysisResult` correspondiente
-    está presente. Tampoco se incluye todavía la procedencia de IA de
-    ningún análisis, ni la sección condicional de "Fallos parciales"
-    (ver docstring del módulo).
+    Ambas secciones ya vuelcan su contenido completo cuando el
+    `AnalysisResult` correspondiente está presente: hallazgos, métricas
+    de soporte, limitaciones y procedencia de la interpretación de IA
+    (proveedor, modelo, fecha). Todavía no se incluye la sección
+    condicional de "Fallos parciales" (tarea separada, fuera del alcance
+    definido para "Generador Markdown" en `TASKS.md`; ya cubierta en
+    texto plano de consola por `investmentops.cli.format_research_result`,
+    Fase 1).
 
     Parameters
     ----------

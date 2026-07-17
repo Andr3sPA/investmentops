@@ -4,74 +4,76 @@
 
 ## Última tarea completada
 
-Fase 2 → Generador Markdown → *"Implementar el volcado de los hallazgos
-de valoración en la sección correspondiente."*
+Fase 2 → Generador Markdown → *"Implementar la sección de
+fuentes/procedencia (qué proveedor, qué fecha) al final del reporte."*
 
 ## Verificación previa (sin duplicar trabajo)
 
-Se confirmó que esta tarea **no** estaba satisfecha: `render_markdown`
-(`investmentops/reports/markdown.py`) volcaba contenido en
-`## Salud financiera` (tarea anterior), pero la sección `## Valoración`
-seguía siendo solo el encabezado vacío de la plantilla base. Por eso sí
-se requería código nuevo.
+Se confirmó que esta tarea **no** estaba satisfecha: las pruebas ya
+existentes (`test_render_does_not_include_financial_health_provenance_yet`,
+`test_render_does_not_include_valuation_provenance_yet`) afirmaban
+explícitamente que `anthropic`/`claude-sonnet-5` **no** aparecían todavía
+en el Markdown generado por `render_markdown`. Por eso sí se requería
+código nuevo.
 
 ## Qué se implementó
 
 **`investmentops/reports/markdown.py`** (modificado):
 
-- Se agregó la constante `VALUATION_AGENT_ID = "valuation"`, análoga a
-  `FINANCIAL_HEALTH_AGENT_ID`, sin importar el identificador desde
-  `investmentops.analysis_engines.valuation` (mismo criterio de
-  desacoplamiento ya aplicado a salud financiera).
-- `render_markdown` ahora busca, además del análisis de salud
-  financiera, el `AnalysisResult` con `analysis_id == "valuation"` y, si
-  existe, vuelca su contenido bajo `## Valoración` reutilizando **sin
-  modificarlas** las funciones ya generalizadas `_find_analysis` y
-  `_render_analysis_body` (ya no dependían de ningún `analysis_id`
-  concreto desde la tarea anterior). Si el agente de valoración no
-  aparece en `analysis_results` (ej. falló), la sección conserva solo su
-  encabezado vacío, mismo comportamiento ya usado en "Salud financiera".
-- La procedencia de IA (`provenance`) sigue fuera de alcance para ambas
-  secciones: es el contenido de la tarea siguiente
-  ("fuentes/procedencia... al final del reporte").
+- `_render_analysis_body` ahora agrega, como última parte del cuerpo de
+  cada análisis (después de limitaciones), una línea con la procedencia
+  de la interpretación de IA: `**Generado por:** <ai_provider>
+  (<ai_model>) el <generated_at en ISO 8601>`, leída directamente de
+  `AnalysisResult.provenance` (`AnalysisProvenance`).
+- No se modificó la firma de `_render_analysis_body` ni de
+  `_find_analysis`: ambas ya estaban generalizadas (no acopladas a un
+  `analysis_id` concreto), por lo que la nueva línea de procedencia
+  queda disponible automáticamente tanto para "Salud financiera" como
+  para "Valoración" sin duplicar lógica.
+- `render_markdown` no cambió su propia lógica (sigue llamando a
+  `_find_analysis`/`_render_analysis_body` igual que antes); el cambio
+  está contenido enteramente dentro de `_render_analysis_body`.
 
-**`investmentops/tests/test_reports_markdown.py`** (modificado) — se
-agregaron pruebas para la sección de valoración, simétricas a las ya
-existentes de salud financiera: inclusión de hallazgos cuando el agente
-está presente, que ese contenido queda dentro de su propia sección
-(después de `## Valoración`, no antes), inclusión de métricas de soporte
-(`price_to_earnings`/`price_to_sales`), inclusión y omisión condicional
-de limitaciones, ausencia de procedencia de IA todavía, sección vacía si
-el agente no está presente, que un `AnalysisResult` de salud financiera
-no se filtra a la sección de valoración (y viceversa), y un caso end-to-end
-con ambos agentes presentes confirmando que cada uno queda en su propia
-sección.
+**Decisión de diseño — dónde vive la procedencia:** `TASKS.md` describe
+la tarea como una sección "al final del reporte", pero
+`investmentops/reports/REPORT_SECTIONS.md` (ya escrito en una tarea
+anterior de esta misma fase) fija de forma más específica que la
+procedencia de IA es la **cuarta parte de cada sección de análisis**
+(hallazgos → métricas → limitaciones → procedencia), no una sección
+nueva y separada al final del documento completo. Se siguió esa decisión
+ya documentada, en vez de introducir una sección adicional que la
+contradijera. Además del proveedor y el modelo (que sí menciona
+`REPORT_SECTIONS.md`), se incluyó también la fecha de generación
+(`generated_at`), conforme a lo que pide literalmente el texto de la
+tarea en `TASKS.md` ("qué proveedor, qué fecha").
 
-## Decisiones tomadas
+**`investmentops/tests/test_reports_markdown.py`** (modificado):
 
-- **Reutilización total de `_find_analysis`/`_render_analysis_body`.**
-  Ninguna de las dos funciones cambió: ya estaban generalizadas para
-  aceptar cualquier `analysis_id`, por lo que aplicar el mismo patrón a
-  valoración fue puramente aditivo (una llamada adicional en
-  `render_markdown`), sin duplicar lógica de formateo entre ambas
-  secciones.
-- **Procedencia de IA sigue fuera de ambas secciones.** Mismo criterio ya
-  documentado para salud financiera: `TASKS.md` la desglosa como tarea
-  separada y posterior ("fuentes/procedencia"), por lo que no se
-  adelanta aquí para mantener cada tarea acotada y verificable por
-  separado.
-- **Formato idéntico al ya usado en salud financiera.** Mismas
-  subsecciones en negrita (`**Métricas de soporte:**`,
-  `**Limitaciones:**`) con listas de guiones, para mantener consistencia
-  visual entre ambas secciones del reporte.
+- Se eliminaron las dos pruebas que afirmaban la ausencia de procedencia
+  (`test_render_does_not_include_financial_health_provenance_yet`,
+  `test_render_does_not_include_valuation_provenance_yet`), ya que su
+  aserción quedó obsoleta por diseño (la tarea que hacían explícitamente
+  "todavía no cubierta" es la que se acaba de implementar).
+- Se agregó soporte para pasar una `AnalysisProvenance` explícita a los
+  helpers `_financial_health_result`/`_valuation_result` (parámetro
+  `provenance`, opcional, con el mismo valor por defecto que antes si no
+  se indica).
+- Pruebas nuevas: procedencia de salud financiera presente
+  (`anthropic`, `claude-sonnet-5`, fecha ISO 8601 exacta), procedencia de
+  valoración presente, procedencia de cada agente contenida dentro de su
+  propia sección (no se mezcla `claude-sonnet-5` de un agente con
+  `claude-haiku-4-5` del otro), presencia del rótulo `**Generado por:**`,
+  y ausencia total de esa línea cuando el agente correspondiente no
+  completó su análisis (sección vacía, igual criterio que hallazgos/
+  métricas/limitaciones).
 
 ## Archivos creados o modificados
 
 Modificados:
 - `investmentops/reports/markdown.py`
 - `investmentops/tests/test_reports_markdown.py`
-- `TASKS.md` (tarea "Implementar el volcado de los hallazgos de
-  valoración en la sección correspondiente" marcada como completada,
+- `TASKS.md` (tarea "Implementar la sección de fuentes/procedencia (qué
+  proveedor, qué fecha) al final del reporte" marcada como completada,
   Fase 2, "Generador Markdown")
 - `PROGRESS.md` (este archivo)
 
@@ -90,13 +92,14 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Fase 2 → Generador Markdown → *"Implementar la sección de
-fuentes/procedencia (qué proveedor, qué fecha) al final del reporte."*
+Fase 2 → Generador Markdown → *"Implementar el guardado del archivo
+Markdown generado en una ruta local configurable."*
 
-Con salud financiera y valoración ya volcando hallazgos/métricas/
-limitaciones, esta tarea añadiría, para cada análisis presente, su
-`AnalysisProvenance` (`ai_provider`, `ai_model`) — ya sea dentro de cada
-sección o consolidada en una sección final, decisión a tomar como parte
-de esa misma tarea, respetando la limitación ya documentada en
-`REPORT_SECTIONS.md` sobre la ausencia de fuente/fecha del dato
-normalizado subyacente (`FinancialStatement`/`MarketData`).
+Con las cuatro sub-tareas de contenido de "Generador Markdown" ya
+completas (plantilla base, salud financiera, valoración, procedencia),
+esta tarea añadiría la escritura del Markdown ya renderizado a disco,
+probablemente reutilizando `[output]` de `config.local.toml`
+(`output_dir`, ya documentado en `CONFIGURATION.md` y
+`config.example.toml` desde la Fase 1, aunque todavía sin consumidor
+real) para resolver la ruta de destino, sin introducir una nueva clave
+de configuración si `output_dir` ya cubre esa necesidad.

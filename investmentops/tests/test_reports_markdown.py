@@ -1,16 +1,18 @@
 """Pruebas para el generador Markdown (investmentops.reports.markdown.render_markdown).
 
-Cubre tres tareas de TASKS.md, Fase 2, "Generador Markdown":
+Cubre cuatro tareas de TASKS.md, Fase 2, "Generador Markdown":
 
 - "Implementar la plantilla base de reporte en Markdown (encabezados,
   secciones vacías)."
 - "Implementar el volcado de los hallazgos de salud financiera en la
   sección correspondiente."
 - "Implementar el volcado de los hallazgos de valoración en la sección
-  correspondiente." (nuevas pruebas en este archivo).
+  correspondiente."
+- "Implementar la sección de fuentes/procedencia (qué proveedor, qué
+  fecha) al final del reporte." (nuevas pruebas en este archivo).
 
-No prueba la sección de fuentes/procedencia ni el guardado en disco:
-esas son tareas separadas y posteriores de la misma sección.
+No prueba el guardado en disco: es una tarea separada y posterior de la
+misma sección.
 """
 
 from datetime import datetime, timezone
@@ -26,6 +28,7 @@ def _financial_health_result(
     findings: list[str] | None = None,
     supporting_metrics: dict | None = None,
     limitations: list[str] | None = None,
+    provenance: AnalysisProvenance | None = None,
 ) -> AnalysisResult:
     return AnalysisResult(
         analysis_id="financial_health",
@@ -34,10 +37,14 @@ def _financial_health_result(
             supporting_metrics if supporting_metrics is not None else {"net_margin": 0.15}
         ),
         limitations=limitations if limitations is not None else [],
-        provenance=AnalysisProvenance(
-            ai_provider="anthropic",
-            ai_model="claude-sonnet-5",
-            generated_at=datetime.now(timezone.utc),
+        provenance=(
+            provenance
+            if provenance is not None
+            else AnalysisProvenance(
+                ai_provider="anthropic",
+                ai_model="claude-sonnet-5",
+                generated_at=datetime.now(timezone.utc),
+            )
         ),
     )
 
@@ -46,6 +53,7 @@ def _valuation_result(
     findings: list[str] | None = None,
     supporting_metrics: dict | None = None,
     limitations: list[str] | None = None,
+    provenance: AnalysisProvenance | None = None,
 ) -> AnalysisResult:
     return AnalysisResult(
         analysis_id="valuation",
@@ -56,10 +64,14 @@ def _valuation_result(
             supporting_metrics if supporting_metrics is not None else {"price_to_earnings": 20.0}
         ),
         limitations=limitations if limitations is not None else [],
-        provenance=AnalysisProvenance(
-            ai_provider="anthropic",
-            ai_model="claude-sonnet-5",
-            generated_at=datetime.now(timezone.utc),
+        provenance=(
+            provenance
+            if provenance is not None
+            else AnalysisProvenance(
+                ai_provider="anthropic",
+                ai_model="claude-sonnet-5",
+                generated_at=datetime.now(timezone.utc),
+            )
         ),
     )
 
@@ -207,17 +219,6 @@ def test_render_omits_limitations_subsection_when_empty() -> None:
     assert "**Limitaciones:**" not in output
 
 
-def test_render_does_not_include_financial_health_provenance_yet() -> None:
-    """La procedencia de IA es alcance de la tarea siguiente
-    ('fuentes/procedencia'), no de esta."""
-    result = assemble_research_result("AAPL", [_financial_health_result()])
-
-    output = render_markdown(result)
-
-    assert "anthropic" not in output
-    assert "claude-sonnet-5" not in output
-
-
 def test_render_keeps_empty_financial_health_section_when_agent_absent() -> None:
     """Si el agente de salud financiera no está en `analysis_results`
     (ej. falló), la sección conserva solo su encabezado vacío."""
@@ -314,17 +315,6 @@ def test_render_omits_valuation_limitations_subsection_when_empty() -> None:
     assert "**Limitaciones:**" not in output
 
 
-def test_render_does_not_include_valuation_provenance_yet() -> None:
-    """La procedencia de IA es alcance de la tarea siguiente
-    ('fuentes/procedencia'), no de esta."""
-    result = assemble_research_result("AAPL", [_valuation_result()])
-
-    output = render_markdown(result)
-
-    assert "anthropic" not in output
-    assert "claude-sonnet-5" not in output
-
-
 def test_render_keeps_empty_valuation_section_when_agent_absent() -> None:
     """Si el agente de valoración no está en `analysis_results` (ej.
     falló), la sección conserva solo su encabezado vacío."""
@@ -365,3 +355,84 @@ def test_render_includes_both_sections_when_both_agents_present() -> None:
     val_start = output.index("## Valoración")
     assert "hallazgo de salud financiera" in output[fh_start:val_start]
     assert "hallazgo de valoración" in output[val_start:]
+
+
+# --- Fuentes/procedencia de IA (proveedor, modelo, fecha) --------------------
+
+
+def test_render_includes_financial_health_provenance() -> None:
+    provenance = AnalysisProvenance(
+        ai_provider="anthropic",
+        ai_model="claude-sonnet-5",
+        generated_at=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+    )
+    result = assemble_research_result(
+        "AAPL", [_financial_health_result(provenance=provenance)]
+    )
+
+    output = render_markdown(result)
+
+    assert "anthropic" in output
+    assert "claude-sonnet-5" in output
+    assert provenance.generated_at.isoformat() in output
+
+
+def test_render_includes_valuation_provenance() -> None:
+    provenance = AnalysisProvenance(
+        ai_provider="anthropic",
+        ai_model="claude-haiku-4-5",
+        generated_at=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
+    )
+    result = assemble_research_result(
+        "AAPL", [_valuation_result(provenance=provenance)]
+    )
+
+    output = render_markdown(result)
+
+    assert "claude-haiku-4-5" in output
+    assert provenance.generated_at.isoformat() in output
+
+
+def test_render_places_financial_health_provenance_under_its_own_section() -> None:
+    fh_provenance = AnalysisProvenance(
+        ai_provider="anthropic",
+        ai_model="claude-sonnet-5",
+        generated_at=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+    )
+    val_provenance = AnalysisProvenance(
+        ai_provider="anthropic",
+        ai_model="claude-haiku-4-5",
+        generated_at=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
+    )
+    result = assemble_research_result(
+        "AAPL",
+        [
+            _financial_health_result(provenance=fh_provenance),
+            _valuation_result(provenance=val_provenance),
+        ],
+    )
+
+    output = render_markdown(result)
+
+    fh_start = output.index("## Salud financiera")
+    val_start = output.index("## Valoración")
+    assert "claude-sonnet-5" in output[fh_start:val_start]
+    assert "claude-haiku-4-5" not in output[fh_start:val_start]
+    assert "claude-haiku-4-5" in output[val_start:]
+
+
+def test_render_provenance_includes_generated_by_label() -> None:
+    result = assemble_research_result("AAPL", [_financial_health_result()])
+
+    output = render_markdown(result)
+
+    assert "**Generado por:**" in output
+
+
+def test_render_omits_provenance_when_agent_absent() -> None:
+    """Si el agente no completó su análisis, no hay procedencia que mostrar."""
+    result = assemble_research_result("AAPL", [])
+
+    output = render_markdown(result)
+
+    assert "**Generado por:**" not in output
