@@ -103,9 +103,9 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Implementar el guardado del archivo Markdown generado en una ruta local configurable. — `save_markdown_report` en `investmentops/reports/markdown.py` (ver PROGRESS.md). Escribe el texto ya renderizado por `render_markdown` a `<output_dir>/<TICKER>.md`, resolviendo `output_dir` en este orden de prioridad: parámetro explícito → `[output].output_dir` en `config.local.toml` (ya documentado desde la Fase 1, sin consumidor real hasta ahora) → `DEFAULT_OUTPUT_DIR` (`"reports/"`, mismo valor de ejemplo ya presente en `config.example.toml`). Crea el directorio de salida si no existe, normaliza el ticker a mayúsculas para el nombre del archivo (mismo criterio que la caché de datos normalizados) y sobrescribe el reporte de investigaciones previas del mismo ticker. Señala `ReportError` ante ticker vacío o fallos de E/S, mismo criterio ya aplicado por `CacheError`.
 
 ### Generador HTML
-- Definir la plantilla base HTML (estructura mínima, sin diseño elaborado).
-- Implementar el volcado de las mismas secciones que en Markdown (salud financiera, valoración, fuentes).
-- Implementar el guardado del archivo HTML generado en una ruta local configurable.
+- [x] Definir la plantilla base HTML (estructura mínima, sin diseño elaborado). — `investmentops/reports/HTML_TEMPLATE.md` (nuevo, ver PROGRESS.md). Decisión: HTML5 mínimo sin CSS elaborado (a lo sumo un `<style>` embebido básico), sin JavaScript ni motor de templating externo, sin dependencias nuevas (mismo criterio que la elección de TOML en `CONFIGURATION.md`). Reutiliza exactamente las mismas secciones y el mismo orden ya fijados en `REPORT_SECTIONS.md` (encabezado con identidad de la empresa → salud financiera → valoración → fallos parciales si existen), consumiendo el mismo `ResearchResult` sin ningún tipo intermedio nuevo. Incluye el esqueleto HTML5 propuesto y una tabla de mapeo elemento-a-elemento entre el Markdown ya implementado (`render_markdown`) y su equivalente HTML.
+- [ ] Implementar el volcado de las mismas secciones que en Markdown (salud financiera, valoración, fuentes).
+- [ ] Implementar el guardado del archivo HTML generado en una ruta local configurable.
 
 ### Orquestador y CLI
 - Extender el orquestador para invocar los generadores de reporte tras ensamblar el resultado de investigación.
