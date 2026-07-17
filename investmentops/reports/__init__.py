@@ -33,10 +33,21 @@ implementada en `investmentops.reports.markdown` (ver TASKS.md, Fase 2,
 - `ReportError`: excepción común para señalar fallos al guardar un
   reporte en disco (ticker vacío, fallo de E/S).
 
-Aún sin implementación: el generador HTML (ver TASKS.md, Fase 2,
-"Generador HTML").
+El generador HTML (ver TASKS.md, Fase 2, "Generador HTML") ya tiene su
+volcado de secciones implementado en `investmentops.reports.html` y se
+re-exporta aquí:
+
+- `render_html`: construye el documento HTML5 completo (encabezado, salud
+  financiera, valoración), reutilizando el mismo `ResearchResult` y el
+  mismo orden de secciones ya fijado para Markdown (ver
+  `investmentops/reports/HTML_TEMPLATE.md` y `REPORT_SECTIONS.md`).
+
+Aún sin implementación: el guardado del archivo HTML generado en una
+ruta local configurable (tarea separada y posterior, ver TASKS.md, Fase
+2, "Generador HTML").
 """
 
+from investmentops.reports.html import render_html
 from investmentops.reports.markdown import (
     ReportError,
     render_markdown,
@@ -45,6 +56,7 @@ from investmentops.reports.markdown import (
 
 __all__ = [
     "ReportError",
+    "render_html",
     "render_markdown",
     "save_markdown_report",
 ]
