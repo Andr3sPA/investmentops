@@ -27,6 +27,53 @@ futuras a `FinancialStatement` (ingresos, beneficios, deuda) y
 selecciona ni prioriza qué campos usar de esas respuestas: eso es trabajo
 de la capa de normalización.
 
+## Series históricas (Fase 3, "Fuente de datos histórica")
+
+Cubre además la tarea "Implementar la consulta de series históricas de
+ingresos y beneficios para un ticker" (TASKS.md, Fase 3). Conforme a lo
+ya investigado y documentado en
+`investmentops/data_providers/HISTORICAL_DATA.md`: los mismos dos
+endpoints ya usados por `fetch()` para el estado de resultados y el
+balance general (`income-statement`, `balance-sheet-statement`) ya
+devuelven, de forma nativa, un arreglo con varios periodos históricos —
+no se necesita otro endpoint ni otro proveedor. Lo único que faltaba era
+un método que **no** descarte esos periodos adicionales (como sí hace la
+normalización de Fase 1, que toma deliberadamente solo `[0]`) y que
+permita controlar explícitamente `period` (`"annual"`/`"quarter"`) y
+`limit` (cantidad de periodos), en vez de depender de los valores por
+defecto de FMP.
+
+`fetch_historical(ticker, period="annual", limit=5)` es ese método
+nuevo:
+
+- Consulta únicamente `income-statement` y `balance-sheet-statement`
+  (no `quote`): conforme a `HISTORICAL_DATA.md`, la Fase 3 se centra
+  explícitamente en ingresos y beneficios, no en series de precio de
+  mercado.
+- Envía `period` y `limit` como parámetros de consulta adicionales,
+  junto a `apikey`, reutilizando `_get` (extendido para aceptar
+  parámetros extra sin cambiar su comportamiento por defecto: `fetch()`
+  sigue enviando únicamente `apikey`, sin `period`/`limit`).
+- Devuelve un `RawProviderData` cuyo `payload` conserva **todos** los
+  periodos devueltos por FMP (no solo el primero): la responsabilidad de
+  descartar o consumir esos periodos adicionales corresponde a la capa
+  de normalización (tarea separada y posterior de esta misma sección de
+  la Fase 3, "Normalización").
+- Señala `DataProviderError` ante ticker vacío, `period` fuera de
+  `{"annual", "quarter"}`, `limit` menor a 1, fallos de red/autenticación
+  /formato (mismo criterio que `fetch()`), o si FMP no devuelve ningún
+  periodo para el ticker.
+
+Fuera de alcance de este método (ver TASKS.md, tareas siguientes de esta
+misma sección):
+- Adjuntar metadatos de procedencia a **cada punto** de la serie (esta
+  implementación adjunta un único `ProviderMetadata` para toda la
+  respuesta, igual criterio que `fetch()`; metadatos por punto es la
+  tarea siguiente, "Adjuntar metadatos de procedencia a cada punto de la
+  serie histórica").
+- Cualquier transformación al modelo de dominio de series temporales
+  (tareas de la sección "Normalización" de la Fase 3).
+
 Fuera de alcance de este módulo:
 - La transformación del payload crudo a `FinancialStatement`/`MarketData`
   (ver investmentops.data_layer, tarea posterior).
@@ -60,6 +107,20 @@ _ENDPOINTS: dict[str, str] = {
     "balance_sheet_statement": "/balance-sheet-statement/{ticker}",
     "quote": "/quote/{ticker}",
 }
+
+# Endpoints consultados por `fetch_historical`: solo ingresos y
+# beneficios (ver "Series históricas" en el docstring del módulo). No
+# incluye `quote`, ya que la Fase 3 (ROADMAP.md) no cubre series de
+# precio de mercado.
+_HISTORICAL_ENDPOINTS: dict[str, str] = {
+    "income_statement": "/income-statement/{ticker}",
+    "balance_sheet_statement": "/balance-sheet-statement/{ticker}",
+}
+
+# Valores admitidos para el parámetro `period` de `fetch_historical`,
+# consistentes con los valores que acepta la API de FMP para estos
+# mismos endpoints (ver HISTORICAL_DATA.md).
+_VALID_PERIODS = ("annual", "quarter")
 
 
 class FMPFundamentalsProvider:
@@ -156,18 +217,118 @@ class FMPFundamentalsProvider:
 
         return RawProviderData(ticker=ticker, payload=payload, metadata=metadata)
 
-    def _get(self, path: str, ticker: str) -> Any:
+    def fetch_historical(
+        self,
+        ticker: str,
+        *,
+        period: str = "annual",
+        limit: int = 5,
+    ) -> RawProviderData:
+        """Obtiene series históricas de ingresos y beneficios para `ticker`.
+
+        Consulta los mismos endpoints de estado de resultados y balance
+        general ya usados por `fetch()`, pero conservando **todos** los
+        periodos devueltos por FMP (no solo el más reciente), y enviando
+        explícitamente `period`/`limit` como parámetros de consulta en
+        vez de depender de los valores por defecto de FMP. Ver "Series
+        históricas" en el docstring del módulo para el contexto completo.
+
+        Parameters
+        ----------
+        ticker:
+            Identificador de la empresa a consultar (ej. ``"AAPL"``).
+        period:
+            Granularidad de los periodos a solicitar: ``"annual"`` o
+            ``"quarter"``. Por defecto, ``"annual"``.
+        limit:
+            Número máximo de periodos históricos a solicitar. Por
+            defecto, ``5``. Debe ser un entero mayor o igual a 1.
+
+        Returns
+        -------
+        RawProviderData
+            Datos crudos con `payload["income_statement"]` y
+            `payload["balance_sheet_statement"]` conteniendo el arreglo
+            completo de periodos devueltos por FMP (hasta `limit`
+            elementos cada uno), junto con los metadatos de procedencia
+            de esta consulta.
+
+        Raises
+        ------
+        DataProviderError
+            Si el ticker está vacío, si `period` no es `"annual"` ni
+            `"quarter"`, si `limit` es menor a 1, si FMP no responde
+            (error de red), si la API key es inválida, o si FMP no
+            devuelve ningún periodo para el ticker.
+        """
+        if not ticker or not ticker.strip():
+            raise DataProviderError("El ticker no puede estar vacío.")
+
+        if period not in _VALID_PERIODS:
+            raise DataProviderError(
+                f"El parámetro 'period' debe ser uno de {_VALID_PERIODS}, "
+                f"no {period!r}."
+            )
+
+        if limit < 1:
+            raise DataProviderError(
+                f"El parámetro 'limit' debe ser un entero mayor o igual a 1, "
+                f"no {limit!r}."
+            )
+
+        ticker = ticker.strip().upper()
+        extra_params = {"period": period, "limit": limit}
+
+        payload: dict[str, Any] = {
+            key: self._get(path_template.format(ticker=ticker), ticker, extra_params)
+            for key, path_template in _HISTORICAL_ENDPOINTS.items()
+        }
+
+        if not payload["income_statement"]:
+            raise DataProviderError(
+                f"El ticker '{ticker}' no existe o FMP no devolvió datos "
+                "históricos para él."
+            )
+
+        metadata = ProviderMetadata(
+            source="fmp",
+            queried_at=datetime.now(timezone.utc),
+            reliability="alta",
+        )
+
+        return RawProviderData(ticker=ticker, payload=payload, metadata=metadata)
+
+    def _get(
+        self,
+        path: str,
+        ticker: str,
+        extra_params: dict[str, Any] | None = None,
+    ) -> Any:
         """Ejecuta una solicitud GET a un endpoint de FMP y devuelve su JSON.
 
         Traduce cualquier fallo (de red, de autenticación, de formato) a
         `DataProviderError`, conforme al contrato `DataProvider`: nunca
         deja escapar una excepción específica de `requests`.
+
+        Parameters
+        ----------
+        path:
+            Ruta del endpoint a consultar (ya con el ticker interpolado).
+        ticker:
+            El ticker consultado, usado solo para mensajes de error.
+        extra_params:
+            Parámetros de consulta adicionales a `apikey` (ej. `period`,
+            `limit`, usados por `fetch_historical`). Si no se indica,
+            solo se envía `apikey`, comportamiento idéntico al de
+            `fetch()` desde la Fase 1.
         """
         url = f"{self._base_url}{path}"
+        params: dict[str, Any] = {"apikey": self._api_key}
+        if extra_params:
+            params.update(extra_params)
+
         try:
-            response = requests.get(
-                url, params={"apikey": self._api_key}, timeout=self._timeout
-            )
+            response = requests.get(url, params=params, timeout=self._timeout)
         except requests.RequestException as exc:
             raise DataProviderError(
                 f"No se pudo contactar a FMP para el ticker '{ticker}': {exc}"
