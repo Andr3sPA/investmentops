@@ -5,79 +5,73 @@
 ## Última tarea completada
 
 Fase 2 → Generador Markdown → *"Implementar el volcado de los hallazgos
-de salud financiera en la sección correspondiente."*
+de valoración en la sección correspondiente."*
 
 ## Verificación previa (sin duplicar trabajo)
 
 Se confirmó que esta tarea **no** estaba satisfecha: `render_markdown`
-(`investmentops/reports/markdown.py`) solo producía los encabezados
-vacíos `## Salud financiera` / `## Valoración` (plantilla base de la
-tarea anterior); no volcaba ningún dato de `AnalysisResult`. Por eso sí
+(`investmentops/reports/markdown.py`) volcaba contenido en
+`## Salud financiera` (tarea anterior), pero la sección `## Valoración`
+seguía siendo solo el encabezado vacío de la plantilla base. Por eso sí
 se requería código nuevo.
 
 ## Qué se implementó
 
 **`investmentops/reports/markdown.py`** (modificado):
 
-- `_find_analysis(result, analysis_id)`: busca dentro de
-  `result.analysis_results` el `AnalysisResult` con ese `analysis_id`;
-  devuelve `None` si el agente no completó su análisis.
-- `_render_analysis_body(analysis)`: construye las líneas de
-  `findings` → `supporting_metrics` (bajo `**Métricas de soporte:**`,
-  como lista `- clave: valor`) → `limitations` (bajo
-  `**Limitaciones:**`, omitida si la lista está vacía), en el orden ya
-  fijado en `REPORT_SECTIONS.md` para cada sección de análisis
-  (excluyendo la procedencia de IA, fuera de alcance de esta tarea).
-- `render_markdown`: ahora busca el `AnalysisResult` con
-  `analysis_id == "financial_health"` y, si existe, vuelca su contenido
-  bajo el encabezado `## Salud financiera` mediante las dos funciones
-  anteriores. Si el agente no aparece en `analysis_results` (por
-  ejemplo, quedó registrado como `ResearchFailure`), la sección
-  conserva solo su encabezado vacío, igual comportamiento que ya tenía
-  la plantilla base. La sección `## Valoración` se mantiene sin cambios
-  (vacía; es la tarea siguiente).
+- Se agregó la constante `VALUATION_AGENT_ID = "valuation"`, análoga a
+  `FINANCIAL_HEALTH_AGENT_ID`, sin importar el identificador desde
+  `investmentops.analysis_engines.valuation` (mismo criterio de
+  desacoplamiento ya aplicado a salud financiera).
+- `render_markdown` ahora busca, además del análisis de salud
+  financiera, el `AnalysisResult` con `analysis_id == "valuation"` y, si
+  existe, vuelca su contenido bajo `## Valoración` reutilizando **sin
+  modificarlas** las funciones ya generalizadas `_find_analysis` y
+  `_render_analysis_body` (ya no dependían de ningún `analysis_id`
+  concreto desde la tarea anterior). Si el agente de valoración no
+  aparece en `analysis_results` (ej. falló), la sección conserva solo su
+  encabezado vacío, mismo comportamiento ya usado en "Salud financiera".
+- La procedencia de IA (`provenance`) sigue fuera de alcance para ambas
+  secciones: es el contenido de la tarea siguiente
+  ("fuentes/procedencia... al final del reporte").
 
-**`investmentops/tests/test_reports_markdown.py`** (modificado) —
-se agregaron pruebas para: inclusión de los hallazgos cuando el agente
-de salud financiera está presente, que ese contenido queda dentro de su
-propia sección (antes de `## Valoración`), inclusión de las métricas de
-soporte, inclusión y omisión condicional de limitaciones, que la
-procedencia de IA (`ai_provider`/`ai_model`) **no** aparece todavía
-(reservado para la tarea de fuentes/procedencia), que la sección queda
-vacía si el agente no está presente, y que un `AnalysisResult` de otro
-`analysis_id` (ej. `"valuation"`) no se vuelca por error dentro de la
-sección de salud financiera. Las pruebas ya existentes de la plantilla
-base se mantuvieron sin cambios y siguen pasando.
+**`investmentops/tests/test_reports_markdown.py`** (modificado) — se
+agregaron pruebas para la sección de valoración, simétricas a las ya
+existentes de salud financiera: inclusión de hallazgos cuando el agente
+está presente, que ese contenido queda dentro de su propia sección
+(después de `## Valoración`, no antes), inclusión de métricas de soporte
+(`price_to_earnings`/`price_to_sales`), inclusión y omisión condicional
+de limitaciones, ausencia de procedencia de IA todavía, sección vacía si
+el agente no está presente, que un `AnalysisResult` de salud financiera
+no se filtra a la sección de valoración (y viceversa), y un caso end-to-end
+con ambos agentes presentes confirmando que cada uno queda en su propia
+sección.
 
 ## Decisiones tomadas
 
-- **Procedencia de IA queda fuera de esta tarea.** `REPORT_SECTIONS.md`
-  lista la procedencia como parte del contenido de "Salud financiera",
-  pero `TASKS.md` la desglosa como una tarea separada y posterior
-  ("Implementar la sección de fuentes/procedencia... al final del
-  reporte"). Se mantiene esa granularidad (en vez de incluirla ya "por
-  cohesión", como PROGRESS.md dejaba abierto como posibilidad) para que
-  cada tarea de `TASKS.md` corresponda a un cambio claramente acotado y
-  verificable por separado.
-- **Formato de las subsecciones.** Se usa texto en negrita
-  (`**Métricas de soporte:**`, `**Limitaciones:**`) seguido de una lista
-  con guiones, consistente con el estilo ya usado en
-  `investmentops.cli.format_research_result` (Fase 1) para las mismas
-  subsecciones, adaptado a Markdown.
-- **La sección se mantiene vacía (solo encabezado) si el agente no
-  completó su análisis.** No se imprime ningún mensaje sustitutivo
-  dentro de la sección: el fallo correspondiente ya queda explícito en
-  `ResearchResult.failures`, y su presentación en el reporte es alcance
-  de una tarea distinta (no incluida todavía en el desglose de
-  `TASKS.md` para el generador Markdown).
+- **Reutilización total de `_find_analysis`/`_render_analysis_body`.**
+  Ninguna de las dos funciones cambió: ya estaban generalizadas para
+  aceptar cualquier `analysis_id`, por lo que aplicar el mismo patrón a
+  valoración fue puramente aditivo (una llamada adicional en
+  `render_markdown`), sin duplicar lógica de formateo entre ambas
+  secciones.
+- **Procedencia de IA sigue fuera de ambas secciones.** Mismo criterio ya
+  documentado para salud financiera: `TASKS.md` la desglosa como tarea
+  separada y posterior ("fuentes/procedencia"), por lo que no se
+  adelanta aquí para mantener cada tarea acotada y verificable por
+  separado.
+- **Formato idéntico al ya usado en salud financiera.** Mismas
+  subsecciones en negrita (`**Métricas de soporte:**`,
+  `**Limitaciones:**`) con listas de guiones, para mantener consistencia
+  visual entre ambas secciones del reporte.
 
 ## Archivos creados o modificados
 
 Modificados:
 - `investmentops/reports/markdown.py`
 - `investmentops/tests/test_reports_markdown.py`
-- `TASKS.md` (tarea "Implementar el volcado de los hallazgos de salud
-  financiera en la sección correspondiente" marcada como completada,
+- `TASKS.md` (tarea "Implementar el volcado de los hallazgos de
+  valoración en la sección correspondiente" marcada como completada,
   Fase 2, "Generador Markdown")
 - `PROGRESS.md` (este archivo)
 
@@ -96,12 +90,13 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Fase 2 → Generador Markdown → *"Implementar el volcado de los hallazgos
-de valoración en la sección correspondiente."*
+Fase 2 → Generador Markdown → *"Implementar la sección de
+fuentes/procedencia (qué proveedor, qué fecha) al final del reporte."*
 
-Simétrica a la tarea recién completada: rellenar `## Valoración` con el
-`AnalysisResult` de `analysis_id == "valuation"` (hallazgos, métricas de
-soporte `price_to_earnings`/`price_to_sales`, limitaciones), reutilizando
-`_find_analysis`/`_render_analysis_body` ya generalizadas en
-`investmentops/reports/markdown.py` para no duplicar lógica entre ambas
-secciones.
+Con salud financiera y valoración ya volcando hallazgos/métricas/
+limitaciones, esta tarea añadiría, para cada análisis presente, su
+`AnalysisProvenance` (`ai_provider`, `ai_model`) — ya sea dentro de cada
+sección o consolidada en una sección final, decisión a tomar como parte
+de esa misma tarea, respetando la limitación ya documentada en
+`REPORT_SECTIONS.md` sobre la ausencia de fuente/fecha del dato
+normalizado subyacente (`FinancialStatement`/`MarketData`).

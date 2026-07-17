@@ -1,15 +1,16 @@
 """Pruebas para el generador Markdown (investmentops.reports.markdown.render_markdown).
 
-Cubre dos tareas de TASKS.md, Fase 2, "Generador Markdown":
+Cubre tres tareas de TASKS.md, Fase 2, "Generador Markdown":
 
 - "Implementar la plantilla base de reporte en Markdown (encabezados,
   secciones vacías)."
 - "Implementar el volcado de los hallazgos de salud financiera en la
-  sección correspondiente." (nuevas pruebas en este archivo).
+  sección correspondiente."
+- "Implementar el volcado de los hallazgos de valoración en la sección
+  correspondiente." (nuevas pruebas en este archivo).
 
-No prueba el volcado de valoración, la sección de fuentes/procedencia,
-ni el guardado en disco: esas son tareas separadas y posteriores de la
-misma sección.
+No prueba la sección de fuentes/procedencia ni el guardado en disco:
+esas son tareas separadas y posteriores de la misma sección.
 """
 
 from datetime import datetime, timezone
@@ -31,6 +32,28 @@ def _financial_health_result(
         findings=findings if findings is not None else ["La empresa muestra un margen saludable."],
         supporting_metrics=(
             supporting_metrics if supporting_metrics is not None else {"net_margin": 0.15}
+        ),
+        limitations=limitations if limitations is not None else [],
+        provenance=AnalysisProvenance(
+            ai_provider="anthropic",
+            ai_model="claude-sonnet-5",
+            generated_at=datetime.now(timezone.utc),
+        ),
+    )
+
+
+def _valuation_result(
+    findings: list[str] | None = None,
+    supporting_metrics: dict | None = None,
+    limitations: list[str] | None = None,
+) -> AnalysisResult:
+    return AnalysisResult(
+        analysis_id="valuation",
+        findings=(
+            findings if findings is not None else ["La empresa parece razonablemente valorada."]
+        ),
+        supporting_metrics=(
+            supporting_metrics if supporting_metrics is not None else {"price_to_earnings": 20.0}
         ),
         limitations=limitations if limitations is not None else [],
         provenance=AnalysisProvenance(
@@ -211,21 +234,134 @@ def test_render_keeps_empty_financial_health_section_when_agent_absent() -> None
 def test_render_financial_health_section_ignores_other_analysis_results() -> None:
     """Un `AnalysisResult` de valoración no debe volcarse en la sección de
     salud financiera (esa sección solo lee `analysis_id == 'financial_health'`)."""
-    valuation_result = AnalysisResult(
-        analysis_id="valuation",
-        findings=["hallazgo de valoración"],
-        supporting_metrics={"price_to_earnings": 20.0},
-        limitations=[],
-        provenance=AnalysisProvenance(
-            ai_provider="anthropic",
-            ai_model="claude-sonnet-5",
-            generated_at=datetime.now(timezone.utc),
-        ),
-    )
-    result = assemble_research_result("AAPL", [valuation_result])
+    result = assemble_research_result("AAPL", [_valuation_result(findings=["hallazgo de valoración"])])
 
     output = render_markdown(result)
 
     section_start = output.index("## Salud financiera")
     section_end = output.index("## Valoración")
     assert "hallazgo de valoración" not in output[section_start:section_end]
+
+
+# --- Volcado de hallazgos de valoración --------------------------------------
+
+
+def test_render_includes_valuation_findings_when_present() -> None:
+    result = assemble_research_result(
+        "AAPL", [_valuation_result(findings=["Texto de interpretación del modelo de valoración."])]
+    )
+
+    output = render_markdown(result)
+
+    assert "Texto de interpretación del modelo de valoración." in output
+
+
+def test_render_places_valuation_findings_under_its_own_section() -> None:
+    result = assemble_research_result(
+        "AAPL",
+        [
+            _financial_health_result(findings=["hallazgo de salud financiera"]),
+            _valuation_result(findings=["hallazgo de valoración"]),
+        ],
+    )
+
+    output = render_markdown(result)
+
+    section_start = output.index("## Valoración")
+    assert "hallazgo de valoración" in output[section_start:]
+    assert "hallazgo de valoración" not in output[: output.index("## Valoración")]
+
+
+def test_render_includes_valuation_supporting_metrics() -> None:
+    result = assemble_research_result(
+        "AAPL",
+        [
+            _valuation_result(
+                supporting_metrics={"price_to_earnings": 20.0, "price_to_sales": 3.0}
+            )
+        ],
+    )
+
+    output = render_markdown(result)
+
+    assert "price_to_earnings" in output
+    assert "20.0" in output
+    assert "price_to_sales" in output
+    assert "3.0" in output
+
+
+def test_render_includes_valuation_limitations_when_present() -> None:
+    result = assemble_research_result(
+        "AAPL",
+        [
+            _valuation_result(
+                limitations=["No se dispone de datos para P/B.", "No se dispone de datos para EV/EBITDA."]
+            )
+        ],
+    )
+
+    output = render_markdown(result)
+
+    assert "No se dispone de datos para P/B." in output
+    assert "No se dispone de datos para EV/EBITDA." in output
+
+
+def test_render_omits_valuation_limitations_subsection_when_empty() -> None:
+    result = assemble_research_result("AAPL", [_valuation_result(limitations=[])])
+
+    output = render_markdown(result)
+
+    assert "**Limitaciones:**" not in output
+
+
+def test_render_does_not_include_valuation_provenance_yet() -> None:
+    """La procedencia de IA es alcance de la tarea siguiente
+    ('fuentes/procedencia'), no de esta."""
+    result = assemble_research_result("AAPL", [_valuation_result()])
+
+    output = render_markdown(result)
+
+    assert "anthropic" not in output
+    assert "claude-sonnet-5" not in output
+
+
+def test_render_keeps_empty_valuation_section_when_agent_absent() -> None:
+    """Si el agente de valoración no está en `analysis_results` (ej.
+    falló), la sección conserva solo su encabezado vacío."""
+    result = assemble_research_result("AAPL", [])
+
+    output = render_markdown(result)
+
+    section_start = output.index("## Valoración")
+    section_body = output[section_start:].replace("## Valoración", "").strip()
+    assert section_body == ""
+
+
+def test_render_valuation_section_ignores_other_analysis_results() -> None:
+    """Un `AnalysisResult` de salud financiera no debe volcarse en la
+    sección de valoración (esa sección solo lee `analysis_id == 'valuation'`)."""
+    result = assemble_research_result(
+        "AAPL", [_financial_health_result(findings=["hallazgo de salud financiera"])]
+    )
+
+    output = render_markdown(result)
+
+    section_start = output.index("## Valoración")
+    assert "hallazgo de salud financiera" not in output[section_start:]
+
+
+def test_render_includes_both_sections_when_both_agents_present() -> None:
+    result = assemble_research_result(
+        "AAPL",
+        [
+            _financial_health_result(findings=["hallazgo de salud financiera"]),
+            _valuation_result(findings=["hallazgo de valoración"]),
+        ],
+    )
+
+    output = render_markdown(result)
+
+    fh_start = output.index("## Salud financiera")
+    val_start = output.index("## Valoración")
+    assert "hallazgo de salud financiera" in output[fh_start:val_start]
+    assert "hallazgo de valoración" in output[val_start:]
