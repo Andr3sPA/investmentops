@@ -4,78 +4,74 @@
 
 ## Última tarea completada
 
-Fase 3 → Fuente de datos histórica → *"Adjuntar metadatos de procedencia
-a cada punto de la serie histórica."*
+Fase 3 → Normalización → *"Extender el modelo 'Estados financieros
+normalizados' para incluir series temporales (no solo el dato más
+reciente)."*
 
 ## Verificación previa (sin duplicar trabajo)
 
-Se confirmó que las dos tareas anteriores de esta misma sección ya
-estaban completas: la investigación del proveedor
-(`investmentops/data_providers/HISTORICAL_DATA.md`) y la consulta de
-series históricas (`FMPFundamentalsProvider.fetch_historical`).
-
-Se revisó si esta tarea ya estaba satisfecha indirectamente por el
-`ProviderMetadata` que `fetch_historical` ya adjunta a
-`RawProviderData.metadata`. No lo estaba: ese metadato describe la
-**consulta completa** (un único `source`/`queried_at`/`reliability` para
-toda la respuesta), no cada punto individual de la serie
-(`income_statement`/`balance_sheet_statement`, cada uno con varios
-periodos). La propia nota de "próxima tarea recomendada" dejada en la
-actualización anterior de este archivo ya señalaba explícitamente esta
-diferencia, así que la tarea requería trabajo nuevo.
+Se confirmó que esta tarea **no** estaba satisfecha por trabajo
+anterior: `FinancialStatement` (Fase 1, `investmentops/data_layer/financial_statements.py`)
+sigue representando deliberadamente un único corte —el más reciente—
+por empresa, y su propio docstring ya dejaba anotado que extenderlo a
+series temporales era alcance explícito y posterior de la Fase 3 (no
+adelantado en Fase 1 para no sobre-diseñar antes de tener la fuente de
+datos histórica y el motor de análisis de evolución que la
+consumirían). No existía ningún tipo de dominio para series temporales
+en el proyecto. Era trabajo nuevo.
 
 ## Qué se implementó
 
-**`investmentops/data_providers/fundamentals.py`** (modificado):
+**`investmentops/data_layer/financial_statement_series.py`** (nuevo):
 
-- Nueva función privada `_attach_point_provenance(points, metadata) ->
-  list[dict]`: construye una lista nueva (sin mutar los dicts originales
-  devueltos por `response.json()`) donde cada punto de la serie recibe
-  dos claves adicionales:
-  - `"source"`: mismo valor que `metadata.source` (`"fmp"`).
-  - `"queried_at"`: mismo valor que `metadata.queried_at`, serializado a
-    ISO 8601 (texto), consistente con el formato ya usado para fechas en
-    el resto del proyecto (ej. `cached_at` en
-    `investmentops/data_layer/cache.py`).
-- `FMPFundamentalsProvider.fetch_historical` ahora construye primero el
-  `ProviderMetadata` de la consulta (antes se construía al final) y lo
-  usa tanto para `RawProviderData.metadata` (sin cambios de
-  comportamiento) como para adjuntar, vía `_attach_point_provenance`, la
-  procedencia a cada elemento de `payload["income_statement"]` y
-  `payload["balance_sheet_statement"]`.
-- La validación de "el ticker no existe o no hay datos históricos" sigue
-  operando sobre la serie cruda (`raw_series["income_statement"]`, antes
-  de adjuntar procedencia), sin cambios de comportamiento.
-- `fetch()` (Fase 1) no se tocó: sigue sin adjuntar procedencia por
-  punto, ya que no trabaja con series (solo el corte más reciente).
+- `FinancialStatementSeries`: dataclass inmutable (`frozen=True`) con
+  dos campos: `ticker: str` y `statements: Sequence[FinancialStatement]`.
+- **Decisión de diseño:** en vez de introducir un tipo nuevo por punto
+  de la serie, se reutiliza `FinancialStatement` (ya definido en Fase
+  1) tal cual para cada elemento: sus campos (`revenue`, `net_income`,
+  `debt`, `source`, `period_end`) ya son exactamente los que necesita
+  cada corte histórico, y esto evita duplicar una estructura casi
+  idéntica. `statements` se espera ordenada del periodo más reciente al
+  más antiguo, mismo orden que ya devuelve FMP y que ya asume
+  `financial_statement_from_raw` (Fase 1) para el corte único.
+- **Deliberadamente fuera de alcance de esta tarea de estructura:**
+  validación de huecos/duplicados/orden en la serie, y conservar
+  `queried_at` por punto (es metadato de la *consulta*, no del *dato
+  financiero* en sí — mismo criterio que ya aplica `FinancialStatement`
+  para el corte único de Fase 1, que tampoco lo conserva). Ambas quedan
+  para la tarea siguiente ("Implementar la transformación de la
+  respuesta cruda histórica al modelo de series temporales") o para el
+  futuro motor de análisis de evolución.
 
-**`investmentops/tests/test_data_providers_fundamentals_historical_provenance.py`**
-(nuevo): confirma que cada punto de ambas series lleva `"source"`/
-`"queried_at"`, que ambos valores coinciden con el `ProviderMetadata` de
-nivel superior, que los campos originales de FMP (`date`, `revenue`,
-`netIncome`, `totalDebt`, etc.) se preservan intactos, que los dicts
-originales devueltos por `response.json()` no se mutan, y que todos los
-puntos de una misma consulta comparten el mismo `queried_at`.
+**`investmentops/data_layer/__init__.py`** (modificado): re-exporta
+`FinancialStatementSeries`, siguiendo el mismo patrón ya usado para
+`Company`, `FinancialStatement` y `MarketData`.
+
+**`investmentops/tests/test_data_layer_financial_statement_series.py`**
+(nuevo): confirma que la serie guarda `ticker` y `statements` tal
+cual, que preserva el orden entregado (sin reordenar ni validar), que
+es inmutable, que soporta un único punto, y que el `source` de cada
+punto se conserva vía `FinancialStatement.source` sin necesitar un
+campo de procedencia adicional en la serie.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_providers_fundamentals_historical_provenance.py` (nuevo)
+- `investmentops/data_layer/financial_statement_series.py` (nuevo)
+- `investmentops/tests/test_data_layer_financial_statement_series.py` (nuevo)
 
 Modificados:
-- `investmentops/data_providers/fundamentals.py` (nueva función
-  `_attach_point_provenance`; `fetch_historical` adjunta procedencia por
-  punto)
-- `TASKS.md` (tarea marcada como completada, Fase 3, "Fuente de datos
-  histórica")
+- `investmentops/data_layer/__init__.py` (re-exporta `FinancialStatementSeries`)
+- `TASKS.md` (tarea marcada como completada, Fase 3, "Normalización")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`,
+`investmentops/data_layer/financial_statements.py` (el modelo de Fase 1
+no cambió; la serie lo envuelve, no lo reemplaza ni lo modifica),
 `investmentops/data_layer/normalization.py`,
-`investmentops/tests/test_data_providers_fundamentals_historical.py`
-(sigue pasando sin cambios, ya que no depende de las claves nuevas),
-ningún otro módulo de código Python existente.
+`investmentops/data_providers/fundamentals.py`, ningún otro módulo de
+código Python existente.
 
 ## Problemas encontrados
 
@@ -85,14 +81,21 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Con "Fuente de datos histórica" ahora completa en su totalidad, la
-siguiente sección pendiente de la Fase 3 es "Normalización":
+Con la estructura de `FinancialStatementSeries` ya definida, la
+siguiente tarea pendiente de la misma sección ("Normalización", Fase 3)
+es:
 
-> "Extender el modelo 'Estados financieros normalizados' para incluir
-> series temporales (no solo el dato más reciente)."
+> "Implementar la transformación de la respuesta cruda histórica al
+> modelo de series temporales."
 
-Esta tarea deberá decidir la forma concreta del modelo de serie temporal
-(ej. una lista de `FinancialStatement` con su propio punto de corte, o
-un tipo nuevo), reutilizando las claves de procedencia por punto
-(`"source"`, `"queried_at"`) ya adjuntadas en esta tarea al transformar
-el payload crudo de `fetch_historical`.
+Esta tarea deberá construir una función (siguiendo el mismo patrón ya
+usado por `financial_statement_from_raw` en
+`investmentops/data_layer/normalization.py`) que traduzca el
+`RawProviderData` devuelto por `FMPFundamentalsProvider.fetch_historical`
+(cuyos puntos ya llevan procedencia individual — `"source"`,
+`"queried_at"` — adjuntada en la tarea anterior) a un
+`FinancialStatementSeries`, construyendo un `FinancialStatement` por
+cada elemento de `payload["income_statement"]`/`payload["balance_sheet_statement"]`
+combinados por fecha, y señalando `NormalizationError` (reutilizada de
+`normalization.py`) ante campos imprescindibles ausentes o fechas no
+interpretables, mismo criterio ya aplicado para el corte único.
