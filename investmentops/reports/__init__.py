@@ -20,22 +20,31 @@ tal cual (investmentops.core.research_result), sin un tipo intermedio
 nuevo. El orden y contenido de las secciones del reporte ya está fijado
 en `investmentops/reports/REPORT_SECTIONS.md`.
 
-El primer generador concreto (Markdown) ya tiene su plantilla base
+El primer generador concreto (Markdown) ya tiene su plantilla completa
 implementada en `investmentops.reports.markdown` (ver TASKS.md, Fase 2,
-"Generador Markdown" > "Implementar la plantilla base de reporte en
-Markdown (encabezados, secciones vacías)") y se re-exporta aquí:
+"Generador Markdown") y se re-exporta aquí:
 
-- `render_markdown`: construye el encabezado de la empresa y los
-  encabezados vacíos de "Salud financiera"/"Valoración". Todavía no
-  vuelca hallazgos, métricas, limitaciones, procedencia ni guarda nada
-  en disco: esas son tareas separadas y posteriores de la misma sección.
+- `render_markdown`: construye el reporte completo (encabezado, salud
+  financiera, valoración, incluyendo hallazgos, métricas de soporte,
+  limitaciones y procedencia de la interpretación de IA por sección).
+- `save_markdown_report`: guarda el texto ya renderizado por
+  `render_markdown` en un archivo `<TICKER>.md`, en una ruta local
+  configurable (`config.local.toml`, sección `[output].output_dir`).
+- `ReportError`: excepción común para señalar fallos al guardar un
+  reporte en disco (ticker vacío, fallo de E/S).
 
 Aún sin implementación: el generador HTML (ver TASKS.md, Fase 2,
 "Generador HTML").
 """
 
-from investmentops.reports.markdown import render_markdown
+from investmentops.reports.markdown import (
+    ReportError,
+    render_markdown,
+    save_markdown_report,
+)
 
 __all__ = [
+    "ReportError",
     "render_markdown",
+    "save_markdown_report",
 ]
