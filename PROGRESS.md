@@ -4,86 +4,78 @@
 
 ## Última tarea completada
 
-Fase 3 → Fuente de datos histórica → *"Implementar la consulta de series
-históricas de ingresos y beneficios para un ticker."*
+Fase 3 → Fuente de datos histórica → *"Adjuntar metadatos de procedencia
+a cada punto de la serie histórica."*
 
 ## Verificación previa (sin duplicar trabajo)
 
-Se confirmó primero que la tarea anterior de esta misma sección
-("Investigar si el proveedor actual soporta series históricas...") ya
-estaba completa (`investmentops/data_providers/HISTORICAL_DATA.md`).
+Se confirmó que las dos tareas anteriores de esta misma sección ya
+estaban completas: la investigación del proveedor
+(`investmentops/data_providers/HISTORICAL_DATA.md`) y la consulta de
+series históricas (`FMPFundamentalsProvider.fetch_historical`).
 
-Se revisó si esta tarea ya estaba satisfecha de forma indirecta: el
-cliente `FMPFundamentalsProvider.fetch()` ya consulta los endpoints
-`income-statement`/`balance-sheet-statement`, que técnicamente ya
-devuelven varios periodos en su respuesta cruda. Sin embargo, `fetch()`:
-
-- No permite controlar `period` (`annual`/`quarter`) ni `limit`
-  (cantidad de periodos), dependiendo por completo de los valores por
-  defecto de FMP.
-- Su contrato (`RawProviderData` reutilizado también por Fase 1) no deja
-  claro para quien lo invoque que el payload trae series completas, ya
-  que la propia normalización de Fase 1 (`financial_statement_from_raw`)
-  descarta deliberadamente todo salvo el primer elemento.
-
-Por lo tanto, esta tarea **no** estaba satisfecha: faltaba un punto de
-entrada explícito, propio de la Fase 3, que consulte series históricas
-de forma intencional y configurable, sin tocar el comportamiento ya
-establecido de `fetch()` (usado por Fase 1/2 y sus pruebas existentes).
+Se revisó si esta tarea ya estaba satisfecha indirectamente por el
+`ProviderMetadata` que `fetch_historical` ya adjunta a
+`RawProviderData.metadata`. No lo estaba: ese metadato describe la
+**consulta completa** (un único `source`/`queried_at`/`reliability` para
+toda la respuesta), no cada punto individual de la serie
+(`income_statement`/`balance_sheet_statement`, cada uno con varios
+periodos). La propia nota de "próxima tarea recomendada" dejada en la
+actualización anterior de este archivo ya señalaba explícitamente esta
+diferencia, así que la tarea requería trabajo nuevo.
 
 ## Qué se implementó
 
 **`investmentops/data_providers/fundamentals.py`** (modificado):
 
-- Nuevo método `FMPFundamentalsProvider.fetch_historical(ticker, *,
-  period="annual", limit=5) -> RawProviderData`:
-  - Consulta únicamente `income-statement` y `balance-sheet-statement`
-    (no `quote`), conforme a lo ya documentado en `HISTORICAL_DATA.md`:
-    la Fase 3 se centra en ingresos y beneficios, no en series de precio
-    de mercado.
-  - Envía `period` y `limit` como parámetros de consulta explícitos,
-    junto a `apikey`, en vez de depender de los valores por defecto de
-    FMP.
-  - Devuelve el `payload` con **todos** los periodos que entrega FMP
-    (hasta `limit`), sin descartar ninguno — a diferencia de la
-    normalización de Fase 1, que sigue tomando solo `[0]` y no se tocó.
-  - Valida `ticker` (no vacío), `period` (`"annual"`/`"quarter"`) y
-    `limit` (≥ 1), señalando `DataProviderError` en caso contrario, y
-    traduce fallos de red/autenticación/formato con el mismo criterio ya
-    usado por `fetch()`.
-- Se extendió el método privado `_get` para aceptar un parámetro
-  opcional `extra_params` (usado por `fetch_historical` para enviar
-  `period`/`limit`). `fetch()` sigue invocando `_get` sin `extra_params`,
-  por lo que su comportamiento **no cambió**: sigue enviando únicamente
-  `{"apikey": ...}`, confirmado con una prueba de regresión explícita.
+- Nueva función privada `_attach_point_provenance(points, metadata) ->
+  list[dict]`: construye una lista nueva (sin mutar los dicts originales
+  devueltos por `response.json()`) donde cada punto de la serie recibe
+  dos claves adicionales:
+  - `"source"`: mismo valor que `metadata.source` (`"fmp"`).
+  - `"queried_at"`: mismo valor que `metadata.queried_at`, serializado a
+    ISO 8601 (texto), consistente con el formato ya usado para fechas en
+    el resto del proyecto (ej. `cached_at` en
+    `investmentops/data_layer/cache.py`).
+- `FMPFundamentalsProvider.fetch_historical` ahora construye primero el
+  `ProviderMetadata` de la consulta (antes se construía al final) y lo
+  usa tanto para `RawProviderData.metadata` (sin cambios de
+  comportamiento) como para adjuntar, vía `_attach_point_provenance`, la
+  procedencia a cada elemento de `payload["income_statement"]` y
+  `payload["balance_sheet_statement"]`.
+- La validación de "el ticker no existe o no hay datos históricos" sigue
+  operando sobre la serie cruda (`raw_series["income_statement"]`, antes
+  de adjuntar procedencia), sin cambios de comportamiento.
+- `fetch()` (Fase 1) no se tocó: sigue sin adjuntar procedencia por
+  punto, ya que no trabaja con series (solo el corte más reciente).
 
-**`investmentops/tests/test_data_providers_fundamentals_historical.py`**
-(nuevo): cubre el comportamiento básico de `fetch_historical` (series
-completas, normalización de ticker), el envío de `period`/`limit` (por
-defecto y explícitos), la exclusión del endpoint `quote`, la validación
-de argumentos (ticker vacío, `period` inválido, `limit` < 1), el manejo
-de errores (ticker inexistente, fallo de red, 401, 500, JSON inválido), y
-una prueba de regresión que confirma que `fetch()` sigue enviando
-únicamente `apikey`.
+**`investmentops/tests/test_data_providers_fundamentals_historical_provenance.py`**
+(nuevo): confirma que cada punto de ambas series lleva `"source"`/
+`"queried_at"`, que ambos valores coinciden con el `ProviderMetadata` de
+nivel superior, que los campos originales de FMP (`date`, `revenue`,
+`netIncome`, `totalDebt`, etc.) se preservan intactos, que los dicts
+originales devueltos por `response.json()` no se mutan, y que todos los
+puntos de una misma consulta comparten el mismo `queried_at`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_providers_fundamentals_historical.py` (nuevo)
+- `investmentops/tests/test_data_providers_fundamentals_historical_provenance.py` (nuevo)
 
 Modificados:
-- `investmentops/data_providers/fundamentals.py` (nuevo método
-  `fetch_historical`, `_get` extendido con `extra_params` opcional)
+- `investmentops/data_providers/fundamentals.py` (nueva función
+  `_attach_point_provenance`; `fetch_historical` adjunta procedencia por
+  punto)
 - `TASKS.md` (tarea marcada como completada, Fase 3, "Fuente de datos
   histórica")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`,
-`investmentops/data_layer/normalization.py` (la transformación al modelo
-de series temporales es tarea separada de la sección "Normalización"),
-ningún otro módulo de código Python existente, ninguna prueba existente
-(`test_data_providers_fundamentals.py` sigue pasando sin cambios).
+`investmentops/data_layer/normalization.py`,
+`investmentops/tests/test_data_providers_fundamentals_historical.py`
+(sigue pasando sin cambios, ya que no depende de las claves nuevas),
+ningún otro módulo de código Python existente.
 
 ## Problemas encontrados
 
@@ -93,14 +85,14 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-La siguiente tarea pendiente en la misma sección de la Fase 3 ("Fuente
-de datos histórica") es:
+Con "Fuente de datos histórica" ahora completa en su totalidad, la
+siguiente sección pendiente de la Fase 3 es "Normalización":
 
-> "Adjuntar metadatos de procedencia a cada punto de la serie
-> histórica."
+> "Extender el modelo 'Estados financieros normalizados' para incluir
+> series temporales (no solo el dato más reciente)."
 
-A diferencia de `ProviderMetadata` en Fase 1 (un único metadato para
-toda la consulta), esta tarea deberá decidir cómo asociar procedencia
-(fuente, fecha) a **cada periodo individual** de la serie devuelta por
-`fetch_historical`, antes de que la sección "Normalización" transforme
-esa serie al modelo de dominio temporal.
+Esta tarea deberá decidir la forma concreta del modelo de serie temporal
+(ej. una lista de `FinancialStatement` con su propio punto de corte, o
+un tipo nuevo), reutilizando las claves de procedencia por punto
+(`"source"`, `"queried_at"`) ya adjuntadas en esta tarea al transformar
+el payload crudo de `fetch_historical`.

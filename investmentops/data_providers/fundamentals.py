@@ -29,22 +29,22 @@ de la capa de normalización.
 
 ## Series históricas (Fase 3, "Fuente de datos histórica")
 
-Cubre además la tarea "Implementar la consulta de series históricas de
-ingresos y beneficios para un ticker" (TASKS.md, Fase 3). Conforme a lo
-ya investigado y documentado en
+Cubre además dos tareas de TASKS.md, Fase 3, "Fuente de datos histórica":
+
+- "Implementar la consulta de series históricas de ingresos y beneficios
+  para un ticker." (ya completada, ver PROGRESS.md).
+- "Adjuntar metadatos de procedencia a cada punto de la serie
+  histórica." (esta tarea).
+
+Conforme a lo ya investigado y documentado en
 `investmentops/data_providers/HISTORICAL_DATA.md`: los mismos dos
 endpoints ya usados por `fetch()` para el estado de resultados y el
 balance general (`income-statement`, `balance-sheet-statement`) ya
 devuelven, de forma nativa, un arreglo con varios periodos históricos —
-no se necesita otro endpoint ni otro proveedor. Lo único que faltaba era
-un método que **no** descarte esos periodos adicionales (como sí hace la
-normalización de Fase 1, que toma deliberadamente solo `[0]`) y que
-permita controlar explícitamente `period` (`"annual"`/`"quarter"`) y
-`limit` (cantidad de periodos), en vez de depender de los valores por
-defecto de FMP.
+no se necesita otro endpoint ni otro proveedor.
 
-`fetch_historical(ticker, period="annual", limit=5)` es ese método
-nuevo:
+`fetch_historical(ticker, period="annual", limit=5)` es el método que
+consulta esa serie:
 
 - Consulta únicamente `income-statement` y `balance-sheet-statement`
   (no `quote`): conforme a `HISTORICAL_DATA.md`, la Fase 3 se centra
@@ -64,15 +64,44 @@ nuevo:
   /formato (mismo criterio que `fetch()`), o si FMP no devuelve ningún
   periodo para el ticker.
 
+### Procedencia por punto (esta tarea)
+
+`RawProviderData.metadata` (un único `ProviderMetadata` para toda la
+respuesta) ya identifica de dónde y cuándo se obtuvo la consulta
+completa, igual que en `fetch()`. Sin embargo, la tarea de TASKS.md pide
+explícitamente procedencia **por cada punto** de la serie, no solo a
+nivel de la respuesta completa — relevante de cara a la sección
+"Normalización" de la Fase 3, que transformará esta serie a un modelo de
+dominio temporal y necesitará poder trazar cada periodo individual hasta
+su fuente sin depender únicamente del contenedor externo.
+
+Como todos los puntos de una misma llamada a `fetch_historical`
+provienen de la misma consulta (mismo proveedor, mismo instante de
+consulta), no hay procedencia *distinta* que calcular por punto: lo que
+hace esta tarea es hacer esa procedencia explícita en cada elemento de
+la serie, en vez de dejarla implícita solo en el metadato de nivel
+superior. `_attach_point_provenance` agrega, a cada dict crudo de
+`income_statement`/`balance_sheet_statement`, dos claves nuevas:
+
+- `"source"`: el mismo valor que `RawProviderData.metadata.source`
+  (``"fmp"``).
+- `"queried_at"`: el mismo valor que
+  `RawProviderData.metadata.queried_at`, serializado a ISO 8601 (texto),
+  consistente con el formato ya usado para fechas en el resto del
+  proyecto (ver `investmentops/data_layer/cache.py`, `cached_at`).
+
+No se mutan los dicts originales devueltos por FMP: `_attach_point_provenance`
+construye copias nuevas (`{**point, ...}`), de forma que un dict crudo
+con una clave `"source"`/`"queried_at"` propia de FMP (no ocurre hoy,
+pero por seguridad) no sea sobrescrita de forma sorpresiva para quien
+inspeccione el payload — en la práctica, ninguno de los dos endpoints de
+FMP consultados devuelve esas claves.
+
 Fuera de alcance de este método (ver TASKS.md, tareas siguientes de esta
 misma sección):
-- Adjuntar metadatos de procedencia a **cada punto** de la serie (esta
-  implementación adjunta un único `ProviderMetadata` para toda la
-  respuesta, igual criterio que `fetch()`; metadatos por punto es la
-  tarea siguiente, "Adjuntar metadatos de procedencia a cada punto de la
-  serie histórica").
 - Cualquier transformación al modelo de dominio de series temporales
-  (tareas de la sección "Normalización" de la Fase 3).
+  (tareas de la sección "Normalización" de la Fase 3), que es quien
+  consumirá estas claves de procedencia por punto.
 
 Fuera de alcance de este módulo:
 - La transformación del payload crudo a `FinancialStatement`/`MarketData`
@@ -121,6 +150,41 @@ _HISTORICAL_ENDPOINTS: dict[str, str] = {
 # consistentes con los valores que acepta la API de FMP para estos
 # mismos endpoints (ver HISTORICAL_DATA.md).
 _VALID_PERIODS = ("annual", "quarter")
+
+
+def _attach_point_provenance(
+    points: list[dict[str, Any]], metadata: ProviderMetadata
+) -> list[dict[str, Any]]:
+    """Adjunta procedencia (`source`, `queried_at`) a cada punto de una serie.
+
+    Construye una lista nueva de dicts (no muta `points`), agregando a
+    cada elemento las claves `"source"` (`metadata.source`) y
+    `"queried_at"` (`metadata.queried_at`, en formato ISO 8601), de forma
+    que cada punto individual de la serie histórica quede trazable hasta
+    su fuente sin depender únicamente del `ProviderMetadata` de nivel
+    superior en `RawProviderData`. Ver "Procedencia por punto" en el
+    docstring del módulo.
+
+    Parameters
+    ----------
+    points:
+        Lista de dicts crudos (ej. un elemento por periodo fiscal), tal
+        como los devuelve un endpoint de FMP.
+    metadata:
+        La procedencia de la consulta que obtuvo `points` (mismo
+        `ProviderMetadata` que se adjunta a nivel de todo el
+        `RawProviderData`).
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Una copia de `points`, con `"source"`/`"queried_at"` agregados a
+        cada elemento.
+    """
+    return [
+        {**point, "source": metadata.source, "queried_at": metadata.queried_at.isoformat()}
+        for point in points
+    ]
 
 
 class FMPFundamentalsProvider:
@@ -230,8 +294,10 @@ class FMPFundamentalsProvider:
         general ya usados por `fetch()`, pero conservando **todos** los
         periodos devueltos por FMP (no solo el más reciente), y enviando
         explícitamente `period`/`limit` como parámetros de consulta en
-        vez de depender de los valores por defecto de FMP. Ver "Series
-        históricas" en el docstring del módulo para el contexto completo.
+        vez de depender de los valores por defecto de FMP. Cada punto de
+        la serie devuelta lleva además su propia procedencia (`"source"`,
+        `"queried_at"`), ver "Procedencia por punto" en el docstring del
+        módulo.
 
         Parameters
         ----------
@@ -250,8 +316,13 @@ class FMPFundamentalsProvider:
             Datos crudos con `payload["income_statement"]` y
             `payload["balance_sheet_statement"]` conteniendo el arreglo
             completo de periodos devueltos por FMP (hasta `limit`
-            elementos cada uno), junto con los metadatos de procedencia
-            de esta consulta.
+            elementos cada uno). Cada elemento de ambas listas incluye,
+            además de los campos originales de FMP, las claves
+            `"source"` y `"queried_at"` con la procedencia de ese punto
+            (la misma para todos los puntos de esta consulta, ver
+            docstring del módulo). `RawProviderData.metadata` sigue
+            llevando, como hasta ahora, la procedencia de la consulta
+            completa.
 
         Raises
         ------
@@ -279,12 +350,12 @@ class FMPFundamentalsProvider:
         ticker = ticker.strip().upper()
         extra_params = {"period": period, "limit": limit}
 
-        payload: dict[str, Any] = {
+        raw_series: dict[str, Any] = {
             key: self._get(path_template.format(ticker=ticker), ticker, extra_params)
             for key, path_template in _HISTORICAL_ENDPOINTS.items()
         }
 
-        if not payload["income_statement"]:
+        if not raw_series["income_statement"]:
             raise DataProviderError(
                 f"El ticker '{ticker}' no existe o FMP no devolvió datos "
                 "históricos para él."
@@ -295,6 +366,11 @@ class FMPFundamentalsProvider:
             queried_at=datetime.now(timezone.utc),
             reliability="alta",
         )
+
+        payload: dict[str, Any] = {
+            key: _attach_point_provenance(points, metadata)
+            for key, points in raw_series.items()
+        }
 
         return RawProviderData(ticker=ticker, payload=payload, metadata=metadata)
 
