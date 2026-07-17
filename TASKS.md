@@ -121,9 +121,9 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 3 — Analizar ingresos y beneficios en el tiempo
 
 ### Fuente de datos histórica
-- Investigar si el proveedor actual soporta series históricas (varios años/trimestres) o si se necesita otro endpoint/proveedor.
-- Implementar la consulta de series históricas de ingresos y beneficios para un ticker.
-- Adjuntar metadatos de procedencia a cada punto de la serie histórica.
+- [x] Investigar si el proveedor actual soporta series históricas (varios años/trimestres) o si se necesita otro endpoint/proveedor. — `investmentops/data_providers/HISTORICAL_DATA.md` (nuevo, ver PROGRESS.md). Decisión: **no se necesita otro proveedor**. FMP (el proveedor ya elegido en la Fase 1) ya devuelve series históricas de forma nativa en los mismos dos endpoints ya integrados (`income-statement`, `balance-sheet-statement`): ambos entregan un arreglo con varios periodos, no un único periodo — la Fase 1 ya lo sabía y descartaba deliberadamente todo menos el primer elemento (ver `financial_statement_from_raw` en `investmentops/data_layer/normalization.py`). FMP soporta además los parámetros de consulta `period` (`annual`/`quarter`) y `limit` (cantidad de periodos) sobre esos mismos endpoints, sin necesitar un endpoint ni una API key distintos.
+- [ ] Implementar la consulta de series históricas de ingresos y beneficios para un ticker.
+- [ ] Adjuntar metadatos de procedencia a cada punto de la serie histórica.
 
 ### Normalización
 - Extender el modelo "Estados financieros normalizados" para incluir series temporales (no solo el dato más reciente).

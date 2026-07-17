@@ -4,91 +4,86 @@
 
 ## Última tarea completada
 
-Fase 2 → Orquestador y CLI → *"Implementar el mensaje final en consola
-indicando dónde quedaron guardados los reportes generados."*
+Fase 3 → Fuente de datos histórica → *"Investigar si el proveedor actual
+soporta series históricas (varios años/trimestres) o si se necesita otro
+endpoint/proveedor."*
 
 ## Verificación previa (sin duplicar trabajo)
 
-Se confirmó que esta tarea **no** estaba satisfecha: `investmentops/__main__.py::main`
-solo manejaba el caso en que `dispatch(args)` devuelve un `ResearchResult`
-a secas (`print(format_research_result(result))`); no había ninguna
-rama que detectara la tupla `(ResearchResult, list[Path])` que
-`dispatch` ya devuelve desde la tarea anterior ("Añadir al comando CLI
-la opción de formato de salida") cuando el usuario pasa `--format`, ni
-ningún mensaje que indicara dónde quedaron guardados los archivos. Esto
-ya estaba documentado explícitamente como pendiente en la sección
-"Próxima tarea recomendada" de la actualización anterior de este mismo
-archivo.
+Se confirmó primero que la Fase 2 ya estaba completa: la única tarea
+pendiente que quedaba en esa fase era opcional ("Escribir el archivo de
+prompt del agente de reporte..."), explícitamente marcada como tal en
+`TASKS.md`, y la sección "Verificación" de la Fase 2 es manual (no de
+implementación). La siguiente tarea real, ya anticipada como "Próxima
+tarea recomendada" en la actualización anterior de este archivo, es la
+primera de la Fase 3.
+
+Se confirmó que esta tarea **no** estaba satisfecha: no existía ningún
+documento que investigara ni registrara si FMP soporta series
+históricas. El código existente ya *insinuaba* la respuesta (el payload
+crudo de `FMPFundamentalsProvider` y la normalización en
+`investmentops/data_layer/normalization.py` ya tratan
+`income_statement`/`balance_sheet_statement` como **listas**, tomando
+solo el primer elemento como "el más reciente"), pero esa observación
+nunca se había investigado ni dejado documentada como decisión explícita
+de esta tarea concreta de `TASKS.md`.
 
 ## Qué se implementó
 
-**`investmentops/__main__.py`** (modificado):
+Esta es una tarea de **investigación/documentación** (no de código),
+igual criterio que otras tareas de decisión ya completadas en fases
+anteriores (ej. "Elegir el proveedor de datos financieros fundamentales"
+en Fase 1, `FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md` en Fase
+1, `CACHE.md`/`HTML_TEMPLATE.md`/`REPORT_MODEL.md`/`REPORT_SECTIONS.md`
+en Fases 1-2).
 
-- `main(argv=None) -> int` ahora captura el valor devuelto por
-  `dispatch(args)` en una variable intermedia (`dispatch_result`) y
-  distingue con `isinstance(dispatch_result, tuple)` entre:
-  - **`ResearchResult` a secas** (`args.format is None`,
-    comportamiento histórico): se imprime únicamente
-    `format_research_result(result)`, sin ninguna sección adicional —
-    idéntico a como funcionaba antes de esta tarea.
-  - **Tupla `(ResearchResult, list[Path])`** (`args.format` es
-    `"markdown"`, `"html"` o `"both"`): se imprime
-    `format_research_result(result)` igual que en el otro caso, y a
-    continuación (si `report_paths` no está vacío) una sección nueva:
+**`investmentops/data_providers/HISTORICAL_DATA.md`** (nuevo):
 
-    ```
-    Reportes generados:
-      - <ruta1>
-      - <ruta2>
-    ```
+- Documenta el hallazgo central: los dos endpoints de FMP ya integrados
+  desde la Fase 1 (`income-statement`, `balance-sheet-statement`) **ya
+  devuelven series históricas de forma nativa** (un arreglo con varios
+  periodos, no un único periodo). Esto ya era visible en el código
+  existente —`FMPFundamentalsProvider` los tipa como listas,
+  `financial_statement_from_raw` toma explícitamente `[0]` como "el
+  corte más reciente", con un comentario que ya remitía a esta tarea de
+  Fase 3— pero nunca se había investigado ni dejado como decisión
+  explícita.
+- Documenta los dos parámetros de consulta relevantes de FMP, no usados
+  todavía por el cliente actual: `period` (`annual`/`quarter`) y `limit`
+  (cantidad de periodos a devolver).
+- **Decisión: no se necesita otro endpoint ni otro proveedor.** La
+  fuente de datos histórica de la Fase 3 es una extensión de la consulta
+  ya existente al mismo proveedor (FMP), no un proveedor nuevo que
+  registrar — consistente con "Extensibilidad sin reescritura"
+  (`ARCHITECTURE.md`).
+- Deja explícitamente fuera de alcance (para la tarea siguiente,
+  "Implementar la consulta de series históricas...") las decisiones de
+  implementación: si `FMPFundamentalsProvider.fetch` debe dejar de
+  descartar los periodos adicionales y cómo, si conviene enviar
+  `limit`/`period` explícitamente, y la propagación de metadatos de
+  procedencia por punto de la serie (tarea separada y siguiente).
+- Aclara que el endpoint de cotización histórica de FMP queda fuera de
+  esta tarea, ya que `ROADMAP.md` (Fase 3) se centra explícitamente en
+  ingresos y beneficios (`income_statement`), no en series de precio.
 
-    con una línea `  - <ruta>` por cada `Path` ya devuelto por
-    `dispatch`/`generate_reports`, en el mismo orden fijo
-    `[markdown_path, html_path]` que ya garantiza el orquestador
-    (`investmentops.core.orchestrator.ALL_REPORT_FORMATS`).
-- No se distingue el caso por `args.format` directamente (para no
-  duplicar el mapeo `_FORMAT_TO_REPORT_FORMATS` que ya vive en
-  `investmentops.cli`): basta con inspeccionar el tipo del valor
-  devuelto por `dispatch`, que ya es la fuente de verdad de si se pidió
-  o no un reporte.
-- El manejo de `ConfigError` (mensaje `"Error de configuración: "` en
-  `stderr`, código de salida `1`) no cambia.
-
-**Archivo de prueba modificado:**
-- `investmentops/tests/test_main.py`: se agregaron cuatro pruebas
-  nuevas, todas mockeando `dispatch` directamente (sin invocar el flujo
-  real, mismo criterio que las pruebas ya existentes de este archivo):
-  - `test_main_prints_report_paths_when_dispatch_returns_tuple`:
-    confirma que, cuando `dispatch` devuelve una tupla con dos rutas
-    (`--format both`), la salida incluye tanto el `ResearchResult`
-    formateado como la sección `"Reportes generados:"` con ambas rutas.
-  - `test_main_report_paths_appear_after_research_result`: confirma el
-    orden (el `ResearchResult` se imprime antes que la sección de
-    reportes).
-  - `test_main_prints_single_report_path_for_single_format`: confirma
-    que, con un único formato (`--format html`), solo aparece una línea
-    de ruta.
-  - `test_main_does_not_print_reports_section_when_dispatch_returns_plain_result`:
-    confirma que, sin `--format` (regresión), la sección "Reportes
-    generados:" no aparece en absoluto.
+**Ningún archivo de código Python se modificó.** No se tocó
+`FMPFundamentalsProvider`, `investmentops.data_layer.normalization`, ni
+ningún modelo de dominio: esta tarea es puramente de investigación,
+conforme a su alcance en `TASKS.md`.
 
 ## Archivos creados o modificados
 
+Creados:
+- `investmentops/data_providers/HISTORICAL_DATA.md` (nuevo)
+
 Modificados:
-- `investmentops/__main__.py` (rama nueva en `main()` para el mensaje
-  final de reportes generados; docstring del módulo actualizado)
-- `investmentops/tests/test_main.py` (cuatro pruebas nuevas para el
-  mensaje final de reportes; docstring del archivo actualizado)
-- `TASKS.md` (tarea marcada como completada, Fase 2, "Orquestador y
-  CLI")
+- `TASKS.md` (tarea marcada como completada, Fase 3, "Fuente de datos
+  histórica")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`, `investmentops/cli/__init__.py`,
-`investmentops/core/orchestrator.py`, `investmentops/reports/*`, ningún
-otro módulo de código Python existente, ningún otro archivo de pruebas
-existente (en particular, `test_cli_dispatch.py`, `test_cli_format.py` y
-`test_cli_output.py` no requirieron ningún cambio).
+`CONFIGURATION.md`, `config.example.toml`, ningún módulo de código
+Python existente, ningún archivo de pruebas existente.
 
 ## Problemas encontrados
 
@@ -98,18 +93,16 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Con esta tarea, la sección "Orquestador y CLI" de la Fase 2 queda
-completa. Quedan pendientes en Fase 2:
+La siguiente tarea pendiente en la misma sección de la Fase 3 ("Fuente
+de datos histórica") es:
 
-- (Opcional) "Escribir el archivo de prompt del agente de reporte y
-  definir su alcance" (sección "Modelo de reporte"): es explícitamente
-  opcional en `TASKS.md`, por lo que puede omitirse.
-- "Verificación" (sección manual, no una tarea de implementación):
-  generar un reporte Markdown y uno HTML de una empresa real y revisar
-  que abren/leen correctamente.
+> "Implementar la consulta de series históricas de ingresos y beneficios
+> para un ticker."
 
-Si se prefiere avanzar con trabajo de implementación en vez de la
-verificación manual, la siguiente fase con tareas pendientes es la
-**Fase 3 — Analizar ingresos y beneficios en el tiempo**, comenzando por
-"Investigar si el proveedor actual (FMP) soporta series históricas
-(varios años/trimestres) o si se necesita otro endpoint/proveedor."
+Esta sí es una tarea de código: deberá decidir cómo `FMPFundamentalsProvider`
+(o una extensión suya) expone varios periodos de `income_statement`/
+`balance_sheet_statement` en `RawProviderData.payload`, sin romper el
+comportamiento actual de Fase 1 (`payload[...][0]` en
+`investmentops.data_layer.normalization`, que debe seguir funcionando
+igual mientras esa capa no se extienda en una tarea posterior de esta
+misma sección de la Fase 3, "Normalización").
