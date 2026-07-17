@@ -1,17 +1,25 @@
 """Pruebas para el punto de entrada de la CLI (investmentops.__main__.main).
 
-Cubre la tarea "Implementar mensajes de error legibles en consola ante
-fallos del flujo" (TASKS.md, Fase 1, "CLI"). Solo prueba `main()`: el
-parseo de argumentos (`test_cli.py`, `test_cli_ticker_validation.py`), la
-conexión con el orquestador (`test_cli_dispatch.py`) y el formateo del
-resultado (`test_cli_output.py`) ya están cubiertos en sus propios
-archivos de prueba. `dispatch` se mockea directamente (en vez de invocar
-el flujo real) porque lo único relevante para esta tarea es cómo `main()`
-reacciona a un éxito o a un `ConfigError`, no el contenido concreto del
-`ResearchResult`.
+Cubre dos tareas:
+
+- "Implementar mensajes de error legibles en consola ante fallos del
+  flujo" (TASKS.md, Fase 1, "CLI").
+- "Implementar el mensaje final en consola indicando dónde quedaron
+  guardados los reportes generados" (TASKS.md, Fase 2, "Orquestador y
+  CLI").
+
+Solo prueba `main()`: el parseo de argumentos (`test_cli.py`,
+`test_cli_ticker_validation.py`, `test_cli_format.py`), la conexión con
+el orquestador (`test_cli_dispatch.py`, `test_cli_format.py`) y el
+formateo del resultado (`test_cli_output.py`) ya están cubiertos en sus
+propios archivos de prueba. `dispatch` se mockea directamente (en vez de
+invocar el flujo real) porque lo único relevante para estas tareas es
+cómo `main()` reacciona a un éxito (con o sin reportes generados) o a un
+`ConfigError`, no el contenido concreto del `ResearchResult`.
 """
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -109,3 +117,83 @@ def test_main_accepts_explicit_argv_without_touching_sys_argv(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "ECOPETROL.CL" in captured.out
+
+
+# --- Mensaje final con las rutas de los reportes generados (--format) --------
+
+
+def test_main_prints_report_paths_when_dispatch_returns_tuple(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    report_paths = [tmp_path / "AAPL.md", tmp_path / "AAPL.html"]
+    monkeypatch.setattr(
+        main_module,
+        "dispatch",
+        lambda args, **kwargs: (_empty_research_result("AAPL"), report_paths),
+    )
+
+    exit_code = main_module.main(["investigate", "AAPL", "--format", "both"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "AAPL" in captured.out
+    assert "Reportes generados:" in captured.out
+    assert str(report_paths[0]) in captured.out
+    assert str(report_paths[1]) in captured.out
+
+
+def test_main_report_paths_appear_after_research_result(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    report_paths = [tmp_path / "AAPL.md"]
+    monkeypatch.setattr(
+        main_module,
+        "dispatch",
+        lambda args, **kwargs: (_empty_research_result("AAPL"), report_paths),
+    )
+
+    main_module.main(["investigate", "AAPL", "--format", "markdown"])
+
+    captured = capsys.readouterr()
+    assert captured.out.index("AAPL") < captured.out.index("Reportes generados:")
+
+
+def test_main_prints_single_report_path_for_single_format(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    report_paths = [tmp_path / "AAPL.html"]
+    monkeypatch.setattr(
+        main_module,
+        "dispatch",
+        lambda args, **kwargs: (_empty_research_result("AAPL"), report_paths),
+    )
+
+    main_module.main(["investigate", "AAPL", "--format", "html"])
+
+    captured = capsys.readouterr()
+    assert "Reportes generados:" in captured.out
+    assert str(report_paths[0]) in captured.out
+    assert captured.out.count("  - ") == 1
+
+
+def test_main_does_not_print_reports_section_when_dispatch_returns_plain_result(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Sin `--format`, `dispatch` sigue devolviendo un `ResearchResult` a
+    secas (no una tupla); `main()` no debe imprimir la sección de
+    reportes en ese caso."""
+    monkeypatch.setattr(
+        main_module, "dispatch", lambda args, **kwargs: _empty_research_result("AAPL")
+    )
+
+    exit_code = main_module.main(["investigate", "AAPL"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Reportes generados:" not in captured.out
