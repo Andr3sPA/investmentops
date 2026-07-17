@@ -31,23 +31,31 @@ implementada en `investmentops.reports.markdown` (ver TASKS.md, Fase 2,
   `render_markdown` en un archivo `<TICKER>.md`, en una ruta local
   configurable (`config.local.toml`, sección `[output].output_dir`).
 - `ReportError`: excepción común para señalar fallos al guardar un
-  reporte en disco (ticker vacío, fallo de E/S).
+  reporte en disco (ticker vacío, fallo de E/S). Compartida por todos
+  los generadores que guardan en disco (Markdown y HTML), ya que el
+  fallo de guardado es infraestructura de E/S común, no algo específico
+  de cada formato.
 
 El generador HTML (ver TASKS.md, Fase 2, "Generador HTML") ya tiene su
-volcado de secciones implementado en `investmentops.reports.html` y se
-re-exporta aquí:
+volcado de secciones y su guardado en disco implementados en
+`investmentops.reports.html` y se re-exportan aquí:
 
 - `render_html`: construye el documento HTML5 completo (encabezado, salud
   financiera, valoración), reutilizando el mismo `ResearchResult` y el
   mismo orden de secciones ya fijado para Markdown (ver
   `investmentops/reports/HTML_TEMPLATE.md` y `REPORT_SECTIONS.md`).
+- `save_html_report`: guarda el texto ya renderizado por `render_html`
+  en un archivo `<TICKER>.html`, en la misma ruta local configurable que
+  usa `save_markdown_report` (`config.local.toml`, sección
+  `[output].output_dir`), siguiendo exactamente el mismo patrón.
 
-Aún sin implementación: el guardado del archivo HTML generado en una
-ruta local configurable (tarea separada y posterior, ver TASKS.md, Fase
-2, "Generador HTML").
+Aún sin implementación: extender el orquestador para invocar los
+generadores de reporte automáticamente tras ensamblar el resultado de
+investigación, y la opción de formato de salida en la CLI (ambas, tareas
+separadas y posteriores, ver TASKS.md, Fase 2, "Orquestador y CLI").
 """
 
-from investmentops.reports.html import render_html
+from investmentops.reports.html import render_html, save_html_report
 from investmentops.reports.markdown import (
     ReportError,
     render_markdown,
@@ -58,5 +66,6 @@ __all__ = [
     "ReportError",
     "render_html",
     "render_markdown",
+    "save_html_report",
     "save_markdown_report",
 ]

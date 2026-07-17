@@ -1,80 +1,97 @@
 """Generador de reportes en HTML.
 
-Cubre la tarea "Implementar el volcado de las mismas secciones que en
-Markdown (salud financiera, valoración, fuentes)" (TASKS.md, Fase 2,
-"Generador HTML"), sobre la base de diseño ya fijada en
-`investmentops/reports/HTML_TEMPLATE.md`: HTML5 mínimo, sin CSS
-elaborado, sin JavaScript, sin motor de templating externo, con las
-mismas secciones y el mismo orden ya usados por el generador Markdown
-(`investmentops/reports/markdown.py`), consumiendo directamente
-`ResearchResult` sin ningún tipo intermedio nuevo (ver
+Cubre, hasta ahora, dos tareas de TASKS.md, Fase 2, "Generador HTML":
+
+- "Implementar el volcado de las mismas secciones que en Markdown (salud
+  financiera, valoración, fuentes)." (ya completada, ver PROGRESS.md).
+- "Implementar el guardado del archivo HTML generado en una ruta local
+  configurable." (esta tarea).
+
+Sobre la base de diseño ya fijada en `investmentops/reports/HTML_TEMPLATE.md`:
+HTML5 mínimo, sin CSS elaborado, sin JavaScript, sin motor de templating
+externo, con las mismas secciones y el mismo orden ya usados por el
+generador Markdown (`investmentops/reports/markdown.py`), consumiendo
+directamente `ResearchResult` sin ningún tipo intermedio nuevo (ver
 `investmentops/reports/REPORT_MODEL.md` y `REPORT_SECTIONS.md`).
 
-Este módulo no importa nada de `investmentops.reports.markdown`: aunque
-el contenido y el orden de las secciones son los mismos, cada generador
-de formato es independiente (ver ARCHITECTURE.md, "Extensibilidad sin
-reescritura" — "Agregar un nuevo formato de salida implica añadir un
-generador nuevo, no tocar los existentes"), por lo que las constantes de
-identificador de agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`)
-y el helper de búsqueda (`_find_analysis`) se duplican aquí en vez de
-importarse, mismo criterio ya documentado en el módulo Markdown.
+Este módulo no importa nada de `investmentops.reports.markdown` para la
+parte de **renderizado** (`render_html`): aunque el contenido y el orden
+de las secciones son los mismos, cada generador de formato es
+independiente (ver ARCHITECTURE.md, "Extensibilidad sin reescritura" —
+"Agregar un nuevo formato de salida implica añadir un generador nuevo,
+no tocar los existentes"), por lo que las constantes de identificador de
+agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`) y el helper de
+búsqueda (`_find_analysis`) se duplican aquí en vez de importarse, mismo
+criterio ya documentado en versiones anteriores de este módulo.
 
-## Escapado de caracteres especiales HTML
+## Guardado del archivo HTML generado (`save_html_report`)
 
-`HTML_TEMPLATE.md` deja explícitamente el escapado de `<`, `>` y `&` en
-el contenido dinámico (hallazgos generados por el modelo de IA, nombre de
-la empresa, etc.) como una decisión de esta tarea de implementación, no
-de la tarea de diseño de la estructura. Este módulo escapa **todo**
-contenido dinámico insertado en el HTML mediante `html.escape` (título,
-identidad de la empresa, fecha, hallazgos, claves/valores de métricas,
-limitaciones, y procedencia de IA), ya que el texto de `findings` proviene
-de un modelo de lenguaje y no debe interpretarse como marcado HTML.
+A diferencia del renderizado, el **guardado en disco** sí reutiliza
+piezas ya existentes de `investmentops.reports.markdown`
+(`ReportError`, `DEFAULT_OUTPUT_DIR`): guardar un archivo en una ruta
+local configurable es una operación de infraestructura (crear
+directorio, resolver ruta de salida, escribir archivo, traducir fallos
+de E/S) idéntica para cualquier formato de reporte, no una decisión de
+presentación específica del formato — a diferencia de `render_html` vs
+`render_markdown`, que sí difieren en contenido/marcado. Reimplementar
+esa infraestructura aquí duplicaría lógica sin ningún beneficio de
+independencia real entre formatos: extensibilidad no exige rehacer código
+idéntico.
 
-## Volcado de secciones (mapeo con `HTML_TEMPLATE.md`)
+`save_html_report` sigue exactamente el mismo patrón ya usado por
+`investmentops.reports.markdown.save_markdown_report`:
 
-Reutiliza el mismo mapeo elemento-a-elemento ya documentado en
-`HTML_TEMPLATE.md`:
+1. **Resolución de la ruta de destino**, en este orden de prioridad:
+   - `output_dir` recibido explícitamente (útil sobre todo para pruebas).
+   - `[output].output_dir` en la configuración ya cargada (`config`) o,
+     si tampoco se indica, en `investmentops.config.load_config()`.
+   - `DEFAULT_OUTPUT_DIR` (``"reports/"``, reutilizado desde
+     `investmentops.reports.markdown`) si ninguna de las anteriores
+     aplica.
+2. **Creación del directorio** si no existe
+   (`Path.mkdir(parents=True, exist_ok=True)`).
+3. **Nombre del archivo:** `<TICKER>.html`, con el ticker normalizado a
+   mayúsculas, consistente con `<TICKER>.md` (Markdown) y `<TICKER>.json`
+   (caché de datos normalizados).
+4. **Escritura del archivo** en UTF-8, sobrescribiendo por completo
+   cualquier contenido previo del mismo ticker.
 
-- `<h1>Investigación: {ticker}</h1>` + línea de identidad (`name · sector
-  · market`, omitida si los tres campos están vacíos) + `<p>Generado:
-  {fecha}</p>`.
-- `<h2>Salud financiera</h2>` / `<h2>Valoración</h2>`: encabezados
-  **siempre** presentes, estén o no disponibles sus respectivos
-  `AnalysisResult` (mismo comportamiento que la plantilla base Markdown:
-  una sección sin agente disponible conserva solo su encabezado vacío).
-- Por cada análisis disponible, en este orden: hallazgos (un `<p>` por
-  elemento de `findings`) → métricas de soporte (`<h3>Métricas de
-  soporte</h3>` + `<ul><li>clave: valor</li>...</ul>`, omitida si
-  `supporting_metrics` está vacío) → limitaciones (`<h3>Limitaciones</h3>`
-  + `<ul>...</ul>`, omitida si `limitations` está vacío) → procedencia de
-  la interpretación de IA (`<p><em>Generado por: proveedor (modelo) el
-  fecha</em></p>`).
+Cualquier fallo (ticker vacío, fallo de E/S al crear el directorio o al
+escribir el archivo) se señala mediante `ReportError` — la misma
+excepción ya definida en `investmentops.reports.markdown`, reutilizada
+aquí en vez de definir un duplicado (`HtmlReportError` u otro nombre):
+ambos generadores comparten el mismo tipo de fallo de guardado
+(infraestructura de E/S, no de renderizado), y quien invoque cualquiera
+de los dos `save_*_report` puede capturar `ReportError` de forma
+uniforme.
 
-Fuera de alcance de este módulo (ver TASKS.md, "Generador HTML", tarea
-siguiente):
-- El guardado del archivo HTML generado en disco (tarea separada y
-  posterior, seguirá el mismo patrón ya usado por
-  `investmentops.reports.markdown.save_markdown_report`).
+Fuera de alcance de este módulo:
 - La sección de "Fallos parciales": no forma parte del mapeo de esta
-  tarea (`HTML_TEMPLATE.md` la documenta como parte de la plantilla
-  general, pero el generador Markdown tampoco la implementa todavía, ver
-  `investmentops/reports/markdown.py`, docstring de `render_markdown`);
-  se mantiene fuera de alcance en ambos generadores por consistencia.
+  tarea (ver docstring de `render_html`, ya documentado en versiones
+  anteriores de este módulo).
+- Conectar `save_html_report` con el orquestador o con la CLI para que
+  se invoque automáticamente tras ensamblar el resultado de
+  investigación: tarea separada y posterior (ver TASKS.md, "Orquestador
+  y CLI" de la Fase 2).
 """
 
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
+from typing import Any
 
 from investmentops.analysis_engines.contracts import AnalysisResult
+from investmentops.config import load_config
 from investmentops.core.research_result import ResearchResult
+from investmentops.reports.markdown import DEFAULT_OUTPUT_DIR, ReportError
 
 #: Identificador del agente de salud financiera, el mismo usado en
 #: `investmentops.analysis_engines.financial_health.AGENT_ID`. No se
 #: importa directamente desde ese módulo (ver docstring del módulo,
-#: "no se importa nada de investmentops.reports.markdown" aplica también
-#: aquí: basta con el identificador de texto, ya estable como parte de
-#: `AnalysisResult.analysis_id`).
+#: "no se importa nada de investmentops.reports.markdown" aplica al
+#: renderizado: basta con el identificador de texto, ya estable como
+#: parte de `AnalysisResult.analysis_id`).
 FINANCIAL_HEALTH_AGENT_ID = "financial_health"
 
 #: Identificador del agente de valoración, mismo criterio que
@@ -220,3 +237,99 @@ def render_html(result: ResearchResult) -> str:
     )
 
     return html_document
+
+
+def _resolve_output_dir(
+    output_dir: str | Path | None, config: dict[str, Any] | None
+) -> Path:
+    """Resuelve el directorio de salida a usar para guardar reportes HTML.
+
+    Mismo criterio que `investmentops.reports.markdown._resolve_output_dir`:
+    prioriza `output_dir` si se indica explícitamente; en caso contrario,
+    lee `[output].output_dir` desde la configuración ya cargada (`config`)
+    o, si tampoco se indica, desde `investmentops.config.load_config()`.
+    Si la configuración no define una ruta, cae de vuelta a
+    `DEFAULT_OUTPUT_DIR` (reutilizado desde `investmentops.reports.markdown`,
+    misma carpeta de salida que el generador Markdown).
+    """
+    if output_dir is not None:
+        return Path(output_dir)
+
+    cfg = config if config is not None else load_config()
+    configured_path = cfg.get("output", {}).get("output_dir")
+    return Path(configured_path or DEFAULT_OUTPUT_DIR)
+
+
+def save_html_report(
+    ticker: str,
+    content: str,
+    *,
+    output_dir: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> Path:
+    """Guarda el texto HTML ya renderizado (`render_html`) en disco.
+
+    Sigue exactamente el mismo patrón ya usado por
+    `investmentops.reports.markdown.save_markdown_report` (ver
+    "Guardado del archivo HTML generado" en el docstring del módulo).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa investigada (ej. ``"AAPL"``). Se
+        normaliza a mayúsculas para el nombre del archivo, mismo criterio
+        ya usado por `save_markdown_report` y por la caché de datos
+        normalizados (ver `investmentops.data_layer.cache`).
+    content:
+        El texto HTML ya generado (típicamente la salida de
+        `render_html(result)`), escrito tal cual, sin modificarlo.
+    output_dir:
+        Ruta al directorio donde guardar el reporte. Si no se indica, se
+        resuelve desde `config.local.toml` (sección `[output]`, clave
+        `output_dir`, ver CONFIGURATION.md) — la misma carpeta que usa
+        `save_markdown_report`, ya que ambos formatos comparten
+        `[output].output_dir`.
+    config:
+        Configuración ya cargada, útil para pruebas sin depender de un
+        `config.local.toml` real en disco (ver `investmentops.config`).
+
+    Returns
+    -------
+    Path
+        La ruta del archivo `<TICKER>.html` escrito.
+
+    Raises
+    ------
+    ReportError
+        Si el ticker está vacío (o son solo espacios), o si ocurre un
+        fallo de E/S al crear el directorio de salida o al escribir el
+        archivo. Es la misma excepción ya usada por
+        `save_markdown_report` (definida en
+        `investmentops.reports.markdown`), reutilizada aquí en vez de
+        duplicarse (ver docstring del módulo).
+    ConfigError
+        Si `output_dir` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    if not ticker or not ticker.strip():
+        raise ReportError("El ticker no puede estar vacío.")
+
+    resolved_dir = _resolve_output_dir(output_dir, config)
+
+    try:
+        resolved_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ReportError(
+            f"No se pudo crear el directorio de reportes '{resolved_dir}': {exc}"
+        ) from exc
+
+    file_path = resolved_dir / f"{ticker.strip().upper()}.html"
+
+    try:
+        file_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise ReportError(
+            f"No se pudo escribir el archivo de reporte '{file_path}': {exc}"
+        ) from exc
+
+    return file_path
