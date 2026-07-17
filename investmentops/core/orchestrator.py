@@ -1,10 +1,12 @@
 """Orquestador mínimo — disparo de la consulta al proveedor de datos, paso
 de esos datos crudos a la capa de normalización, invocación secuencial de
 los agentes de análisis, ensamblado del "Resultado de investigación"
-final, y manejo de fallos parciales sin detener el resto del flujo.
+final, manejo de fallos parciales sin detener el resto del flujo, y
+generación de reportes (Markdown/HTML) tras ensamblar ese resultado.
 
-Cubre cinco tareas de TASKS.md, Fase 1, "Orquestador mínimo":
+Cubre seis tareas:
 
+Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
   proveedor de Fase 1." (`fetch_raw_data`, ya completada, ver PROGRESS.md).
 - "Implementar el paso de datos crudos a la capa de normalización."
@@ -17,11 +19,16 @@ Cubre cinco tareas de TASKS.md, Fase 1, "Orquestador mínimo":
   PROGRESS.md).
 - "Implementar el manejo de fallo del proveedor de datos o del proveedor
   de IA sin detener el resto del flujo, dejándolo explícito en el
-  resultado." (`investigate`, esta tarea).
+  resultado." (`investigate`, ya completada, ver PROGRESS.md).
 
-Las cinco funciones viven en el mismo módulo porque son piezas
+Fase 2, "Orquestador y CLI" (TASKS.md):
+- "Extender el orquestador para invocar los generadores de reporte tras
+  ensamblar el resultado de investigación." (`generate_reports`,
+  `investigate_and_generate_reports`, esta tarea).
+
+Las seis funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
-del flujo de una investigación", pasos 3-6).
+del flujo de una investigación", pasos 3-8).
 
 ## Manejo de fallos parciales (`investigate`)
 
@@ -45,13 +52,7 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
    agentes de análisis necesitan el modelo normalizado como entrada. En
    este caso se devuelve de inmediato un `ResearchResult` con
    `analysis_results=[]` y un único `ResearchFailure(stage="data_provider",
-   identifier=<ticker normalizado>, reason=<mensaje del error>)`. Esto
-   responde explícitamente la pregunta que `PROGRESS.md` dejó abierta
-   ("¿tiene sentido producir un `ResearchResult` en absoluto?"): sí, con
-   la etapa de datos marcada como fallida y ningún análisis disponible,
-   en vez de no devolver nada — conforme a ARCHITECTURE.md, "el reporte
-   final debe reflejar explícitamente qué información no pudo
-   obtenerse, en vez de fallar silenciosamente".
+   identifier=<ticker normalizado>, reason=<mensaje del error>)`.
 2. **Agentes de análisis, uno por uno**: si la normalización tuvo éxito,
    se invoca `analyze_financial_health` y, en un `try/except` **separado**,
    `analyze_valuation`. Un fallo de cualquiera de los dos
@@ -67,12 +68,49 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
    la función ya existente sin modificarla.
 
 `investigate` no reemplaza a `run_analysis_engines` ni a
-`fetch_and_normalize`: ambas se mantienen sin cambios, con su
-comportamiento "se detiene ante el primer fallo" documentado, para
-quien lo necesite explícitamente (ej. un script que sí quiera fallar
-rápido). `investigate` es la nueva pieza que sí ofrece resiliencia ante
-fallos parciales, componiendo las piezas ya existentes de una forma
-distinta (agente por agente, en vez de vía `run_analysis_engines`).
+`fetch_and_normalize`: ambas se mantienen sin cambios.
+
+## Generación de reportes (`generate_reports` / `investigate_and_generate_reports`)
+
+Esta tarea conecta el orquestador con los generadores de reporte ya
+implementados en Fase 2 (`investmentops.reports`: `render_markdown` /
+`save_markdown_report` y `render_html` / `save_html_report`), sin
+modificar el contrato ya existente de `investigate(ticker, ...) ->
+ResearchResult`: muchas piezas del sistema (CLI, pruebas de Fase 1) ya
+dependen de que `investigate` devuelva únicamente un `ResearchResult`,
+sin efectos secundarios de E/S. Reescribir esa función para que también
+escriba archivos habría sido un cambio de contrato innecesario para
+cumplir esta tarea.
+
+En su lugar, se agregan dos funciones nuevas, deliberadamente separadas:
+
+- **`generate_reports(result, ...)`**: recibe un `ResearchResult` ya
+  ensamblado (típicamente la salida de `investigate`) y genera + guarda
+  ambos formatos de reporte (Markdown y HTML), reutilizando sin
+  modificarlas las funciones ya existentes de `investmentops.reports`.
+  Devuelve las rutas de los archivos escritos, en el orden
+  `[markdown_path, html_path]`. No decide nada sobre cuándo debe
+  invocarse: es una pieza reutilizable tanto para el flujo normal de la
+  CLI como para cualquier otro caso de uso futuro (ej. Fase 7, "Registro
+  personal de investigaciones", que podría querer regenerar un reporte a
+  partir de un `ResearchResult` ya guardado).
+- **`investigate_and_generate_reports(ticker, ...)`**: función de
+  conveniencia que encadena `investigate(ticker, ...)` →
+  `generate_reports(result, ...)`, devolviendo la tupla `(result,
+  report_paths)`. Es la función pensada para que la use la CLI (tarea
+  separada y posterior, "Añadir al comando CLI la opción de formato de
+  salida" / "Implementar el mensaje final en consola indicando dónde
+  quedaron guardados los reportes generados"), sin que `investigate` en
+  sí mismo cambie de comportamiento para quien ya depende de él.
+
+Ninguna de las dos funciones traduce fallos de `generate_reports` (ej.
+`ReportError` si no se puede escribir en disco, `ConfigError` si no se
+puede resolver `[output].output_dir`): se propagan tal cual, ya que
+representan un problema de configuración/entorno (ruta de salida no
+escribible), no un fallo parcial de una fuente de datos o un agente de
+análisis (esos ya quedan reflejados dentro del propio `ResearchResult`,
+ver "Manejo de fallos parciales" arriba). Decidir cómo la CLI presenta
+ese tipo de fallo es alcance de una tarea posterior.
 
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
@@ -81,14 +119,17 @@ Fuera de alcance de este módulo (aún):
 - Leer o escribir la caché de datos normalizados
   (investmentops.data_layer.cache): fuera de alcance, igual que ya se
   documentó para `fetch_raw_data`/`fetch_and_normalize`.
-- Conectar `investigate` con la CLI: tarea separada y posterior (ver
-  TASKS.md, sección "CLI").
+- Conectar `investigate_and_generate_reports` con la CLI, la opción de
+  formato de salida (`--format`), y el mensaje final en consola con las
+  rutas de los reportes: tareas separadas y posteriores (ver TASKS.md,
+  Fase 2, "Orquestador y CLI").
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Sequence
 
 from investmentops.ai_providers import AgentProviderSelectionError, AIProviderError
@@ -117,6 +158,12 @@ from investmentops.data_providers.contracts import (
     RawProviderData,
 )
 from investmentops.data_providers.fundamentals import FMPFundamentalsProvider
+from investmentops.reports import (
+    render_html,
+    render_markdown,
+    save_html_report,
+    save_markdown_report,
+)
 
 
 def fetch_raw_data(
@@ -371,3 +418,118 @@ def investigate(
         )
 
     return assemble_research_result(ticker, analysis_results, failures=failures)
+
+
+def generate_reports(
+    result: ResearchResult,
+    *,
+    output_dir: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> list[Path]:
+    """Genera y guarda los reportes Markdown y HTML de un `ResearchResult`.
+
+    Reutiliza, sin modificarlas, las funciones ya implementadas en Fase 2
+    (`investmentops.reports`): `render_markdown`/`save_markdown_report` y
+    `render_html`/`save_html_report`. No introduce ninguna lógica de
+    renderizado ni de resolución de rutas nueva: esta función es solo el
+    punto de conexión entre el orquestador y los generadores de reporte
+    ya existentes (ver docstring del módulo, "Generación de reportes").
+
+    Parameters
+    ----------
+    result:
+        El `ResearchResult` ya ensamblado (típicamente la salida de
+        `investigate(...)`), a partir del cual se renderizan ambos
+        formatos de reporte.
+    output_dir:
+        Ruta al directorio donde guardar los reportes. Si no se indica,
+        cada generador la resuelve por su cuenta desde `config.local.toml`
+        (sección `[output].output_dir`, ver CONFIGURATION.md), igual
+        criterio ya usado por `save_markdown_report`/`save_html_report`.
+    config:
+        Configuración ya cargada, propagada a ambos generadores. Útil
+        para pruebas, para no depender de un `config.local.toml` real en
+        disco.
+
+    Returns
+    -------
+    list[Path]
+        Las rutas de los archivos escritos, en el orden
+        ``[markdown_path, html_path]``.
+
+    Raises
+    ------
+    ReportError
+        Si el ticker de `result.company` está vacío, o si ocurre un
+        fallo de E/S al crear el directorio de salida o al escribir
+        alguno de los dos archivos (ver
+        `investmentops.reports.markdown.ReportError`).
+    ConfigError
+        Si `output_dir` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    ticker = result.company.ticker
+
+    markdown_content = render_markdown(result)
+    markdown_path = save_markdown_report(
+        ticker, markdown_content, output_dir=output_dir, config=config
+    )
+
+    html_content = render_html(result)
+    html_path = save_html_report(
+        ticker, html_content, output_dir=output_dir, config=config
+    )
+
+    return [markdown_path, html_path]
+
+
+def investigate_and_generate_reports(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: DataProvider | None = None,
+    output_dir: str | Path | None = None,
+) -> tuple[ResearchResult, list[Path]]:
+    """Ejecuta `investigate(...)` y genera+guarda sus reportes (Markdown y HTML).
+
+    Función de conveniencia que encadena `investigate(ticker, ...)` con
+    `generate_reports(result, ...)`, pensada para que la use la CLI (ver
+    TASKS.md, Fase 2, "Orquestador y CLI", tareas siguientes sobre la
+    opción de formato de salida y el mensaje final en consola). No
+    modifica el comportamiento de `investigate(...)` en sí mismo: quien ya
+    depende de esa función (ej. `investmentops.cli.dispatch`, ver
+    docstring del módulo) sigue recibiendo únicamente un `ResearchResult`,
+    sin efectos secundarios de E/S.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a investigar, propagado tal cual a
+        `investigate(...)`.
+    config:
+        Configuración ya cargada, propagada tanto a `investigate(...)`
+        como a `generate_reports(...)`.
+    provider:
+        Proveedor de datos ya construido, propagado a `investigate(...)`.
+    output_dir:
+        Ruta al directorio donde guardar los reportes, propagada a
+        `generate_reports(...)`.
+
+    Returns
+    -------
+    tuple[ResearchResult, list[Path]]
+        El `ResearchResult` ensamblado (incluyendo cualquier
+        `ResearchFailure` parcial, ver `investigate`) y las rutas de los
+        reportes generados a partir de él (ver `generate_reports`).
+
+    Raises
+    ------
+    ReportError, ConfigError
+        Ver `generate_reports`. `investigate(...)` en sí mismo no deja
+        escapar `DataProviderError`, `NormalizationError`, `PromptError`,
+        `AgentProviderSelectionError` ni `AIProviderError` (ver su propio
+        docstring).
+    """
+    result = investigate(ticker, config=config, provider=provider)
+    report_paths = generate_reports(result, output_dir=output_dir, config=config)
+    return result, report_paths
