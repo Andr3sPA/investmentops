@@ -8,8 +8,9 @@ Responsabilidad (ver ARCHITECTURE.md, componente 1):
 - No contiene lógica financiera ni de formateo de reportes; todo eso se
   delega a las capas correspondientes.
 
-Cubre cuatro tareas de TASKS.md, Fase 1, "CLI":
+Cubre cinco tareas:
 
+Fase 1, "CLI" (TASKS.md):
 - "Implementar el parseo del argumento ticker." (`build_parser`,
   `parse_args`), siguiendo la sintaxis ya decidida y documentada en
   `investmentops/cli/CLI.md`: un único subcomando, `investigate`, con un
@@ -20,8 +21,17 @@ Cubre cuatro tareas de TASKS.md, Fase 1, "CLI":
 - "Implementar la impresión en consola del resultado (texto simple, sin
   formato de reporte todavía)." (`format_research_result`).
 
+Fase 2, "Orquestador y CLI" (TASKS.md):
+- "Añadir al comando CLI la opción de formato de salida (markdown, html,
+  o ambos)." — flag `--format` sobre el subcomando `investigate`
+  (`build_parser`), consumido por `dispatch` para generar los reportes
+  solicitados vía `investmentops.core.orchestrator.investigate_and_generate_reports`.
+
 ```
 python -m investmentops investigate TICKER
+python -m investmentops investigate TICKER --format markdown
+python -m investmentops investigate TICKER --format html
+python -m investmentops investigate TICKER --format both
 ```
 
 ## Parseo (`build_parser`/`parse_args`)
@@ -35,6 +45,14 @@ devuelve el resultado ya parseado.
   `investmentops.data_providers.fundamentals.FMPFundamentalsProvider.fetch`
   y `investmentops.core.orchestrator.assemble_research_result`), conforme
   a `CLI.md`: "no es responsabilidad de la capa CLI".
+- **`--format`** es un flag opcional del subcomando `investigate`, con
+  `choices` restringidos a `"markdown"`, `"html"` y `"both"` (validados
+  nativamente por `argparse`: un valor fuera de esa lista termina el
+  proceso con `SystemExit`, mismo mecanismo ya usado para el resto de
+  errores de parseo de esta CLI). Su valor por defecto es `None`
+  (ausente): si el usuario no pide un formato, `args.format` es `None`
+  y `dispatch` se comporta exactamente igual que en la Fase 1 (sin
+  generar ningún archivo de reporte).
 
 ## Validación básica (`_validate_ticker`)
 
@@ -44,7 +62,8 @@ nativo que ya usa `argparse` para exigir que el argumento posicional
 `argparse.ArgumentTypeError`, `argparse` lo traduce automáticamente a un
 mensaje de error en `stderr` y un `SystemExit`, igual comportamiento que
 ya tienen los demás errores de parseo de esta CLI (ticker ausente,
-subcomando ausente/desconocido, ver `investmentops/tests/test_cli.py`).
+subcomando ausente/desconocido, formato desconocido, ver
+`investmentops/tests/test_cli.py`).
 
 "Formato esperado", en el alcance de esta tarea, es deliberadamente
 mínimo: no vacío y no compuesto solo de espacios en blanco. No se aplica
@@ -58,72 +77,65 @@ mercado colombiano como `"ECOPETROL.CL"`).
 
 `dispatch(args, ...)` recibe el `argparse.Namespace` ya producido por
 `parse_args` y lo traduce a una llamada real al orquestador
-(`investmentops.core.orchestrator.investigate`). Es, deliberadamente,
-**solo la conexión**:
+(`investmentops.core.orchestrator`). Su comportamiento depende de
+`args.format`:
 
-- Para el subcomando `investigate`, invoca
-  `investigate(args.ticker, config=config, provider=provider)` y
-  devuelve el `ResearchResult` obtenido tal cual, sin transformarlo.
-- **No imprime nada en consola** (eso es responsabilidad de
-  `format_research_result`, ver más abajo, y de quien invoque `dispatch`,
-  ver `investmentops/__main__.py`).
-- **No traduce ni maneja ningún error.** `investigate(...)` ya no deja
-  escapar `DataProviderError`, `NormalizationError`, `PromptError`,
-  `AgentProviderSelectionError` ni `AIProviderError` (los captura
-  internamente como `ResearchFailure` dentro del propio
-  `ResearchResult`, ver `investmentops/core/orchestrator.py`); lo que
-  puede seguir escapando (ej. `ConfigError` si falta
-  `config.local.toml`) se propaga tal cual desde `dispatch`. Decidir
-  qué mensaje legible mostrar ante ese tipo de fallo es la tarea
-  siguiente ("Implementar mensajes de error legibles en consola ante
-  fallos del flujo").
-- `config` y `provider` son parámetros opcionales que se propagan
-  directamente a `investigate(...)`, pensados sobre todo para pruebas
-  (para no depender de un `config.local.toml` real en disco ni de un
-  proveedor de datos real). En uso normal (`python -m investmentops
-  investigate TICKER`), ambos se dejan en `None` y `investigate` resuelve
-  la configuración real y el proveedor por defecto (FMP) por sí mismo.
-- Si `args.command` no es un comando reconocido, levanta `ValueError`:
-  esto no debería ocurrir en la práctica, ya que `parse_args` ya exige
-  (vía `argparse`, `required=True` en los subparsers) que `command` sea
-  uno de los subcomandos definidos; es una salvaguarda defensiva, no un
-  camino esperado del flujo normal.
+- **`args.format is None`** (comportamiento histórico, sin cambios):
+  invoca `investigate(args.ticker, config=config, provider=provider)` y
+  devuelve el `ResearchResult` obtenido tal cual, sin transformarlo. No
+  se genera ningún archivo. Este es el único camino que existía antes de
+  esta tarea, y sigue siendo exactamente igual para cualquier llamador
+  que no use `--format` (ver `investmentops/tests/test_cli_dispatch.py`,
+  todas sus llamadas a `dispatch` siguen devolviendo un `ResearchResult`
+  sin modificación alguna).
+- **`args.format` es `"markdown"`, `"html"` o `"both"`** (nuevo en esta
+  tarea): invoca
+  `investigate_and_generate_reports(args.ticker, config=config,
+  provider=provider, output_dir=output_dir, formats=<mapeo>)` (ver
+  `_FORMAT_TO_REPORT_FORMATS` más abajo), y devuelve la tupla
+  `(ResearchResult, list[Path])` que esa función produce. `dispatch`
+  amplía así su tipo de retorno a `ResearchResult | tuple[ResearchResult,
+  list[Path]]`, condicionado estrictamente a si el usuario pidió un
+  formato de salida.
+
+En ambos casos:
+- **No imprime nada en consola** (eso sigue siendo responsabilidad de
+  `format_research_result`, y de quien invoque `dispatch`, ver
+  `investmentops/__main__.py`). Presentar en consola las rutas de los
+  reportes generados cuando `dispatch` devuelve la tupla es alcance de
+  la tarea siguiente ("Implementar el mensaje final en consola
+  indicando dónde quedaron guardados los reportes generados",
+  TASKS.md); `investmentops/__main__.py` **no se modificó** en esta
+  tarea, por lo que invocar la CLI real con `--format` hoy generará los
+  archivos correctamente pero `main()` todavía no sabe presentar la
+  tupla resultante (se actualizará en la tarea siguiente).
+- **No traduce ni maneja ningún error adicional** más allá de lo que ya
+  hacían `investigate`/`investigate_and_generate_reports` (ver sus
+  propios docstrings): `DataProviderError`, `NormalizationError`,
+  `PromptError`, `AgentProviderSelectionError` y `AIProviderError` ya
+  quedan reflejados como `ResearchFailure` dentro del propio
+  `ResearchResult`; lo que puede seguir escapando (ej. `ConfigError` si
+  falta `config.local.toml`, o `ReportError` si no se puede escribir el
+  reporte en disco) se propaga tal cual desde `dispatch`.
+- `config`, `provider` y `output_dir` son parámetros opcionales que se
+  propagan directamente al orquestador, pensados sobre todo para pruebas.
+- Si `args.command` no es un comando reconocido, levanta `ValueError`
+  (salvaguarda defensiva, no debería ocurrir en la práctica).
 
 ## Impresión en consola (`format_research_result`)
 
-`format_research_result(result)` traduce un `ResearchResult` (la salida
-de `dispatch`/`investigate`) a un texto simple y legible, pensado para
-imprimirse directamente en consola (`print(format_research_result(result))`).
-Es deliberadamente texto plano sin formato de reporte (Markdown/HTML son
-capacidades de la Fase 2, ver `ROADMAP.md`):
+`format_research_result(result)` traduce un `ResearchResult` (no la
+tupla que `dispatch` puede devolver cuando se pide `--format`; ver
+arriba) a un texto simple y legible, pensado para imprimirse
+directamente en consola. Sin cambios en esta tarea; ver la sección
+completa en versiones anteriores de este docstring o el código de la
+función.
 
-- Encabezado con el ticker de la empresa (`result.company.ticker`) y la
-  fecha de ensamblado (`result.generated_at`).
-- Por cada `AnalysisResult` en `result.analysis_results`, en el orden en
-  que ya vienen (salud financiera → valoración, ver
-  `investmentops.core.orchestrator.run_analysis_engines`/`investigate`):
-  su `analysis_id`, sus `findings` (texto de interpretación de la IA),
-  sus `supporting_metrics` (métricas calculadas de forma
-  determinística), sus `limitations` (si las hay) y el
-  proveedor/modelo de IA que generó la interpretación
-  (`AnalysisProvenance`).
-- Si `result.analysis_results` está vacío, lo indica explícitamente en
-  vez de imprimir una sección vacía en silencio.
-- Si `result.failures` no está vacío, una sección final que lista cada
-  `ResearchFailure` (`stage`, `identifier`, `reason`), conforme a
-  `ARCHITECTURE.md`, "Manejo de errores y limitaciones": el fallo debe
-  quedar explícito, no omitido.
-
-Esta función solo formatea; no imprime nada por sí misma (`print(...)` es
-responsabilidad de quien la invoque, ver `investmentops/__main__.py`) ni
-decide qué hacer ante errores que `dispatch` pueda dejar escapar (ej.
-`ConfigError`): eso es la tarea siguiente ("Implementar mensajes de error
-legibles en consola ante fallos del flujo").
-
-Fuera de alcance de este módulo (aún, ver TASKS.md, sección "CLI"):
-- Los mensajes de error legibles ante fallos del flujo (más allá del
-  mensaje estándar que ya produce `argparse` ante un ticker inválido, o
-  de que una excepción como `ConfigError` se propague sin traducir).
+Fuera de alcance de este módulo (aún, ver TASKS.md, sección "CLI" /
+"Orquestador y CLI"):
+- El mensaje final en consola indicando dónde quedaron guardados los
+  reportes generados cuando se usa `--format` (tarea separada y
+  siguiente).
 - Los subcomandos de fases posteriores (comparar, listar investigaciones,
   watchlist, ver `ROADMAP.md`, Fases 5, 7 y 8): no se anticipan aquí,
   siguiendo el mismo criterio de no sobre-diseñar ya aplicado en el resto
@@ -133,9 +145,10 @@ Fuera de alcance de este módulo (aún, ver TASKS.md, sección "CLI"):
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Any, Sequence
 
-from investmentops.core.orchestrator import investigate
+from investmentops.core.orchestrator import investigate, investigate_and_generate_reports
 from investmentops.core.research_result import ResearchResult
 from investmentops.data_providers.contracts import DataProvider
 
@@ -143,6 +156,20 @@ from investmentops.data_providers.contracts import DataProvider
 #: con la forma de invocación ya fijada en `investmentops/cli/CLI.md`:
 #: `python -m investmentops <subcomando> [argumentos]`.
 PROG_NAME = "investmentops"
+
+#: Mapeo del valor recibido en `--format` (tal como lo restringe
+#: `choices` en `build_parser`) a los formatos concretos que debe generar
+#: `investmentops.core.orchestrator.generate_reports`/
+#: `investigate_and_generate_reports` (parámetro `formats`, ver ese
+#: módulo). `"both"` no es un formato de reporte en sí mismo — es un
+#: alias de conveniencia de la CLI para "ambos formatos existentes" — por
+#: lo que este mapeo, y no `ALL_REPORT_FORMATS` directamente, es lo que
+#: traduce el vocabulario de la CLI al vocabulario del orquestador.
+_FORMAT_TO_REPORT_FORMATS: dict[str, tuple[str, ...]] = {
+    "markdown": ("markdown",),
+    "html": ("html",),
+    "both": ("markdown", "html"),
+}
 
 
 def _validate_ticker(value: str) -> str:
@@ -187,8 +214,10 @@ def build_parser() -> argparse.ArgumentParser:
     Implementa la estructura de subcomandos (`argparse` con
     `add_subparsers`) ya decidida en `investmentops/cli/CLI.md`. En esta
     fase existe un único subcomando, `investigate`, con un argumento
-    posicional obligatorio `ticker`, validado mediante `_validate_ticker`
-    (no vacío, no solo espacios). Subcomandos futuros (comparar, listar
+    posicional obligatorio `ticker` (validado mediante `_validate_ticker`:
+    no vacío, no solo espacios) y un flag opcional `--format` (valores
+    admitidos: `markdown`, `html`, `both`; por defecto ausente, sin
+    generar ningún reporte). Subcomandos futuros (comparar, listar
     investigaciones, watchlist) se añadirán aquí como subparsers
     adicionales, sin modificar este, cuando les corresponda su propia
     tarea (ver `CLI.md`, "Decisión: subcomandos").
@@ -217,6 +246,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=_validate_ticker,
         help="Ticker de la empresa a investigar (ej. AAPL, ECOPETROL.CL).",
     )
+    investigate_parser.add_argument(
+        "--format",
+        choices=sorted(_FORMAT_TO_REPORT_FORMATS),
+        default=None,
+        help=(
+            "Genera y guarda en disco el reporte de la investigación en "
+            "el formato indicado ('markdown', 'html', o 'both' para "
+            "ambos), además de la salida en consola. Si se omite, no se "
+            "genera ningún archivo de reporte."
+        ),
+    )
 
     return parser
 
@@ -235,17 +275,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     -------
     argparse.Namespace
         El resultado del parseo. Para el subcomando `investigate`, expone
-        `command == "investigate"` y `ticker` (el valor tal cual se
+        `command == "investigate"`, `ticker` (el valor tal cual se
         recibió, ya validado como no vacío/no solo espacios por
         `_validate_ticker`, pero sin normalizar, ver docstring del
-        módulo).
+        módulo) y `format` (`"markdown"`, `"html"`, `"both"`, o `None`
+        si no se indicó `--format`).
 
     Raises
     ------
     SystemExit
         Comportamiento estándar de `argparse` si falta el subcomando, si
         falta el argumento posicional `ticker`, si el ticker está vacío o
-        es solo espacios (ver `_validate_ticker`), o si se pasa
+        es solo espacios (ver `_validate_ticker`), si `--format` recibe
+        un valor fuera de `{"markdown", "html", "both"}`, o si se pasa
         `--help`/`-h` (imprime ayuda/error y termina el proceso). Este
         módulo no atrapa ni traduce esa excepción: es el mecanismo de
         error nativo de `argparse`, consistente con una CLI estándar.
@@ -259,37 +301,51 @@ def dispatch(
     *,
     config: dict[str, Any] | None = None,
     provider: DataProvider | None = None,
-) -> ResearchResult:
-    """Conecta el comando ya parseado con el orquestador (`investigate`).
+    output_dir: str | Path | None = None,
+) -> ResearchResult | tuple[ResearchResult, list[Path]]:
+    """Conecta el comando ya parseado con el orquestador.
 
     Traduce el `argparse.Namespace` producido por `parse_args` en una
-    llamada real a `investmentops.core.orchestrator.investigate`. Ver
+    llamada real al orquestador (`investmentops.core.orchestrator`). Ver
     "Conexión con el orquestador (`dispatch`)" en el docstring del
-    módulo para el alcance exacto de esta tarea (solo la conexión: sin
-    impresión en consola ni manejo/traducción de errores adicional).
+    módulo para el alcance exacto de esta función, incluyendo el nuevo
+    comportamiento condicionado a `args.format` (ver esa sección para la
+    explicación completa; resumen abajo).
 
     Parameters
     ----------
     args:
         El `argparse.Namespace` ya parseado y validado (ver
         `parse_args`). Para el único subcomando existente
-        (`"investigate"`), se espera que exponga `args.ticker`.
+        (`"investigate"`), se espera que exponga `args.ticker` y
+        `args.format` (`None` si no se pidió `--format`).
     config:
-        Configuración ya cargada, propagada tal cual a `investigate(...)`.
+        Configuración ya cargada, propagada tal cual a
+        `investigate(...)`/`investigate_and_generate_reports(...)`.
         Pensado sobre todo para pruebas, para no depender de un
-        `config.local.toml` real en disco. Si no se indica,
-        `investigate` resuelve la configuración real por sí mismo.
+        `config.local.toml` real en disco. Si no se indica, el
+        orquestador resuelve la configuración real por sí mismo.
     provider:
-        Proveedor de datos ya construido, propagado tal cual a
-        `investigate(...)`. Pensado sobre todo para pruebas. Si no se
-        indica, `investigate` usa el proveedor por defecto (FMP).
+        Proveedor de datos ya construido, propagado tal cual al
+        orquestador. Pensado sobre todo para pruebas. Si no se indica, el
+        orquestador usa el proveedor por defecto (FMP).
+    output_dir:
+        Ruta al directorio donde guardar los reportes generados, si
+        `args.format` no es `None`. Se ignora por completo si
+        `args.format` es `None` (no se genera ningún reporte). Si no se
+        indica, `generate_reports` la resuelve desde `config.local.toml`
+        (sección `[output].output_dir`, ver CONFIGURATION.md).
 
     Returns
     -------
-    ResearchResult
-        El resultado de investigación devuelto por `investigate(...)`,
-        sin transformar (puede incluir `failures` si algo falló
-        parcialmente; ver `investmentops.core.research_result`).
+    ResearchResult | tuple[ResearchResult, list[Path]]
+        - Si `args.format is None`: el `ResearchResult` devuelto por
+          `investigate(...)`, sin transformar (comportamiento idéntico al
+          de la Fase 1).
+        - Si `args.format` es `"markdown"`, `"html"` o `"both"`: la tupla
+          `(ResearchResult, list[Path])` devuelta por
+          `investigate_and_generate_reports(...)`, con las rutas de los
+          reportes ya generados y guardados en disco.
 
     Raises
     ------
@@ -297,9 +353,24 @@ def dispatch(
         Si `args.command` no es un comando reconocido (salvaguarda
         defensiva; no debería ocurrir en la práctica, ya que
         `build_parser` exige un subcomando válido mediante `argparse`).
+    ReportError, ConfigError
+        Si `args.format` no es `None`, ver
+        `investmentops.core.orchestrator.generate_reports` para los
+        fallos que puede levantar la generación de reportes.
     """
     if args.command == "investigate":
-        return investigate(args.ticker, config=config, provider=provider)
+        requested_format = getattr(args, "format", None)
+
+        if requested_format is None:
+            return investigate(args.ticker, config=config, provider=provider)
+
+        return investigate_and_generate_reports(
+            args.ticker,
+            config=config,
+            provider=provider,
+            output_dir=output_dir,
+            formats=_FORMAT_TO_REPORT_FORMATS[requested_format],
+        )
 
     raise ValueError(f"Comando desconocido: {args.command!r}")
 
@@ -309,9 +380,12 @@ def format_research_result(result: ResearchResult) -> str:
 
     Cubre la tarea "Implementar la impresión en consola del resultado
     (texto simple, sin formato de reporte todavía)" (TASKS.md, Fase 1,
-    "CLI"). Ver "Impresión en consola (`format_research_result`)" en el
-    docstring del módulo para el detalle completo de qué incluye cada
-    sección.
+    "CLI"). Espera un `ResearchResult`, no la tupla que `dispatch` puede
+    devolver cuando `args.format` no es `None` (ver docstring de
+    `dispatch`); presentar esa tupla, incluyendo las rutas de los
+    reportes generados, es alcance de la tarea siguiente ("Implementar
+    el mensaje final en consola indicando dónde quedaron guardados los
+    reportes generados").
 
     Esta función solo produce el texto: no imprime nada por sí misma
     (`print(format_research_result(result))` es responsabilidad de quien
@@ -320,8 +394,7 @@ def format_research_result(result: ResearchResult) -> str:
     Parameters
     ----------
     result:
-        El `ResearchResult` a formatear, típicamente la salida de
-        `dispatch(...)`/`investigate(...)`.
+        El `ResearchResult` a formatear.
 
     Returns
     -------

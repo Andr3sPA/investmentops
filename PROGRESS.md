@@ -4,88 +4,104 @@
 
 ## Última tarea completada
 
-Fase 2 → Orquestador y CLI → *"Extender el orquestador para invocar los
-generadores de reporte tras ensamblar el resultado de investigación."*
+Fase 2 → Orquestador y CLI → *"Añadir al comando CLI la opción de
+formato de salida (markdown, html, o ambos)."*
 
 ## Verificación previa (sin duplicar trabajo)
 
-Se confirmó que esta tarea **no** estaba satisfecha: `investigate(...)`
-(`investmentops/core/orchestrator.py`) devuelve únicamente un
-`ResearchResult`, sin ningún efecto secundario de E/S; nada en el
-orquestador invocaba todavía `investmentops.reports.render_markdown`/
-`render_html`/`save_markdown_report`/`save_html_report` (todos ya
-implementados y probados en tareas anteriores de esta misma fase).
+Se confirmó que esta tarea **no** estaba satisfecha: `build_parser`
+(`investmentops/cli/__init__.py`) solo declaraba el argumento posicional
+`ticker` en el subcomando `investigate`, sin ningún flag de formato de
+salida; `dispatch` invocaba siempre `investigate(...)` sin conexión
+alguna a `generate_reports`/`investigate_and_generate_reports` (ya
+implementadas en la tarea anterior).
 
 ## Qué se implementó
 
-**`investmentops/core/orchestrator.py`** (modificado): se agregan dos
-funciones nuevas, sin modificar ninguna de las cinco ya existentes
-(`fetch_raw_data`, `fetch_and_normalize`, `run_analysis_engines`,
-`assemble_research_result`, `investigate`):
+**`investmentops/core/orchestrator.py`** (modificado): `generate_reports`
+e `investigate_and_generate_reports` ganan un parámetro opcional nuevo,
+`formats: Sequence[str] | None = None`:
 
-- `generate_reports(result, *, output_dir=None, config=None) -> list[Path]`:
-  recibe un `ResearchResult` ya ensamblado y genera + guarda ambos
-  formatos de reporte, reutilizando **sin modificarlas** las funciones
-  ya existentes de `investmentops.reports`
-  (`render_markdown`/`save_markdown_report` y
-  `render_html`/`save_html_report`). Devuelve las rutas escritas en el
-  orden `[markdown_path, html_path]`. Es la pieza reutilizable para
-  cualquier caso de uso futuro que ya tenga un `ResearchResult` a mano
-  (no solo el flujo de `investigate`, ej. una futura Fase 7 que
-  regenere un reporte desde el histórico).
-- `investigate_and_generate_reports(ticker, *, config=None, provider=None, output_dir=None) -> tuple[ResearchResult, list[Path]]`:
-  función de conveniencia que encadena `investigate(ticker, ...)` →
-  `generate_reports(result, ...)`, devolviendo la tupla
-  `(ResearchResult, list[Path])`. Es la función pensada para que la use
-  la CLI en las dos tareas siguientes de esta misma sección
-  ("--format" y el mensaje final en consola).
+- `formats=None` (por defecto): comportamiento histórico exacto — genera
+  **ambos** formatos, en el orden `[markdown_path, html_path]`. Ningún
+  llamador existente (incluyendo todas las pruebas de
+  `test_core_orchestrator_reports.py`) cambia de comportamiento.
+- `formats=("markdown",)` / `("html",)`: genera únicamente ese formato.
+- El orden de la lista devuelta es siempre `[markdown_path, html_path]`
+  cuando ambos formatos están presentes en `formats`, sin importar el
+  orden en que se hayan pedido.
+- `formats` vacío o con un valor desconocido (distinto de `"markdown"`/
+  `"html"`) levanta `ValueError`.
+- Se agregó la constante `ALL_REPORT_FORMATS = ("markdown", "html")`
+  como fuente única de verdad de los formatos soportados y su orden.
 
-**Decisión de diseño clave (documentada en el docstring del módulo):**
-`investigate(ticker, ...) -> ResearchResult` **no se modificó**. Varias
-piezas del sistema ya dependen de que esa función devuelva únicamente un
-`ResearchResult` sin efectos secundarios de E/S (`investmentops.cli.dispatch`,
-y todas las pruebas de Fase 1 en `test_core_orchestrator.py`,
-`test_cli_dispatch.py`, `test_main.py`). Cambiar su contrato para que
-también escribiera archivos habría sido una ruptura innecesaria solo
-para cumplir esta tarea; en su lugar, se agregaron las dos funciones
-nuevas descritas arriba, dejando `investigate` intacto para quien ya lo
-usa, y ofreciendo el flujo extendido (investigación + reportes) como una
-opción explícita y separada.
+**`investmentops/cli/__init__.py`** (modificado):
 
-**`investmentops/tests/test_core_orchestrator_reports.py`** (nuevo):
-pruebas para `generate_reports` e `investigate_and_generate_reports`:
-rutas devueltas en el orden correcto (`[markdown_path, html_path]`),
-contenido de ambos archivos coincide con lo ya probado para
-`render_markdown`/`render_html`, funciona también cuando el
-`ResearchResult` solo tiene fallos parciales (sin `analysis_results`,
-mismo comportamiento ya usado por los generadores para secciones
-vacías), resolución de `output_dir` desde `config.local.toml` cuando no
-se indica explícitamente (reutilizando el mismo mecanismo ya probado en
-`test_reports_markdown_save.py`/`test_reports_html_save.py`), y que
-`investigate_and_generate_reports` sigue funcionando con solo `ticker` +
-`provider` (sin `config` ni `output_dir` explícitos).
+- `build_parser`: se agrega el flag opcional `--format` al subcomando
+  `investigate`, con `choices=["both", "html", "markdown"]` (orden
+  alfabético de `argparse`, sin relevancia funcional) y `default=None`.
+- `dispatch`: su tipo de retorno se amplía a
+  `ResearchResult | tuple[ResearchResult, list[Path]]`, condicionado
+  estrictamente a `args.format`:
+  - `args.format is None` → comportamiento idéntico a antes de esta
+    tarea: llama a `investigate(...)` y devuelve el `ResearchResult` sin
+    transformar. **Todas** las pruebas ya existentes de
+    `test_cli_dispatch.py` y `test_main.py` siguen pasando sin
+    modificación, ya que ninguna pasa `--format`.
+  - `args.format` es `"markdown"`/`"html"`/`"both"` → llama a
+    `investigate_and_generate_reports(...)` (mapeando el valor de
+    `--format` a la tupla de formatos concreta vía el diccionario
+    `_FORMAT_TO_REPORT_FORMATS`) y devuelve la tupla
+    `(ResearchResult, list[Path])` que esa función produce.
+  - Se agregó un nuevo parámetro `output_dir` a `dispatch`, propagado
+    solo cuando se genera un reporte (se ignora si `args.format is
+    None`).
+
+**Decisión de diseño clave (documentada en los docstrings de ambos
+módulos):** `investmentops/__main__.py` **no se modificó** en esta
+tarea. La presentación en consola de las rutas de los reportes generados
+(cuando `dispatch` devuelve la tupla) es, explícitamente, la tarea
+siguiente ("Implementar el mensaje final en consola indicando dónde
+quedaron guardados los reportes generados"). Invocar hoy la CLI real con
+`--format` genera los archivos correctamente en disco, pero `main()`
+todavía no sabe manejar el valor tupla que `dispatch` devolvería en ese
+caso (se resolverá en la tarea siguiente).
+
+**Archivos de prueba nuevos:**
+- `investmentops/tests/test_cli_format.py`: parseo de `--format`
+  (valores válidos, valor inválido → `SystemExit`, valor por defecto
+  `None`), y `dispatch` con cada valor de `--format` (verifica archivos
+  generados en disco, orden de rutas, y que un fallo de la fuente de
+  datos igual permite generar los reportes).
+- `investmentops/tests/test_core_orchestrator_report_formats.py`:
+  parámetro `formats` de `generate_reports` (formato único, orden
+  independiente del orden de entrada, errores por `formats` vacío/
+  desconocido, y regresión explícita del comportamiento por defecto).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_core_orchestrator_reports.py`
+- `investmentops/tests/test_cli_format.py`
+- `investmentops/tests/test_core_orchestrator_report_formats.py`
 
 Modificados:
-- `investmentops/core/orchestrator.py` (se agregan `generate_reports` e
-  `investigate_and_generate_reports`; docstring del módulo actualizado
-  para reflejar la tarea nueva y la decisión de no modificar
-  `investigate`)
-- `TASKS.md` (tarea "Extender el orquestador para invocar los
-  generadores de reporte tras ensamblar el resultado de investigación"
-  marcada como completada, Fase 2, "Orquestador y CLI")
+- `investmentops/core/orchestrator.py` (parámetro `formats` nuevo en
+  `generate_reports`/`investigate_and_generate_reports`; constante
+  `ALL_REPORT_FORMATS`; docstring del módulo actualizado)
+- `investmentops/cli/__init__.py` (flag `--format` en `build_parser`;
+  `dispatch` amplía su tipo de retorno condicionado a `args.format`;
+  nuevo parámetro `output_dir`; docstring del módulo actualizado)
+- `TASKS.md` (tarea marcada como completada, Fase 2, "Orquestador y
+  CLI")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
 `CONFIGURATION.md`, `config.example.toml`,
 `investmentops/reports/markdown.py`, `investmentops/reports/html.py`,
-`investmentops/reports/__init__.py`, `investmentops/cli/__init__.py`,
-`investmentops/__main__.py`, ningún otro módulo de código Python
-existente, ningún otro archivo de pruebas existente.
+`investmentops/reports/__init__.py`, `investmentops/__main__.py`,
+ningún otro módulo de código Python existente, ningún otro archivo de
+pruebas existente (en particular, `test_cli_dispatch.py` y
+`test_main.py` no requirieron ningún cambio).
 
 ## Problemas encontrados
 
@@ -95,15 +111,14 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Fase 2 → Orquestador y CLI → *"Añadir al comando CLI la opción de
-formato de salida (markdown, html, o ambos)."*
+Fase 2 → Orquestador y CLI → *"Implementar el mensaje final en consola
+indicando dónde quedaron guardados los reportes generados."*
 
-Esa tarea probablemente querrá extender `build_parser`/`dispatch`
-(`investmentops/cli/__init__.py`) con un flag `--format` sobre el
-subcomando `investigate`, y conectar `dispatch` con
-`investigate_and_generate_reports` (ya implementada en esta tarea) en
-vez de `investigate` a secas, cuando el usuario pida generación de
-reportes. Justo después queda la última tarea de esta sección:
-"Implementar el mensaje final en consola indicando dónde quedaron
-guardados los reportes generados", que reutilizaría las rutas ya
-devueltas por `generate_reports`/`investigate_and_generate_reports`.
+Esa tarea deberá actualizar `investmentops/__main__.py::main` para
+detectar cuándo `dispatch(args, ...)` devuelve la tupla
+`(ResearchResult, list[Path])` (es decir, cuando `args.format is not
+None`) en vez de un `ResearchResult` a secas, imprimir
+`format_research_result(result)` igual que hoy, y agregar a continuación
+una línea (o sección) indicando las rutas de los archivos ya escritos
+(`paths`, ya devueltas por `dispatch`/`investigate_and_generate_reports`
+en esta tarea).

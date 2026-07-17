@@ -4,7 +4,7 @@ los agentes de análisis, ensamblado del "Resultado de investigación"
 final, manejo de fallos parciales sin detener el resto del flujo, y
 generación de reportes (Markdown/HTML) tras ensamblar ese resultado.
 
-Cubre seis tareas:
+Cubre siete tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -24,9 +24,14 @@ Fase 1, "Orquestador mínimo" (TASKS.md):
 Fase 2, "Orquestador y CLI" (TASKS.md):
 - "Extender el orquestador para invocar los generadores de reporte tras
   ensamblar el resultado de investigación." (`generate_reports`,
-  `investigate_and_generate_reports`, esta tarea).
+  `investigate_and_generate_reports`, ya completada, ver PROGRESS.md).
+- "Añadir al comando CLI la opción de formato de salida (markdown, html,
+  o ambos)." — Esta tarea extiende `generate_reports`/
+  `investigate_and_generate_reports` con un parámetro `formats` opcional,
+  consumido por `investmentops.cli.dispatch` (ver ese módulo) para
+  generar solo el/los formato(s) que el usuario pidió por CLI.
 
-Las seis funciones viven en el mismo módulo porque son piezas
+Las siete funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
 del flujo de una investigación", pasos 3-8).
 
@@ -72,45 +77,65 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
 
 ## Generación de reportes (`generate_reports` / `investigate_and_generate_reports`)
 
-Esta tarea conecta el orquestador con los generadores de reporte ya
-implementados en Fase 2 (`investmentops.reports`: `render_markdown` /
+Conecta el orquestador con los generadores de reporte ya implementados
+en Fase 2 (`investmentops.reports`: `render_markdown` /
 `save_markdown_report` y `render_html` / `save_html_report`), sin
 modificar el contrato ya existente de `investigate(ticker, ...) ->
 ResearchResult`: muchas piezas del sistema (CLI, pruebas de Fase 1) ya
 dependen de que `investigate` devuelva únicamente un `ResearchResult`,
 sin efectos secundarios de E/S. Reescribir esa función para que también
-escriba archivos habría sido un cambio de contrato innecesario para
-cumplir esta tarea.
+escriba archivos habría sido un cambio de contrato innecesario.
 
-En su lugar, se agregan dos funciones nuevas, deliberadamente separadas:
+En su lugar, existen dos funciones separadas:
 
 - **`generate_reports(result, ...)`**: recibe un `ResearchResult` ya
   ensamblado (típicamente la salida de `investigate`) y genera + guarda
-  ambos formatos de reporte (Markdown y HTML), reutilizando sin
-  modificarlas las funciones ya existentes de `investmentops.reports`.
-  Devuelve las rutas de los archivos escritos, en el orden
-  `[markdown_path, html_path]`. No decide nada sobre cuándo debe
-  invocarse: es una pieza reutilizable tanto para el flujo normal de la
-  CLI como para cualquier otro caso de uso futuro (ej. Fase 7, "Registro
-  personal de investigaciones", que podría querer regenerar un reporte a
-  partir de un `ResearchResult` ya guardado).
+  los formatos de reporte solicitados, reutilizando sin modificarlas las
+  funciones ya existentes de `investmentops.reports`. Devuelve las rutas
+  de los archivos escritos, siempre en el orden `[markdown_path,
+  html_path]` cuando ambos se solicitan (el orden nunca depende del
+  orden en que se pidan los formatos, ver parámetro `formats` abajo).
 - **`investigate_and_generate_reports(ticker, ...)`**: función de
   conveniencia que encadena `investigate(ticker, ...)` →
   `generate_reports(result, ...)`, devolviendo la tupla `(result,
-  report_paths)`. Es la función pensada para que la use la CLI (tarea
-  separada y posterior, "Añadir al comando CLI la opción de formato de
-  salida" / "Implementar el mensaje final en consola indicando dónde
-  quedaron guardados los reportes generados"), sin que `investigate` en
-  sí mismo cambie de comportamiento para quien ya depende de él.
+  report_paths)`.
 
-Ninguna de las dos funciones traduce fallos de `generate_reports` (ej.
-`ReportError` si no se puede escribir en disco, `ConfigError` si no se
-puede resolver `[output].output_dir`): se propagan tal cual, ya que
+### Parámetro `formats` (nuevo en esta tarea)
+
+Ambas funciones aceptan ahora un parámetro opcional `formats: Sequence[str]
+| None`, con valores válidos `"markdown"` y `"html"`:
+
+- **`formats=None` (por defecto):** genera **ambos** formatos, en el
+  mismo orden `[markdown_path, html_path]` ya usado desde que estas
+  funciones existen. Este es el comportamiento exacto que ya prueban
+  `test_core_orchestrator_reports.py` — no cambia para ningún llamador
+  existente que no pase `formats` explícitamente.
+- **`formats=("markdown",)` / `("html",)`:** genera únicamente ese
+  formato, devolviendo una lista de un solo elemento.
+- **`formats=("html", "markdown")` (o cualquier orden):** el orden de
+  salida de `generate_reports` sigue siendo `[markdown_path, html_path]`
+  si ambos están presentes en `formats` — el orden de la lista de
+  entrada no determina el orden de salida, solo qué formatos se
+  incluyen. Esto evita que el orden dependa de cómo el llamador (ej. la
+  CLI) construya la lista.
+- Un valor desconocido en `formats` (algo distinto de `"markdown"`/
+  `"html"`) o una lista vacía levantan `ValueError`, ya que no representan
+  una elección de formato válida (fallo de programación/configuración
+  del llamador, no un fallo parcial de una fuente de datos o un agente).
+
+Esta extensión es la pieza que consume `investmentops.cli.dispatch` (ver
+ese módulo) para conectar el nuevo flag `--format` de la CLI (markdown,
+html o both) con la generación real de archivos, sin duplicar la lógica
+de resolución de rutas/guardado ya implementada en
+`investmentops.reports`.
+
+Ninguna de las dos funciones traduce fallos de la generación de reportes
+(ej. `ReportError` si no se puede escribir en disco, `ConfigError` si no
+se puede resolver `[output].output_dir`): se propagan tal cual, ya que
 representan un problema de configuración/entorno (ruta de salida no
 escribible), no un fallo parcial de una fuente de datos o un agente de
 análisis (esos ya quedan reflejados dentro del propio `ResearchResult`,
-ver "Manejo de fallos parciales" arriba). Decidir cómo la CLI presenta
-ese tipo de fallo es alcance de una tarea posterior.
+ver "Manejo de fallos parciales" arriba).
 
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
@@ -119,10 +144,11 @@ Fuera de alcance de este módulo (aún):
 - Leer o escribir la caché de datos normalizados
   (investmentops.data_layer.cache): fuera de alcance, igual que ya se
   documentó para `fetch_raw_data`/`fetch_and_normalize`.
-- Conectar `investigate_and_generate_reports` con la CLI, la opción de
-  formato de salida (`--format`), y el mensaje final en consola con las
-  rutas de los reportes: tareas separadas y posteriores (ver TASKS.md,
-  Fase 2, "Orquestador y CLI").
+- El mensaje final en consola indicando dónde quedaron guardados los
+  reportes generados: tarea separada y posterior (ver TASKS.md, Fase 2,
+  "Orquestador y CLI"), que consumirá las rutas ya devueltas por
+  `generate_reports`/`investigate_and_generate_reports` a través de
+  `investmentops.cli.dispatch`.
 """
 
 from __future__ import annotations
@@ -164,6 +190,14 @@ from investmentops.reports import (
     save_html_report,
     save_markdown_report,
 )
+
+#: Formatos de reporte soportados por `generate_reports`/
+#: `investigate_and_generate_reports`, en el orden en que deben aparecer
+#: en la lista de rutas devuelta cuando se solicita más de uno. Añadir un
+#: formato nuevo (ej. JSON, ver ROADMAP.md) implica sumar una entrada aquí
+#: y su correspondiente rama en `generate_reports`, sin modificar el
+#: orden ya establecido para markdown/html.
+ALL_REPORT_FORMATS: tuple[str, ...] = ("markdown", "html")
 
 
 def fetch_raw_data(
@@ -425,62 +459,91 @@ def generate_reports(
     *,
     output_dir: str | Path | None = None,
     config: dict[str, Any] | None = None,
+    formats: Sequence[str] | None = None,
 ) -> list[Path]:
-    """Genera y guarda los reportes Markdown y HTML de un `ResearchResult`.
+    """Genera y guarda los reportes de un `ResearchResult`, en el/los
+    formato(s) solicitado(s).
 
     Reutiliza, sin modificarlas, las funciones ya implementadas en Fase 2
     (`investmentops.reports`): `render_markdown`/`save_markdown_report` y
-    `render_html`/`save_html_report`. No introduce ninguna lógica de
-    renderizado ni de resolución de rutas nueva: esta función es solo el
-    punto de conexión entre el orquestador y los generadores de reporte
-    ya existentes (ver docstring del módulo, "Generación de reportes").
+    `render_html`/`save_html_report`. Esta función es solo el punto de
+    conexión entre el orquestador y los generadores de reporte ya
+    existentes (ver docstring del módulo, "Generación de reportes").
 
     Parameters
     ----------
     result:
         El `ResearchResult` ya ensamblado (típicamente la salida de
-        `investigate(...)`), a partir del cual se renderizan ambos
-        formatos de reporte.
+        `investigate(...)`), a partir del cual se renderizan los reportes.
     output_dir:
         Ruta al directorio donde guardar los reportes. Si no se indica,
         cada generador la resuelve por su cuenta desde `config.local.toml`
         (sección `[output].output_dir`, ver CONFIGURATION.md), igual
         criterio ya usado por `save_markdown_report`/`save_html_report`.
     config:
-        Configuración ya cargada, propagada a ambos generadores. Útil
-        para pruebas, para no depender de un `config.local.toml` real en
-        disco.
+        Configuración ya cargada, propagada a los generadores que se
+        invoquen. Útil para pruebas, para no depender de un
+        `config.local.toml` real en disco.
+    formats:
+        Qué formato(s) generar: cualquier subconjunto no vacío de
+        ``{"markdown", "html"}``. Si no se indica (``None``, valor por
+        defecto), se generan **ambos**, preservando el comportamiento
+        histórico de esta función. El orden de la lista devuelta siempre
+        es `[markdown_path, html_path]` cuando ambos formatos están
+        presentes, sin importar el orden en que aparezcan en `formats`.
 
     Returns
     -------
     list[Path]
-        Las rutas de los archivos escritos, en el orden
-        ``[markdown_path, html_path]``.
+        Las rutas de los archivos escritos, uno por formato solicitado,
+        en el orden fijo `[markdown_path, html_path]` cuando ambos se
+        piden (o una lista de un solo elemento si solo se pide uno).
 
     Raises
     ------
+    ValueError
+        Si `formats` es una secuencia vacía, o si contiene algún valor
+        que no sea `"markdown"` ni `"html"`.
     ReportError
         Si el ticker de `result.company` está vacío, o si ocurre un
         fallo de E/S al crear el directorio de salida o al escribir
-        alguno de los dos archivos (ver
+        alguno de los archivos (ver
         `investmentops.reports.markdown.ReportError`).
     ConfigError
         Si `output_dir` no se indica, `config` tampoco, y no se puede
         cargar `config.local.toml`.
     """
+    selected_formats = tuple(formats) if formats is not None else ALL_REPORT_FORMATS
+
+    if not selected_formats:
+        raise ValueError(
+            "Debe indicarse al menos un formato de reporte "
+            f"(valores admitidos: {', '.join(ALL_REPORT_FORMATS)})."
+        )
+
+    unknown_formats = sorted(set(selected_formats) - set(ALL_REPORT_FORMATS))
+    if unknown_formats:
+        raise ValueError(
+            f"Formato(s) de reporte desconocido(s): {unknown_formats}. "
+            f"Valores admitidos: {', '.join(ALL_REPORT_FORMATS)}."
+        )
+
     ticker = result.company.ticker
+    paths: list[Path] = []
 
-    markdown_content = render_markdown(result)
-    markdown_path = save_markdown_report(
-        ticker, markdown_content, output_dir=output_dir, config=config
-    )
+    if "markdown" in selected_formats:
+        markdown_content = render_markdown(result)
+        paths.append(
+            save_markdown_report(ticker, markdown_content, output_dir=output_dir, config=config)
+        )
 
-    html_content = render_html(result)
-    html_path = save_html_report(
-        ticker, html_content, output_dir=output_dir, config=config
-    )
+    if "html" in selected_formats:
+        html_content = render_html(result)
+        paths.append(
+            save_html_report(ticker, html_content, output_dir=output_dir, config=config)
+        )
 
-    return [markdown_path, html_path]
+    return paths
 
 
 def investigate_and_generate_reports(
@@ -489,17 +552,16 @@ def investigate_and_generate_reports(
     config: dict[str, Any] | None = None,
     provider: DataProvider | None = None,
     output_dir: str | Path | None = None,
+    formats: Sequence[str] | None = None,
 ) -> tuple[ResearchResult, list[Path]]:
-    """Ejecuta `investigate(...)` y genera+guarda sus reportes (Markdown y HTML).
+    """Ejecuta `investigate(...)` y genera+guarda sus reportes.
 
     Función de conveniencia que encadena `investigate(ticker, ...)` con
     `generate_reports(result, ...)`, pensada para que la use la CLI (ver
-    TASKS.md, Fase 2, "Orquestador y CLI", tareas siguientes sobre la
-    opción de formato de salida y el mensaje final en consola). No
-    modifica el comportamiento de `investigate(...)` en sí mismo: quien ya
-    depende de esa función (ej. `investmentops.cli.dispatch`, ver
-    docstring del módulo) sigue recibiendo únicamente un `ResearchResult`,
-    sin efectos secundarios de E/S.
+    `investmentops.cli.dispatch`). No modifica el comportamiento de
+    `investigate(...)` en sí mismo: quien ya depende de esa función (ej.
+    otras llamadas a `investigate` en este mismo módulo) sigue recibiendo
+    únicamente un `ResearchResult`, sin efectos secundarios de E/S.
 
     Parameters
     ----------
@@ -514,6 +576,10 @@ def investigate_and_generate_reports(
     output_dir:
         Ruta al directorio donde guardar los reportes, propagada a
         `generate_reports(...)`.
+    formats:
+        Qué formato(s) generar, propagado tal cual a `generate_reports(...)`
+        (ver ese docstring). Si no se indica, se generan ambos formatos
+        (comportamiento histórico, sin cambios para llamadores existentes).
 
     Returns
     -------
@@ -524,12 +590,14 @@ def investigate_and_generate_reports(
 
     Raises
     ------
-    ReportError, ConfigError
+    ValueError, ReportError, ConfigError
         Ver `generate_reports`. `investigate(...)` en sí mismo no deja
         escapar `DataProviderError`, `NormalizationError`, `PromptError`,
         `AgentProviderSelectionError` ni `AIProviderError` (ver su propio
         docstring).
     """
     result = investigate(ticker, config=config, provider=provider)
-    report_paths = generate_reports(result, output_dir=output_dir, config=config)
+    report_paths = generate_reports(
+        result, output_dir=output_dir, config=config, formats=formats
+    )
     return result, report_paths
