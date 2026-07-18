@@ -7,13 +7,19 @@ Cubre las tareas (TASKS.md, Fase 1, "Normalización y almacenamiento"):
 - "Implementar la lectura desde caché para evitar una nueva llamada al
   proveedor si el dato ya existe y es reciente."
 
+Y, desde esta tarea, TASKS.md, Fase 3, "Normalización":
+
+- "Extender la caché local para persistir series históricas sin romper
+  los datos ya guardados de Fase 1."
+
 Implementa el mecanismo ya decidido y documentado en
 `investmentops/data_layer/CACHE.md`: un archivo JSON por ticker, bajo la
 ruta configurada en `config.local.toml` ([cache].path, ver
 CONFIGURATION.md), con una clave por modelo de dominio cacheado
-(``"financial_statement"``, ``"market_data"``) y un campo ``cached_at``
-propio de la caché (no del modelo de dominio) que registra cuándo se
-escribió esa sección.
+(``"financial_statement"``, ``"market_data"``, y ahora
+``"financial_statement_series"``) y un campo ``cached_at`` propio de la
+caché (no del modelo de dominio) que registra cuándo se escribió esa
+sección.
 
 Guardar una sección nunca sobrescribe las demás secciones ya cacheadas
 para el mismo ticker (ver CACHE.md, "Estructura del archivo"): el
@@ -22,40 +28,71 @@ sección antes de volver a escribirlo.
 
 ## Lectura y frescura
 
-`load_financial_statement`/`load_market_data` leen la sección
-correspondiente de `<cache_path>/<TICKER>.json`, reconstruyen el modelo de
-dominio (inverso de la serialización de `_save_section`) y lo devuelven
-solo si su `cached_at` sigue siendo "reciente" según `max_age`. Si la
-sección no existe, o existe pero está vencida, devuelven ``None`` — quien
-las invoca (el futuro orquestador/proveedor de datos) interpreta un
-``None`` como "hay que consultar al proveedor de nuevo", nunca como un
-error. Un archivo o sección corrupta (`cached_at` no interpretable, campos
-imprescindibles ausentes) sí se señala mediante `CacheError`, porque en
-ese caso el problema no es la ausencia del dato sino la caché en un
-estado inconsistente que no debe usarse en silencio.
+`load_financial_statement`/`load_market_data`/`load_financial_statement_series`
+leen la sección correspondiente de `<cache_path>/<TICKER>.json`,
+reconstruyen el modelo de dominio (inverso de la serialización de
+`_save_section`/`save_financial_statement_series`) y lo devuelven solo si
+su `cached_at` sigue siendo "reciente" según `max_age`. Si la sección no
+existe, o existe pero está vencida, devuelven ``None`` — quien las invoca
+(el futuro orquestador/proveedor de datos) interpreta un ``None`` como
+"hay que consultar al proveedor de nuevo", nunca como un error. Un archivo
+o sección corrupta (`cached_at` no interpretable, campos imprescindibles
+ausentes) sí se señala mediante `CacheError`, porque en ese caso el
+problema no es la ausencia del dato sino la caché en un estado
+inconsistente que no debe usarse en silencio.
 
 `DEFAULT_MAX_AGE` (24 horas) es el umbral de frescura elegido para el
-MVP: `CACHE.md` documentó la estructura del archivo (incluyendo
-`cached_at`) dejando explícitamente el umbral concreto para esta tarea.
-Se elige un valor fijo y explícito en código, ajustable por quien invoca
-las funciones de lectura mediante el parámetro `max_age`, en vez de
-sumarlo como una nueva clave de `config.local.toml`: no hay hoy más de un
-caso de uso que lo consuma, y agregarlo a la configuración antes de
-necesitarlo real y concretamente iría contra el criterio de no
-sobre-diseñar ya aplicado en otros módulos de `investmentops.data_layer`
-(ver `market_data.py`, `financial_statements.py`). Si en el futuro se
-necesita que el umbral sea configurable por el usuario, es una extensión
-explícita y posterior, no algo a anticipar aquí.
+MVP, reutilizado tal cual por la serie histórica: no hay hoy evidencia de
+que una serie de varios periodos deba considerarse "vieja" con un umbral
+distinto al de un corte único, y agregar un segundo umbral antes de tener
+ese caso de uso real iría contra el criterio de no sobre-diseñar ya
+aplicado en el resto de este módulo.
+
+## Caché de series históricas (`save_financial_statement_series`/`load_financial_statement_series`)
+
+Cubre la extensión ya anticipada en `CACHE.md`: *"Extenderla a series es
+tarea explícita de la Fase 3... podrá representarse como una lista dentro
+de la misma clave... sin romper este formato de archivo por ticker"*.
+
+- **Clave nueva:** `"financial_statement_series"`, junto a
+  `"financial_statement"` y `"market_data"` ya existentes, en el mismo
+  archivo `<TICKER>.json`. Guardar una serie no toca ni sobrescribe las
+  otras dos secciones (mismo comportamiento de fusión ya usado por
+  `_save_section`).
+- **Forma de la sección:** un objeto con dos claves: `"statements"` (la
+  lista ordenada de estados financieros de la serie, del más reciente al
+  más antiguo, cada uno serializado con los mismos campos que
+  `FinancialStatement` — `revenue`, `net_income`, `debt`, `source`,
+  `period_end` en ISO 8601 — más `"cached_at"` (metadato de la caché, no
+  del modelo de dominio, mismo criterio que las demás secciones). El
+  campo `ticker` de `FinancialStatementSeries` no se serializa dentro de
+  la sección: el propio nombre del archivo (`<TICKER>.json`) ya lo
+  identifica, igual criterio implícito ya usado por `financial_statement`/
+  `market_data` (ninguna de esas dos secciones repite el ticker tampoco).
+- **No se reutiliza `_save_section`/`_load_section` tal cual para el
+  cuerpo de la sección:** `_save_section` usa `dataclasses.asdict` sobre
+  un único dataclass plano; una serie es una lista de dataclasses
+  anidados con un campo `date`, que `asdict` no serializa a texto por sí
+  solo. Esta extensión construye la lista de estados serializados
+  explícitamement (mismo patrón manual ya usado en
+  `financial_statement_series_from_raw` para construir el modelo desde
+  datos crudos), pero sí reutiliza `_resolve_cache_dir`, `_ticker_file`,
+  `_read_existing` y `_load_section` (para la lectura y el chequeo de
+  frescura vía `cached_at`), sin duplicar esa infraestructura.
+- **Manejo de fallos:** mismo criterio que las demás secciones
+  (`CacheError` ante ticker vacío, fallos de E/S, o una sección cacheada
+  corrupta/incompleta — por ejemplo, un elemento de `"statements"` sin
+  alguno de sus campos imprescindibles, o con una fecha no interpretable).
 
 Fuera de alcance de este módulo:
-- Cachear series históricas (varios periodos): igual que
-  `FinancialStatement`/`MarketData` hoy, este módulo solo cachea el
-  corte más reciente. Extenderlo es tarea explícita de la Fase 3 (ver
-  CACHE.md, "Fuera de alcance de esta tarea").
+- Cachear la serie de `MarketData` (no existe tal serie: la Fase 3 se
+  centra en ingresos y beneficios, no en precio de mercado, ver
+  `investmentops/data_providers/HISTORICAL_DATA.md`).
 - Decidir qué hace el orquestador/proveedor cuando `load_*` devuelve
   ``None`` (es decir, disparar la llamada real al proveedor de datos):
   eso es responsabilidad de quien invoque estas funciones (ver TASKS.md,
-  "Orquestador mínimo"), no de este módulo.
+  "Orquestador mínimo"/futuro consumidor de series en la Fase 3), no de
+  este módulo.
 """
 
 from __future__ import annotations
@@ -67,6 +104,9 @@ from pathlib import Path
 from typing import Any
 
 from investmentops.config import load_config
+from investmentops.data_layer.financial_statement_series import (
+    FinancialStatementSeries,
+)
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
 
@@ -78,8 +118,14 @@ DEFAULT_CACHE_PATH = ".investmentops_cache/"
 #: Umbral por defecto de frescura para la lectura desde caché: una
 #: sección cacheada se considera "reciente" si su `cached_at` tiene menos
 #: de este tiempo transcurrido (ver CACHE.md, "Qué determina 'reciente'",
-#: decisión tomada como parte de esta tarea).
+#: decisión tomada como parte de esta tarea). Reutilizado tal cual por la
+#: caché de series históricas (ver docstring del módulo).
 DEFAULT_MAX_AGE = timedelta(hours=24)
+
+#: Nombre de la sección usada para la serie histórica de estados
+#: financieros dentro de `<TICKER>.json`, junto a `"financial_statement"`
+#: y `"market_data"` ya existentes.
+_FINANCIAL_STATEMENT_SERIES_SECTION = "financial_statement_series"
 
 
 class CacheError(RuntimeError):
@@ -262,6 +308,170 @@ def load_market_data(
             f"La sección 'market_data' cacheada para '{ticker}' está "
             f"corrupta o incompleta: {exc}"
         ) from exc
+
+
+def save_financial_statement_series(
+    ticker: str,
+    series: FinancialStatementSeries,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> Path:
+    """Persiste un `FinancialStatementSeries` en la caché local del ticker.
+
+    Escribe la sección ``"financial_statement_series"`` de
+    `<cache_path>/<TICKER>.json` (ver "Caché de series históricas" en el
+    docstring del módulo), sin afectar las secciones
+    ``"financial_statement"``/``"market_data"`` ya cacheadas para el
+    mismo ticker (mismo criterio de fusión ya usado por
+    `save_financial_statement`/`save_market_data`).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa (ej. ``"AAPL"``). Se normaliza a
+        mayúsculas para el nombre del archivo, mismo criterio que las
+        demás funciones `save_*` de este módulo.
+    series:
+        El `FinancialStatementSeries` ya normalizado a persistir (ver
+        `investmentops.data_layer.financial_statement_series_from_raw`).
+        El orden de `series.statements` se conserva tal cual al guardar.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas sin depender de un
+        `config.local.toml` real en disco.
+
+    Returns
+    -------
+    Path
+        La ruta del archivo `<TICKER>.json` escrito.
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío o si ocurre un fallo de E/S al escribir.
+    """
+    if not ticker or not ticker.strip():
+        raise CacheError("El ticker no puede estar vacío.")
+
+    cache_dir = _resolve_cache_dir(cache_path, config)
+
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise CacheError(
+            f"No se pudo crear el directorio de caché '{cache_dir}': {exc}"
+        ) from exc
+
+    file_path = _ticker_file(cache_dir, ticker)
+    existing = _read_existing(file_path)
+
+    statements_data = [
+        {
+            "revenue": statement.revenue,
+            "net_income": statement.net_income,
+            "debt": statement.debt,
+            "source": statement.source,
+            "period_end": statement.period_end.isoformat(),
+        }
+        for statement in series.statements
+    ]
+    section_data = {
+        "statements": statements_data,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+    }
+    existing[_FINANCIAL_STATEMENT_SERIES_SECTION] = section_data
+
+    try:
+        with file_path.open("w", encoding="utf-8") as cache_file:
+            json.dump(existing, cache_file, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        raise CacheError(
+            f"No se pudo escribir el archivo de caché '{file_path}': {exc}"
+        ) from exc
+
+    return file_path
+
+
+def load_financial_statement_series(
+    ticker: str,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+    max_age: timedelta = DEFAULT_MAX_AGE,
+) -> FinancialStatementSeries | None:
+    """Lee un `FinancialStatementSeries` desde la caché local, si existe y es reciente.
+
+    Misma semántica de frescura/ausencia que `load_financial_statement`/
+    `load_market_data` (ver docstring del módulo): devuelve ``None`` si no
+    hay nada cacheado para este ticker o si la sección cacheada ya superó
+    `max_age`, y levanta `CacheError` solo ante una sección corrupta o un
+    fallo de E/S.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a buscar en caché (ej. ``"AAPL"``).
+        Se normaliza a mayúsculas, igual criterio que las demás
+        funciones `load_*`.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas.
+    max_age:
+        Antigüedad máxima aceptada desde `cached_at` para considerar la
+        serie "reciente". Por defecto, `DEFAULT_MAX_AGE` (24 horas).
+
+    Returns
+    -------
+    FinancialStatementSeries | None
+        La serie reconstruida (con `ticker` normalizado a mayúsculas y
+        `statements` en el mismo orden en que se guardaron) si hay una
+        sección cacheada y no ha vencido según `max_age`; ``None`` en
+        caso contrario.
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío, si ocurre un fallo de E/S al leer el
+        archivo, o si la sección cacheada existe pero está corrupta o
+        incompleta (falta `cached_at`, algún elemento de `"statements"`
+        no tiene un formato de fecha reconocible, o le faltan campos
+        imprescindibles).
+    """
+    section = _load_section(
+        ticker,
+        _FINANCIAL_STATEMENT_SERIES_SECTION,
+        cache_path=cache_path,
+        config=config,
+        max_age=max_age,
+    )
+    if section is None:
+        return None
+
+    try:
+        statements = [
+            FinancialStatement(
+                revenue=float(item["revenue"]),
+                net_income=float(item["net_income"]),
+                debt=float(item["debt"]),
+                source=item["source"],
+                period_end=date.fromisoformat(item["period_end"]),
+            )
+            for item in section["statements"]
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CacheError(
+            f"La sección '{_FINANCIAL_STATEMENT_SERIES_SECTION}' cacheada "
+            f"para '{ticker}' está corrupta o incompleta: {exc}"
+        ) from exc
+
+    return FinancialStatementSeries(
+        ticker=ticker.strip().upper(), statements=statements
+    )
 
 
 def _save_section(
