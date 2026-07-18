@@ -5,62 +5,62 @@
 ## Última tarea completada
 
 Fase 3 → Motor de análisis: evolución de ingresos y beneficios →
-*"Definir qué se considera 'tendencia' (ej. crecimiento interanual,
-aceleración/desaceleración) a nivel básico."*
+*"Implementar el cálculo de variación periodo a periodo de ingresos."*
 
 ## Verificación previa (sin duplicar trabajo)
 
 Se confirmó que esta tarea **no** estaba satisfecha por trabajo anterior:
-no existía ningún documento (`TREND_METRICS.md` u otro) que definiera qué
-constituye "tendencia" para el futuro motor de análisis de evolución de
-ingresos y beneficios. `FinancialStatementSeries` (Fase 3, "Normalización")
-ya existe como modelo de dominio de entrada, pero ningún motor de
-análisis lo consume todavía. Era trabajo nuevo, no una tarea ya cubierta.
+no existía ningún módulo de código bajo `investmentops/analysis_engines/`
+que calculara variación de ingresos; solo existía la definición de diseño
+(`TREND_METRICS.md`, tarea previa) y el modelo de dominio de entrada
+(`FinancialStatementSeries`, Fase 3 "Normalización"), pero ningún motor
+de análisis los consumía todavía. Era trabajo nuevo, no una tarea ya
+cubierta.
 
 ## Qué se implementó
 
-Esta es una tarea de **diseño/documentación**, no de código, mismo tipo
-de tarea que `FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md` en
-Fase 1.
+**`investmentops/analysis_engines/trends.py`** (nuevo):
 
-**`investmentops/analysis_engines/TREND_METRICS.md`** (nuevo):
+- `calculate_revenue_growth(series: FinancialStatementSeries) -> RevenueGrowthResult`:
+  cálculo puramente determinístico (sin IA, conforme a `ARCHITECTURE.md`),
+  que recorre `series.statements` en pares consecutivos y calcula, para
+  cada uno, `revenue_growth = (revenue_t - revenue_{t-1}) /
+  abs(revenue_{t-1})`, exactamente la fórmula ya fijada en
+  `investmentops/analysis_engines/TREND_METRICS.md`.
+- `RevenueGrowthPoint` (dataclass inmutable): un punto por cada salto
+  entre periodos consecutivos, con `period_end`, `previous_period_end`,
+  `revenue_growth`, `classification` (`"creciente"`/`"decreciente"`/
+  `"estable"`, por signo puro, sin banda de tolerancia) y `warning`
+  (`None` salvo que ese salto concreto no se pudo calcular).
+- `RevenueGrowthResult` (dataclass inmutable): agrupa `points` (uno por
+  par consecutivo) y `warnings` (advertencias a nivel de toda la serie).
+- Manejo de casos degenerados, exactamente como los fija
+  `TREND_METRICS.md`:
+  - **Periodo base con `revenue == 0`:** ese punto concreto devuelve
+    `revenue_growth`/`classification` en `None`, con una advertencia
+    adjunta al propio punto (`RevenueGrowthPoint.warning`), sin lanzar
+    `ZeroDivisionError` ni afectar a los demás pares de la serie.
+  - **Serie con menos de dos periodos (uno solo, o vacía):** no hay
+    ningún par consecutivo; se devuelve `points=()` junto con
+    `SINGLE_PERIOD_WARNING` a nivel de serie (`RevenueGrowthResult.warnings`).
+- No calcula `net_income_growth` (tarea siguiente), no detecta tendencia
+  agregada para toda la serie, ni ensambla ningún `AnalysisResult`: fuera
+  de alcance explícito de esta tarea concreta.
 
-- **Métrica base:** variación relativa periodo a periodo, calculada por
-  separado para ingresos y beneficios:
-  `growth = (valor_t - valor_{t-1}) / abs(valor_{t-1})`, usando `abs(...)`
-  en el denominador para que el signo del resultado siempre refleje
-  mejora/deterioro real, incluso con periodos base negativos (ej. una
-  empresa que reduce sus pérdidas). Se calcula para **cada par
-  consecutivo** de `FinancialStatementSeries.statements`, no solo entre
-  el periodo más reciente y el anterior.
-- **Clasificación de tendencia (por salto):** creciente (`> 0`),
-  decreciente (`< 0`), estable (`== 0`), basada en el signo puro, sin
-  banda de tolerancia arbitraria (se documenta explícitamente por qué no
-  se inventa un umbral sin caso de uso que lo justifique).
-- **Aceleración/desaceleración** (mencionado como ejemplo en el título de
-  la tarea de `TASKS.md`): se descarta explícitamente para el MVP, con
-  justificación (exigiría comparar variación contra variación anterior,
-  un umbral adicional arbitrario, y no es necesario para responder las
-  preguntas 3/4 de `GOALS.md`).
-- **Casos degenerados:** periodo base en cero (no calculable para ese
-  salto, con advertencia explícita, mismo criterio ya usado en
-  `FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md` para división por
-  cero) y serie de un solo periodo (sin variación calculable; debe
-  declararse como limitación explícita, no como error). Se aclara también
-  que esta definición no distingue huecos reales en el calendario de
-  pares simplemente consecutivos en la lista — eso es responsabilidad de
-  la tarea de ensamblado del motor, ya prevista por separado en
-  `TASKS.md`.
-- **Fuera de alcance:** el cálculo determinístico real (próximas dos
-  tareas de la misma sección), la detección de tendencia agregada para
-  toda la serie (tarea siguiente a esas), el ensamblado del resultado
-  estructurado del motor, el prompt/invocación de IA (si aplica), y
-  cualquier umbral de tolerancia/CAGR/proyecciones/suavizado estadístico.
+**`investmentops/tests/test_analysis_engines_trends.py`** (nuevo):
+cubre el caso de dos periodos consecutivos, varios periodos (varios
+saltos en el mismo orden que `statements`), las tres clasificaciones
+(creciente/decreciente/estable), el caso de mejora desde una base
+negativa (uso de `abs()` en el denominador), el periodo base en cero
+(incluyendo que solo afecta al salto correspondiente, no a los demás),
+la ausencia de `ZeroDivisionError`, la serie de un único periodo y la
+serie vacía, e inmutabilidad de ambos dataclasses.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/analysis_engines/TREND_METRICS.md` (nuevo)
+- `investmentops/analysis_engines/trends.py` (nuevo)
+- `investmentops/tests/test_analysis_engines_trends.py` (nuevo)
 
 Modificados:
 - `TASKS.md` (tarea marcada como completada, Fase 3, "Motor de análisis:
@@ -68,9 +68,8 @@ Modificados:
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`, ningún módulo de código Python
-existente (esta tarea es puramente de diseño/documentación, sin
-implementación).
+`CONFIGURATION.md`, `config.example.toml`, `TREND_METRICS.md`, ni ningún
+otro módulo de código Python existente.
 
 ## Problemas encontrados
 
@@ -80,18 +79,18 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Con la definición de "tendencia" ya fijada, la siguiente tarea pendiente
-en la misma sección de `TASKS.md` ("Motor de análisis: evolución de
-ingresos y beneficios") es:
+La siguiente tarea pendiente en la misma sección de `TASKS.md` ("Motor
+de análisis: evolución de ingresos y beneficios") es:
 
-> "Implementar el cálculo de variación periodo a periodo de ingresos."
+> "Implementar el cálculo de variación periodo a periodo de beneficios."
 
-Esta es la primera tarea de **implementación** de código de esta
-sección: deberá calcular `revenue_growth` para cada par consecutivo de
-`FinancialStatementSeries.statements`, siguiendo exactamente la fórmula y
-el manejo de casos degenerados (periodo base en cero, serie de un solo
-punto) ya fijados en `investmentops/analysis_engines/TREND_METRICS.md`,
-con el mismo patrón ya usado en `calculate_financial_health_metrics`/
-`calculate_valuation_metrics` (dataclass de resultado inmutable +
-advertencias explícitas, sin lanzar `ZeroDivisionError` ni inventar
-valores).
+Debe seguir exactamente el mismo patrón ya usado en
+`calculate_revenue_growth`/`RevenueGrowthResult`/`RevenueGrowthPoint`
+(`investmentops/analysis_engines/trends.py`), aplicado a `net_income` en
+vez de `revenue` (misma fórmula con `abs()` en el denominador, misma
+clasificación por signo puro, mismo manejo de periodo base en cero y de
+series con menos de dos periodos), probablemente como un
+`calculate_net_income_growth`/`NetIncomeGrowthResult`/
+`NetIncomeGrowthPoint` en el mismo módulo, para mantener juntas ambas
+piezas de "variación periodo a periodo" antes de la tarea de detección
+de tendencia agregada.
