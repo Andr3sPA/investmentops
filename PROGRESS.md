@@ -4,89 +4,73 @@
 
 ## Última tarea completada
 
-Fase 3 → Normalización → *"Extender la caché local para persistir series
-históricas sin romper los datos ya guardados de Fase 1."*
+Fase 3 → Motor de análisis: evolución de ingresos y beneficios →
+*"Definir qué se considera 'tendencia' (ej. crecimiento interanual,
+aceleración/desaceleración) a nivel básico."*
 
 ## Verificación previa (sin duplicar trabajo)
 
 Se confirmó que esta tarea **no** estaba satisfecha por trabajo anterior:
-`investmentops/data_layer/cache.py` solo tenía
-`save_financial_statement`/`load_financial_statement` y
-`save_market_data`/`load_market_data` (corte único, Fase 1). No existía
-ninguna función que persistiera un `FinancialStatementSeries` (la serie
-histórica ya construida en la tarea anterior mediante
-`financial_statement_series_from_raw`). Era trabajo nuevo.
+no existía ningún documento (`TREND_METRICS.md` u otro) que definiera qué
+constituye "tendencia" para el futuro motor de análisis de evolución de
+ingresos y beneficios. `FinancialStatementSeries` (Fase 3, "Normalización")
+ya existe como modelo de dominio de entrada, pero ningún motor de
+análisis lo consume todavía. Era trabajo nuevo, no una tarea ya cubierta.
 
 ## Qué se implementó
 
-**`investmentops/data_layer/cache.py`** (modificado): se agregaron
-`save_financial_statement_series(ticker, series, *, cache_path=None,
-config=None) -> Path` y `load_financial_statement_series(ticker, *,
-cache_path=None, config=None, max_age=DEFAULT_MAX_AGE) ->
-FinancialStatementSeries | None`.
+Esta es una tarea de **diseño/documentación**, no de código, mismo tipo
+de tarea que `FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md` en
+Fase 1.
 
-- Reutilizan, sin duplicar, la infraestructura ya existente:
-  `_resolve_cache_dir`, `_ticker_file`, `_read_existing` (para guardar) y
-  `_load_section` (para leer y chequear frescura vía `cached_at`, mismo
-  umbral `DEFAULT_MAX_AGE` de 24 horas ya usado por las demás secciones).
-- **Nueva sección** `"financial_statement_series"` dentro del mismo
-  archivo `<TICKER>.json` ya usado por `"financial_statement"` y
-  `"market_data"` (Fase 1), tal como ya anticipaba
-  `investmentops/data_layer/CACHE.md`: *"podrá representarse como una
-  lista dentro de la misma clave... sin romper este formato de archivo
-  por ticker"*.
-- **No se reutilizó `_save_section`/su serialización genérica
-  (`dataclasses.asdict` + `_serialize`)** para el cuerpo de la sección:
-  esa función serializa un único dataclass plano; una serie es una lista
-  de `FinancialStatement` anidados con un campo `date` cada uno, que
-  `asdict` no convierte a texto por sí solo. En su lugar,
-  `save_financial_statement_series` construye explícitamente la lista de
-  estados serializados (mismo patrón manual ya usado en
-  `financial_statement_series_from_raw` para construir el modelo desde
-  datos crudos), preservando el orden recibido (más reciente primero).
-- Guardar la serie **no sobrescribe** `financial_statement`/`market_data`
-  ya cacheados para el mismo ticker, y viceversa (fusión de secciones,
-  mismo comportamiento ya probado para las secciones existentes).
-- Mismo manejo de fallos ya usado por el resto del módulo: `CacheError`
-  ante ticker vacío, fallos de E/S, `cached_at` ausente/no interpretable,
-  o un elemento de `"statements"` con campos faltantes o una fecha
-  inválida (identificando la sección, no solo "algo salió mal").
+**`investmentops/analysis_engines/TREND_METRICS.md`** (nuevo):
 
-**`investmentops/tests/test_data_layer_cache_series.py`** (nuevo):
-confirma guardado (estructura de la sección, serialización de cada
-punto, orden preservado, normalización de ticker, fusión con
-`financial_statement`/`market_data` en ambos órdenes de escritura,
-sobrescritura solo de la sección de la serie, creación de directorio,
-ticker vacío, ruta desde configuración) y lectura (ausencia de ticker/
-sección, lectura fresca, insensibilidad a mayúsculas, orden preservado,
-vencimiento por `max_age` por defecto y personalizado, `cached_at`
-ausente/ inválido, estados con campos faltantes o fecha inválida, ticker
-vacío, ruta desde configuración, y un roundtrip conjunto con
-`financial_statement`/`market_data` en el mismo archivo).
+- **Métrica base:** variación relativa periodo a periodo, calculada por
+  separado para ingresos y beneficios:
+  `growth = (valor_t - valor_{t-1}) / abs(valor_{t-1})`, usando `abs(...)`
+  en el denominador para que el signo del resultado siempre refleje
+  mejora/deterioro real, incluso con periodos base negativos (ej. una
+  empresa que reduce sus pérdidas). Se calcula para **cada par
+  consecutivo** de `FinancialStatementSeries.statements`, no solo entre
+  el periodo más reciente y el anterior.
+- **Clasificación de tendencia (por salto):** creciente (`> 0`),
+  decreciente (`< 0`), estable (`== 0`), basada en el signo puro, sin
+  banda de tolerancia arbitraria (se documenta explícitamente por qué no
+  se inventa un umbral sin caso de uso que lo justifique).
+- **Aceleración/desaceleración** (mencionado como ejemplo en el título de
+  la tarea de `TASKS.md`): se descarta explícitamente para el MVP, con
+  justificación (exigiría comparar variación contra variación anterior,
+  un umbral adicional arbitrario, y no es necesario para responder las
+  preguntas 3/4 de `GOALS.md`).
+- **Casos degenerados:** periodo base en cero (no calculable para ese
+  salto, con advertencia explícita, mismo criterio ya usado en
+  `FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md` para división por
+  cero) y serie de un solo periodo (sin variación calculable; debe
+  declararse como limitación explícita, no como error). Se aclara también
+  que esta definición no distingue huecos reales en el calendario de
+  pares simplemente consecutivos en la lista — eso es responsabilidad de
+  la tarea de ensamblado del motor, ya prevista por separado en
+  `TASKS.md`.
+- **Fuera de alcance:** el cálculo determinístico real (próximas dos
+  tareas de la misma sección), la detección de tendencia agregada para
+  toda la serie (tarea siguiente a esas), el ensamblado del resultado
+  estructurado del motor, el prompt/invocación de IA (si aplica), y
+  cualquier umbral de tolerancia/CAGR/proyecciones/suavizado estadístico.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_layer_cache_series.py` (nuevo)
+- `investmentops/analysis_engines/TREND_METRICS.md` (nuevo)
 
 Modificados:
-- `investmentops/data_layer/cache.py` (se agregaron
-  `save_financial_statement_series`/`load_financial_statement_series`;
-  se actualizó el docstring del módulo para documentarlas y se agregó la
-  constante `_FINANCIAL_STATEMENT_SERIES_SECTION`)
-- `TASKS.md` (tarea marcada como completada, Fase 3, "Normalización")
+- `TASKS.md` (tarea marcada como completada, Fase 3, "Motor de análisis:
+  evolución de ingresos y beneficios")
 - `PROGRESS.md` (este archivo)
 
 No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`,
-`investmentops/data_layer/financial_statements.py`,
-`investmentops/data_layer/financial_statement_series.py`,
-`investmentops/data_layer/market_data.py`,
-`investmentops/data_layer/normalization.py`,
-`investmentops/data_providers/fundamentals.py`,
-`save_financial_statement`/`load_financial_statement`/
-`save_market_data`/`load_market_data` (el comportamiento de corte único
-de Fase 1 no cambió), ningún otro módulo de código Python existente.
+`CONFIGURATION.md`, `config.example.toml`, ningún módulo de código Python
+existente (esta tarea es puramente de diseño/documentación, sin
+implementación).
 
 ## Problemas encontrados
 
@@ -96,19 +80,18 @@ anteriores sobre la duplicación de carpetas de pruebas (`tests/` vs.
 
 ## Próxima tarea recomendada
 
-Con la caché de series históricas ya implementada, la Fase 3 completó
-por completo sus secciones "Fuente de datos histórica" y "Normalización".
-La siguiente sección pendiente es **"Motor de análisis: evolución de
-ingresos y beneficios"**, cuya primera tarea es:
+Con la definición de "tendencia" ya fijada, la siguiente tarea pendiente
+en la misma sección de `TASKS.md` ("Motor de análisis: evolución de
+ingresos y beneficios") es:
 
-> "Definir qué se considera 'tendencia' (ej. crecimiento interanual,
-> aceleración/desaceleración) a nivel básico."
+> "Implementar el cálculo de variación periodo a periodo de ingresos."
 
-Esta es una tarea de diseño/documentación (no de código), análoga a
-`FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md`: deberá decidir, a
-partir de los campos ya disponibles en `FinancialStatementSeries`
-(`revenue`, `net_income` por periodo), qué constituye "tendencia" para el
-MVP (por ejemplo, variación porcentual periodo a periodo y una
-clasificación simple creciente/decreciente/estable), dejando explícito
-qué queda fuera (ej. proyecciones, suavizado estadístico) antes de
-implementar el cálculo determinístico en la tarea siguiente.
+Esta es la primera tarea de **implementación** de código de esta
+sección: deberá calcular `revenue_growth` para cada par consecutivo de
+`FinancialStatementSeries.statements`, siguiendo exactamente la fórmula y
+el manejo de casos degenerados (periodo base en cero, serie de un solo
+punto) ya fijados en `investmentops/analysis_engines/TREND_METRICS.md`,
+con el mismo patrón ya usado en `calculate_financial_health_metrics`/
+`calculate_valuation_metrics` (dataclass de resultado inmutable +
+advertencias explícitas, sin lanzar `ZeroDivisionError` ni inventar
+valores).

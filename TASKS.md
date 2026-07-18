@@ -131,11 +131,11 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Extender la caché local para persistir series históricas sin romper los datos ya guardados de Fase 1. — `save_financial_statement_series`/`load_financial_statement_series` en `investmentops/data_layer/cache.py` (ver PROGRESS.md). Agrega una nueva sección `"financial_statement_series"` al mismo archivo `<TICKER>.json` ya usado por `financial_statement`/`market_data` (Fase 1), con la misma convención de `cached_at` y el mismo umbral de frescura (`DEFAULT_MAX_AGE`, 24 horas). Guarda cada `FinancialStatement` de la serie serializado explícitamente (no vía `dataclasses.asdict`, que no serializa correctamente una lista de dataclasses anidados con campos `date`), preservando el orden recibido. No modifica el guardado/lectura de corte único ya existente ni ninguna otra sección.
 
 ### Motor de análisis: evolución de ingresos y beneficios
-- Definir qué se considera "tendencia" (ej. crecimiento interanual, aceleración/desaceleración) a nivel básico.
-- Implementar el cálculo de variación periodo a periodo de ingresos.
-- Implementar el cálculo de variación periodo a periodo de beneficios.
-- Implementar la detección simple de tendencia (creciente, decreciente, estable) para cada serie.
-- Ensamblar el resultado estructurado del motor (hallazgos, métricas de soporte, advertencias si hay huecos en la serie).
+- [x] Definir qué se considera "tendencia" (ej. crecimiento interanual, aceleración/desaceleración) a nivel básico. — `investmentops/analysis_engines/TREND_METRICS.md` (nuevo). Decisión: variación relativa periodo a periodo (`(valor_t - valor_{t-1}) / abs(valor_{t-1})`) para ingresos y beneficios, calculada entre **cada par consecutivo** de `FinancialStatementSeries.statements`; clasificación por salto en tres valores (creciente/decreciente/estable) basada en el signo puro, sin banda de tolerancia arbitraria. Aceleración/desaceleración se descarta explícitamente para el MVP (exigiría un umbral adicional sin caso de uso que lo justifique). Casos degenerados documentados: periodo base en cero (no calculable, con advertencia) y serie de un solo periodo (sin variación calculable, limitación explícita). Documenta también qué queda fuera: el cálculo determinístico real (tarea siguiente), la detección de tendencia agregada para toda la serie (tarea siguiente a esa), CAGR/proyecciones/suavizado (fuera del MVP).
+- [ ] Implementar el cálculo de variación periodo a periodo de ingresos.
+- [ ] Implementar el cálculo de variación periodo a periodo de beneficios.
+- [ ] Implementar la detección simple de tendencia (creciente, decreciente, estable) para cada serie.
+- [ ] Ensamblar el resultado estructurado del motor (hallazgos, métricas de soporte, advertencias si hay huecos en la serie).
 
 ### Orquestador
 - Registrar el nuevo motor de análisis en el flujo del orquestador sin modificar los motores existentes.
