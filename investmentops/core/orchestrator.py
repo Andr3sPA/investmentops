@@ -2,11 +2,12 @@
 de esos datos crudos a la capa de normalización, invocación secuencial de
 los agentes de análisis, ensamblado del "Resultado de investigación"
 final, manejo de fallos parciales sin detener el resto del flujo,
-generación de reportes (Markdown/HTML) tras ensamblar ese resultado, y
-obtención/normalización de la serie histórica de ingresos y beneficios
+generación de reportes (Markdown/HTML) tras ensamblar ese resultado,
+obtención/normalización de la serie histórica de ingresos y beneficios, y
+registro de la invocación del motor de evolución de ingresos y beneficios
 (Fase 3).
 
-Cubre ocho tareas:
+Cubre nueve tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -39,16 +40,20 @@ Fase 3, "Orquestador" (TASKS.md):
   `FMPFundamentalsProvider.fetch_historical` con
   `financial_statement_series_from_raw`), como pieza reutilizable
   análoga a `fetch_and_normalize`." (`fetch_raw_historical_data`,
-  `fetch_and_normalize_historical`, esta tarea).
+  `fetch_and_normalize_historical`, ya completada, ver PROGRESS.md).
+- "Registrar la invocación de `assemble_trend_analysis` en el flujo de
+  análisis del orquestador, conforme a la decisión de integración ya
+  tomada, sin modificar los motores existentes (salud financiera,
+  valoración)." (`run_trend_analysis_engine`,
+  `_trend_analysis_result_to_analysis_result`, esta tarea).
 
 Las siete primeras funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
-del flujo de una investigación", pasos 3-8). Las dos nuevas de esta
-tarea (`fetch_raw_historical_data`, `fetch_and_normalize_historical`) se
-suman al mismo módulo por el mismo motivo: son el equivalente histórico
-de `fetch_raw_data`/`fetch_and_normalize`, reutilizadas por la tarea
-siguiente de esta misma sección ("Registrar la invocación de
-`assemble_trend_analysis` en el flujo de análisis del orquestador").
+del flujo de una investigación", pasos 3-8). Las de esta tarea se suman
+al mismo módulo por el mismo motivo, y porque es aquí -no en
+`investmentops.analysis_engines.trends`- donde vive el adaptador
+decidido en `investmentops/core/TREND_INTEGRATION.md` (ver esa sección
+más abajo).
 
 ## Manejo de fallos parciales (`investigate`)
 
@@ -88,7 +93,9 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
    la función ya existente sin modificarla.
 
 `investigate` no reemplaza a `run_analysis_engines` ni a
-`fetch_and_normalize`: ambas se mantienen sin cambios.
+`fetch_and_normalize`: ambas se mantienen sin cambios. Tampoco invoca
+todavía `run_trend_analysis_engine` (ver más abajo): esa integración es
+la tarea siguiente y separada de esta misma sección de TASKS.md.
 
 ## Generación de reportes (`generate_reports` / `investigate_and_generate_reports`)
 
@@ -135,11 +142,6 @@ Ambas funciones aceptan un parámetro opcional `formats: Sequence[str]
 
 ## Obtención y normalización de la serie histórica (`fetch_raw_historical_data` / `fetch_and_normalize_historical`)
 
-Cubre la tarea "Implementar en el orquestador la función que obtiene y
-normaliza la serie histórica de una empresa para un ticker" (TASKS.md,
-Fase 3, "Orquestador"), sobre la decisión de integración ya documentada
-en `investmentops/core/TREND_INTEGRATION.md`.
-
 Siguen exactamente el mismo patrón de dos capas ya usado por
 `fetch_raw_data`/`fetch_and_normalize` (Fase 1), aplicado a la variante
 histórica:
@@ -150,56 +152,77 @@ histórica:
   `investmentops.data_providers.fundamentals.FMPFundamentalsProvider.fetch_historical`)
   en vez de `fetch(ticker)`. Por defecto construye un
   `FMPFundamentalsProvider` (mismo proveedor ya elegido para el MVP),
-  pero acepta un `provider` inyectado — pensado sobre todo para
-  pruebas — siempre que exponga un método `fetch_historical` con la
-  misma firma (no se define un `Protocol` nuevo para esto: hoy solo
-  existe una integración concreta de proveedor de datos fundamentales,
-  y forzar un contrato adicional antes de tener un segundo proveedor
-  real sería sobre-diseño, mismo criterio ya aplicado en
-  `investmentops/data_providers/market_data.py` y otros módulos del
-  proyecto).
+  pero acepta un `provider` inyectado.
 - **`fetch_and_normalize_historical(ticker, ...)`**: encadena
   `fetch_raw_historical_data(ticker, ...)` con
   `investmentops.data_layer.normalization.financial_statement_series_from_raw`,
-  devolviendo un `FinancialStatementSeries` (ver
-  `investmentops.data_layer.financial_statement_series`) ya listo para
-  el motor de análisis de evolución de ingresos y beneficios
+  devolviendo un `FinancialStatementSeries` ya listo para el motor de
+  análisis de evolución de ingresos y beneficios
   (`investmentops.analysis_engines.trends.assemble_trend_analysis`).
 
-Ninguna de las dos funciones captura `DataProviderError` ni
-`NormalizationError`: las propagan tal cual, exactamente el mismo
-criterio ya documentado para `fetch_raw_data`/`fetch_and_normalize` —
-el manejo de fallos parciales sin detener el resto del flujo es
-responsabilidad de `investigate` (o de la futura integración de este
-motor en ese mismo flujo, tarea separada y siguiente de esta misma
-sección de `TASKS.md`, "Registrar la invocación de
-`assemble_trend_analysis`..."), no de estas piezas de bajo nivel.
+Ninguna de las dos captura `DataProviderError` ni `NormalizationError`:
+las propagan tal cual, mismo criterio que `fetch_raw_data`/
+`fetch_and_normalize`.
 
-`period`/`limit` se exponen tal cual con los mismos valores por defecto
-que ya usa `FMPFundamentalsProvider.fetch_historical`
-(``period="annual"``, ``limit=5``), sin imponer un valor distinto desde
-el orquestador: no hay hoy ningún caso de uso que justifique un valor
-por defecto diferente al ya elegido en la Fase 3, "Fuente de datos
-histórica".
+## Registro de la invocación del motor de evolución de ingresos y beneficios (`run_trend_analysis_engine`)
+
+Cubre la tarea "Registrar la invocación de `assemble_trend_analysis` en
+el flujo de análisis del orquestador, conforme a la decisión de
+integración ya tomada, sin modificar los motores existentes" (TASKS.md,
+Fase 3, "Orquestador"), sobre la decisión ya documentada en
+`investmentops/core/TREND_INTEGRATION.md`.
+
+`investmentops.analysis_engines.trends.TrendAnalysisResult` (a
+diferencia de `AnalysisResult`, usado por los motores de salud
+financiera y valoración) no lleva `provenance`: ese motor no invoca
+ningún proveedor de IA, sus hallazgos se generan por plantilla
+determinista. `TREND_INTEGRATION.md` decidió, para no tener que
+modificar `AnalysisResult`/`ResearchResult` ni los consumidores ya
+estables (`render_markdown`, `render_html`, `format_research_result`),
+envolver el resultado del motor en un `AnalysisResult` normal con una
+`AnalysisProvenance` **centinela** explícita:
+
+- `ai_provider = "none"`
+- `ai_model = "deterministic"`
+- `generated_at`: el momento en que se ensambló *este* análisis (mismo
+  criterio ya usado por los demás agentes).
+
+Esta tarea implementa esa conversión (`_trend_analysis_result_to_analysis_result`)
+y la pieza que "registra la invocación" del motor dentro del flujo de
+análisis del orquestador (`run_trend_analysis_engine`), análoga en
+espíritu a `analyze_financial_health`/`analyze_valuation` (calcula
+→ produce resultado), pero encadenando en su lugar
+`fetch_and_normalize_historical` (obtención + normalización de la serie)
+→ `assemble_trend_analysis` (cálculo determinístico + síntesis de
+tendencia, ya implementado en `investmentops.analysis_engines.trends`)
+→ la conversión centinela.
+
+`run_trend_analysis_engine` **no captura** ninguna excepción de las
+piezas que invoca (`DataProviderError`, `NormalizationError`): las
+propaga tal cual, mismo criterio ya aplicado por
+`fetch_and_normalize`/`fetch_and_normalize_historical`. Incorporar su
+resultado al `ResearchResult` ensamblado por `investigate`, con manejo
+de fallos parciales (serie histórica no disponible, error de
+normalización) sin detener el resto del flujo, es la tarea siguiente y
+separada de esta misma sección de TASKS.md — esta tarea únicamente deja
+lista y disponible la pieza que produce el `AnalysisResult` del motor de
+tendencias, sin conectarla todavía a `investigate`/`ResearchResult`.
+
+Esta tarea tampoco modifica `run_analysis_engines`, `analyze_financial_health`
+ni `analyze_valuation`: ninguno de los motores existentes cambia.
 
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
   hoy una fuente de datos que los provea (ver docstring de
   `assemble_research_result`).
 - Leer o escribir la caché de datos normalizados
-  (investmentops.data_layer.cache): fuera de alcance, igual que ya se
-  documentó para `fetch_raw_data`/`fetch_and_normalize`.
-- El mensaje final en consola indicando dónde quedaron guardados los
-  reportes generados: tarea separada y posterior (ver TASKS.md, Fase 2,
-  "Orquestador y CLI"), que consumirá las rutas ya devueltas por
-  `generate_reports`/`investigate_and_generate_reports` a través de
-  `investmentops.cli.dispatch`.
-- Registrar la invocación de `assemble_trend_analysis` en el flujo de
-  análisis del orquestador e incluir su resultado (ya convertido a
-  `AnalysisResult` según `TREND_INTEGRATION.md`) en el `ResearchResult`
-  ensamblado, con manejo de fallos parciales: tareas separadas y
-  siguientes de esta misma sección de `TASKS.md`, que consumirán
-  `fetch_and_normalize_historical` como su pieza de obtención de datos.
+  (investmentops.data_layer.cache): fuera de alcance.
+- Incluir el resultado de `run_trend_analysis_engine` en el
+  `ResearchResult` ensamblado por `investigate`, con manejo de fallos
+  parciales: tarea separada y siguiente de esta misma sección de
+  TASKS.md.
+- La presentación de este resultado en los reportes Markdown/HTML: tarea
+  separada y posterior (ver TASKS.md, Fase 3, "Reportes").
 """
 
 from __future__ import annotations
@@ -210,12 +233,17 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from investmentops.ai_providers import AgentProviderSelectionError, AIProviderError
-from investmentops.analysis_engines.contracts import AnalysisResult
+from investmentops.analysis_engines.contracts import AnalysisProvenance, AnalysisResult
 from investmentops.analysis_engines.financial_health import (
     AGENT_ID as FINANCIAL_HEALTH_AGENT_ID,
     analyze_financial_health,
 )
 from investmentops.analysis_engines.prompts import PromptError
+from investmentops.analysis_engines.trends import (
+    AGENT_ID as TREND_AGENT_ID,
+    TrendAnalysisResult,
+    assemble_trend_analysis,
+)
 from investmentops.analysis_engines.valuation import (
     AGENT_ID as VALUATION_AGENT_ID,
     analyze_valuation,
@@ -253,6 +281,15 @@ from investmentops.reports import (
 #: y su correspondiente rama en `generate_reports`, sin modificar el
 #: orden ya establecido para markdown/html.
 ALL_REPORT_FORMATS: tuple[str, ...] = ("markdown", "html")
+
+#: Procedencia centinela usada para el `AnalysisResult` que envuelve el
+#: resultado del motor de evolución de ingresos y beneficios (ver
+#: "Registro de la invocación del motor..." en el docstring del módulo, y
+#: la decisión completa en `investmentops/core/TREND_INTEGRATION.md`).
+#: Etiqueta honestamente que esta interpretación NO fue generada por un
+#: modelo de lenguaje, a diferencia de salud financiera/valoración.
+TREND_ANALYSIS_AI_PROVIDER = "none"
+TREND_ANALYSIS_AI_MODEL = "deterministic"
 
 
 def fetch_raw_data(
@@ -388,15 +425,12 @@ def fetch_raw_historical_data(
         defecto. A diferencia de `fetch_raw_data` (que acepta cualquier
         `DataProvider`), aquí se requiere un objeto con un método
         `fetch_historical(ticker, period=..., limit=...)` — hoy solo
-        `FMPFundamentalsProvider` lo implementa, ya que es el único
-        proveedor de datos fundamentales del MVP (ver
-        `investmentops/data_providers/HISTORICAL_DATA.md`). Si no se
-        indica, se construye un `FMPFundamentalsProvider`.
+        `FMPFundamentalsProvider` lo implementa. Si no se indica, se
+        construye un `FMPFundamentalsProvider`.
     period:
         Granularidad de los periodos a solicitar (``"annual"`` o
         ``"quarter"``), propagada tal cual a `fetch_historical`. Por
-        defecto, ``"annual"`` (mismo valor por defecto ya elegido en
-        `FMPFundamentalsProvider.fetch_historical`).
+        defecto, ``"annual"``.
     limit:
         Número máximo de periodos históricos a solicitar, propagado tal
         cual a `fetch_historical`. Por defecto, ``5``.
@@ -490,6 +524,144 @@ def fetch_and_normalize_historical(
     return financial_statement_series_from_raw(raw)
 
 
+def _trend_analysis_result_to_analysis_result(
+    trend_result: TrendAnalysisResult,
+    *,
+    generated_at: datetime | None = None,
+) -> AnalysisResult:
+    """Convierte un `TrendAnalysisResult` en un `AnalysisResult` normal.
+
+    Implementa el adaptador decidido en
+    `investmentops/core/TREND_INTEGRATION.md`: el motor de evolución de
+    ingresos y beneficios (`investmentops.analysis_engines.trends`) no
+    invoca ningún proveedor de IA, por lo que su resultado
+    (`TrendAnalysisResult`) no lleva `provenance`. Esta función lo
+    envuelve en un `AnalysisResult` (el contrato común de
+    `investmentops.analysis_engines.contracts`, ya usado por salud
+    financiera y valoración) con una `AnalysisProvenance` **centinela**
+    (`ai_provider="none"`, `ai_model="deterministic"`) que etiqueta
+    honestamente que esta interpretación es determinística, no generada
+    por un modelo de lenguaje.
+
+    No modifica `TrendAnalysisResult` ni `AnalysisResult`/
+    `AnalysisProvenance`: es puramente un adaptador entre ambos tipos ya
+    existentes.
+
+    Parameters
+    ----------
+    trend_result:
+        El `TrendAnalysisResult` ya producido por
+        `investmentops.analysis_engines.trends.assemble_trend_analysis`.
+    generated_at:
+        Momento en que se generó esta interpretación. Si no se indica,
+        se usa el momento de la llamada (mismo criterio ya usado por
+        `assemble_research_result` para su propio `generated_at`).
+
+    Returns
+    -------
+    AnalysisResult
+        - `analysis_id`: `trend_result.analysis_id` (siempre
+          `TREND_AGENT_ID`, ``"trend_analysis"``).
+        - `findings`, `supporting_metrics`, `limitations`: tomados
+          directamente de `trend_result`, sin transformarlos.
+        - `provenance`: `AnalysisProvenance(ai_provider="none",
+          ai_model="deterministic", generated_at=...)`.
+    """
+    provenance = AnalysisProvenance(
+        ai_provider=TREND_ANALYSIS_AI_PROVIDER,
+        ai_model=TREND_ANALYSIS_AI_MODEL,
+        generated_at=generated_at if generated_at is not None else datetime.now(timezone.utc),
+    )
+
+    return AnalysisResult(
+        analysis_id=trend_result.analysis_id,
+        findings=list(trend_result.findings),
+        supporting_metrics=trend_result.supporting_metrics,
+        limitations=list(trend_result.limitations),
+        provenance=provenance,
+    )
+
+
+def run_trend_analysis_engine(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPFundamentalsProvider | None = None,
+    period: str = "annual",
+    limit: int = 5,
+) -> AnalysisResult:
+    """Registra la invocación del motor de evolución de ingresos y beneficios.
+
+    Cubre la tarea "Registrar la invocación de `assemble_trend_analysis`
+    en el flujo de análisis del orquestador, conforme a la decisión de
+    integración ya tomada, sin modificar los motores existentes"
+    (TASKS.md, Fase 3, "Orquestador").
+
+    Encadena, para `ticker`:
+
+    1. `fetch_and_normalize_historical(ticker, ...)`: obtiene y normaliza
+       la serie histórica de estados financieros.
+    2. `investmentops.analysis_engines.trends.assemble_trend_analysis(series)`:
+       calcula la variación periodo a periodo y sintetiza la tendencia
+       agregada de ingresos y beneficios (motor ya implementado, sin
+       modificar).
+    3. `_trend_analysis_result_to_analysis_result(...)`: envuelve ese
+       resultado en un `AnalysisResult` con procedencia centinela (ver
+       docstring de esa función y `TREND_INTEGRATION.md`).
+
+    No modifica `run_analysis_engines`, `analyze_financial_health` ni
+    `analyze_valuation`: ningún motor existente cambia. Tampoco se
+    invoca todavía desde `investigate`/`assemble_research_result`: esa
+    incorporación al `ResearchResult`, con manejo de fallos parciales
+    (serie histórica no disponible, error de normalización) sin detener
+    el resto del flujo, es la tarea siguiente y separada de esta misma
+    sección de TASKS.md.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a analizar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a
+        `fetch_and_normalize_historical`. Útil para pruebas, para no
+        depender de un `config.local.toml` real en disco.
+    provider:
+        Proveedor de datos ya construido, propagado a
+        `fetch_and_normalize_historical`. Pensado sobre todo para
+        pruebas.
+    period:
+        Granularidad de los periodos a solicitar, propagada tal cual a
+        `fetch_and_normalize_historical`. Por defecto, ``"annual"``.
+    limit:
+        Número máximo de periodos históricos a solicitar, propagado tal
+        cual a `fetch_and_normalize_historical`. Por defecto, ``5``.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado del motor de evolución de ingresos y beneficios,
+        ya envuelto en el contrato común (ver
+        `_trend_analysis_result_to_analysis_result`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_and_normalize_historical`. Esta función no captura ni
+        traduce esa excepción: el manejo de fallos parciales queda para
+        la tarea siguiente de integración en `investigate`.
+    NormalizationError
+        Ver `fetch_and_normalize_historical`.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    series = fetch_and_normalize_historical(
+        ticker, config=config, provider=provider, period=period, limit=limit
+    )
+    trend_result = assemble_trend_analysis(series)
+    return _trend_analysis_result_to_analysis_result(trend_result)
+
+
 def run_analysis_engines(
     company_data: NormalizedCompanyData,
     *,
@@ -504,7 +676,10 @@ def run_analysis_engines(
     invocarse. Ese comportamiento "todo o nada" se mantiene intacto para
     quien lo necesite explícitamente; `investigate` (en este mismo
     módulo) ofrece en cambio manejo de fallos parciales, invocando cada
-    agente por separado en vez de usar esta función.
+    agente por separado en vez de usar esta función. No incluye el motor
+    de evolución de ingresos y beneficios (`run_trend_analysis_engine`):
+    su incorporación al flujo de análisis es la tarea siguiente y
+    separada de TASKS.md, Fase 3, "Orquestador".
     """
     financial_health_result = analyze_financial_health(
         company_data.financial_statement, config=config
@@ -595,7 +770,9 @@ def investigate(
     `ResearchFailure`. Otras excepciones (ej. `ConfigError` si no se
     puede cargar `config.local.toml` en absoluto) sí se propagan, ya que
     representan un problema de configuración del entorno, no un fallo
-    parcial de una fuente o un agente concretos.
+    parcial de una fuente o un agente concretos. Esta función todavía no
+    invoca `run_trend_analysis_engine`: esa integración es la tarea
+    siguiente y separada de TASKS.md, Fase 3, "Orquestador".
     """
     try:
         company_data = fetch_and_normalize(ticker, config=config, provider=provider)
