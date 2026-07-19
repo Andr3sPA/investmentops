@@ -4,65 +4,82 @@
 
 ## Última tarea completada
 
-Fase 3, "Orquestador" → "Decidir cómo se integra `TrendAnalysisResult`
-(sin `AnalysisProvenance`) en `ResearchResult.analysis_results`... y
-documentar la decisión, sin modificar código todavía" (TASKS.md).
-
-Es una tarea de **diseño/documentación**, no de código: no se tocó
-ningún archivo `.py`.
-
-### Decisión tomada
-
-`investmentops/core/TREND_INTEGRATION.md` (nuevo). Resumen:
-
-- **No se modifica ningún contrato ya estable** (`AnalysisResult`,
-  `AnalysisProvenance` en `investmentops/analysis_engines/contracts.py`,
-  ni `ResearchResult` en `investmentops/core/research_result.py`).
-  `ResearchResult.analysis_results` sigue siendo `Sequence[AnalysisResult]`.
-- `TrendAnalysisResult` (`investmentops/analysis_engines/trends.py`,
-  ya implementado en una tarea previa) se incorporará convirtiéndolo a
-  un `AnalysisResult` normal mediante una función adaptadora, todavía
-  sin implementar (eso es la tarea siguiente de esta misma sección).
-- Esa conversión usará una `AnalysisProvenance` **centinela** explícita:
-  `ai_provider="none"`, `ai_model="deterministic"`, `generated_at` =
-  momento del ensamblado. No es un dato inventado: es una etiqueta
-  honesta de que esa interpretación concreta no vino de un modelo de
-  lenguaje (a diferencia de salud financiera/valoración), consistente
-  con el principio de trazabilidad de `ARCHITECTURE.md`.
-- Se descartó extender el contrato (`AnalysisResult.provenance`
-  opcional, o tipar `analysis_results` como una unión de tipos) porque
-  obligaría a modificar los tres consumidores ya estables
-  (`render_markdown`, `render_html`, `format_research_result`) sin
-  necesidad real, violando "Extensibilidad sin reescritura"
-  (`ARCHITECTURE.md`).
-
-Con esta decisión documentada, las tres subtareas de implementación que
-le siguen en la misma sección de `TASKS.md` (obtener/normalizar la
-serie histórica en el orquestador, registrar la invocación del motor,
-incluir el resultado en `ResearchResult` con manejo de fallos
-parciales) quedan desbloqueadas.
-
-## Archivos creados o modificados
-
-Creados:
-- `investmentops/core/TREND_INTEGRATION.md`
-
-Modificados:
-- `TASKS.md` (tarea marcada como completada, con referencia al nuevo
-  documento de decisión)
-- `PROGRESS.md` (este archivo)
-
-No modificados: ningún archivo `.py` del proyecto, ni `ROADMAP.md`,
-`GOALS.md`, `ARCHITECTURE.md`, `CONFIGURATION.md`,
-`config.example.toml`, ni ningún archivo de prompt.
-
-## Próxima tarea recomendada
-
 Fase 3, "Orquestador" → "Implementar en el orquestador la función que
 obtiene y normaliza la serie histórica de una empresa para un ticker
 (encadenando `FMPFundamentalsProvider.fetch_historical` con
 `financial_statement_series_from_raw`), como pieza reutilizable análoga
-a `fetch_and_normalize`."
+a `fetch_and_normalize`" (TASKS.md).
 
-Es la primera tarea de implementación que depende de la decisión de
-diseño recién documentada en `investmentops/core/TREND_INTEGRATION.md`.
+### Qué se implementó
+
+`investmentops/core/orchestrator.py` gana dos funciones nuevas, sobre la
+decisión de integración ya documentada en
+`investmentops/core/TREND_INTEGRATION.md`:
+
+- **`fetch_raw_historical_data(ticker, *, config=None, provider=None,
+  period="annual", limit=5) -> RawProviderData`**: equivalente
+  histórico de `fetch_raw_data` (Fase 1). En vez de invocar
+  `DataProvider.fetch(ticker)`, invoca
+  `FMPFundamentalsProvider.fetch_historical(ticker, period=period,
+  limit=limit)`. Por defecto construye un `FMPFundamentalsProvider`
+  (mismo proveedor ya elegido para el MVP); acepta un `provider`
+  inyectado (pensado para pruebas) siempre que exponga un método
+  `fetch_historical` con esa misma firma.
+- **`fetch_and_normalize_historical(ticker, *, config=None,
+  provider=None, period="annual", limit=5) -> FinancialStatementSeries`**:
+  equivalente histórico de `fetch_and_normalize` (Fase 1). Encadena
+  `fetch_raw_historical_data(ticker, ...)` con
+  `investmentops.data_layer.normalization.financial_statement_series_from_raw`
+  (ya implementada en una tarea previa de esta misma sección de la Fase
+  3), devolviendo un `FinancialStatementSeries` listo para
+  `investmentops.analysis_engines.trends.assemble_trend_analysis`.
+
+Ninguna de las dos funciones captura `DataProviderError` ni
+`NormalizationError`: las propagan tal cual, exactamente el mismo
+criterio ya documentado para `fetch_raw_data`/`fetch_and_normalize`. El
+manejo de fallos parciales sin detener el resto del flujo de
+`investigate` queda para la tarea siguiente de esta misma sección
+("Incluir el resultado de evolución de ingresos y beneficios en el
+`ResearchResult` ensamblado... con manejo de fallos parciales").
+
+`period`/`limit` se exponen con los mismos valores por defecto ya
+elegidos en `FMPFundamentalsProvider.fetch_historical`
+(`"annual"`/`5`), sin imponer un valor distinto desde el orquestador.
+
+Se actualizó también el docstring del módulo (encabezado y nueva
+sección "Obtención y normalización de la serie histórica") para dejar
+documentada esta extensión junto a las siete piezas ya existentes del
+mismo módulo (mismo criterio ya usado en el resto del archivo).
+
+## Archivos creados o modificados
+
+Modificados:
+- `investmentops/core/orchestrator.py` (nuevas funciones
+  `fetch_raw_historical_data`/`fetch_and_normalize_historical`, más
+  imports de `financial_statement_series_from_raw` y
+  `FinancialStatementSeries`; docstring del módulo actualizado)
+- `TASKS.md` (tarea marcada como completada, con referencia a las
+  funciones nuevas)
+- `PROGRESS.md` (este archivo)
+
+No modificados: ningún otro archivo `.py` del proyecto (no se tocó
+`investmentops/analysis_engines/trends.py`,
+`investmentops/data_layer/normalization.py`,
+`investmentops/data_providers/fundamentals.py`, ni ningún contrato de
+Fase 1/2), ni `ROADMAP.md`, `GOALS.md`, `ARCHITECTURE.md`,
+`CONFIGURATION.md`, `config.example.toml`, ni ningún archivo de prompt.
+
+## Próxima tarea recomendada
+
+Fase 3, "Orquestador" → "Registrar la invocación de
+`assemble_trend_analysis` en el flujo de análisis del orquestador,
+conforme a la decisión de integración ya tomada, sin modificar los
+motores existentes (salud financiera, valoración)."
+
+Esta tarea consumirá `fetch_and_normalize_historical` (recién
+implementada) y `assemble_trend_analysis`
+(`investmentops.analysis_engines.trends`, ya implementada) para
+construir el `AnalysisResult` centinela descrito en
+`investmentops/core/TREND_INTEGRATION.md`, dejando la incorporación
+final al `ResearchResult` (con manejo de fallos parciales) para la
+tarea siguiente y separada de esta misma sección.

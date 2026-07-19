@@ -1,10 +1,12 @@
 """Orquestador mínimo — disparo de la consulta al proveedor de datos, paso
 de esos datos crudos a la capa de normalización, invocación secuencial de
 los agentes de análisis, ensamblado del "Resultado de investigación"
-final, manejo de fallos parciales sin detener el resto del flujo, y
-generación de reportes (Markdown/HTML) tras ensamblar ese resultado.
+final, manejo de fallos parciales sin detener el resto del flujo,
+generación de reportes (Markdown/HTML) tras ensamblar ese resultado, y
+obtención/normalización de la serie histórica de ingresos y beneficios
+(Fase 3).
 
-Cubre siete tareas:
+Cubre ocho tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -31,9 +33,22 @@ Fase 2, "Orquestador y CLI" (TASKS.md):
   consumido por `investmentops.cli.dispatch` (ver ese módulo) para
   generar solo el/los formato(s) que el usuario pidió por CLI.
 
-Las siete funciones viven en el mismo módulo porque son piezas
+Fase 3, "Orquestador" (TASKS.md):
+- "Implementar en el orquestador la función que obtiene y normaliza la
+  serie histórica de una empresa para un ticker (encadenando
+  `FMPFundamentalsProvider.fetch_historical` con
+  `financial_statement_series_from_raw`), como pieza reutilizable
+  análoga a `fetch_and_normalize`." (`fetch_raw_historical_data`,
+  `fetch_and_normalize_historical`, esta tarea).
+
+Las siete primeras funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
-del flujo de una investigación", pasos 3-8).
+del flujo de una investigación", pasos 3-8). Las dos nuevas de esta
+tarea (`fetch_raw_historical_data`, `fetch_and_normalize_historical`) se
+suman al mismo módulo por el mismo motivo: son el equivalente histórico
+de `fetch_raw_data`/`fetch_and_normalize`, reutilizadas por la tarea
+siguiente de esta misma sección ("Registrar la invocación de
+`assemble_trend_analysis` en el flujo de análisis del orquestador").
 
 ## Manejo de fallos parciales (`investigate`)
 
@@ -100,42 +115,72 @@ En su lugar, existen dos funciones separadas:
   `generate_reports(result, ...)`, devolviendo la tupla `(result,
   report_paths)`.
 
-### Parámetro `formats` (nuevo en esta tarea)
+### Parámetro `formats`
 
-Ambas funciones aceptan ahora un parámetro opcional `formats: Sequence[str]
+Ambas funciones aceptan un parámetro opcional `formats: Sequence[str]
 | None`, con valores válidos `"markdown"` y `"html"`:
 
 - **`formats=None` (por defecto):** genera **ambos** formatos, en el
   mismo orden `[markdown_path, html_path]` ya usado desde que estas
-  funciones existen. Este es el comportamiento exacto que ya prueban
-  `test_core_orchestrator_reports.py` — no cambia para ningún llamador
-  existente que no pase `formats` explícitamente.
+  funciones existen.
 - **`formats=("markdown",)` / `("html",)`:** genera únicamente ese
   formato, devolviendo una lista de un solo elemento.
 - **`formats=("html", "markdown")` (o cualquier orden):** el orden de
   salida de `generate_reports` sigue siendo `[markdown_path, html_path]`
   si ambos están presentes en `formats` — el orden de la lista de
   entrada no determina el orden de salida, solo qué formatos se
-  incluyen. Esto evita que el orden dependa de cómo el llamador (ej. la
-  CLI) construya la lista.
-- Un valor desconocido en `formats` (algo distinto de `"markdown"`/
-  `"html"`) o una lista vacía levantan `ValueError`, ya que no representan
-  una elección de formato válida (fallo de programación/configuración
-  del llamador, no un fallo parcial de una fuente de datos o un agente).
+  incluyen.
+- Un valor desconocido en `formats` o una lista vacía levantan
+  `ValueError`.
 
-Esta extensión es la pieza que consume `investmentops.cli.dispatch` (ver
-ese módulo) para conectar el nuevo flag `--format` de la CLI (markdown,
-html o both) con la generación real de archivos, sin duplicar la lógica
-de resolución de rutas/guardado ya implementada en
-`investmentops.reports`.
+## Obtención y normalización de la serie histórica (`fetch_raw_historical_data` / `fetch_and_normalize_historical`)
 
-Ninguna de las dos funciones traduce fallos de la generación de reportes
-(ej. `ReportError` si no se puede escribir en disco, `ConfigError` si no
-se puede resolver `[output].output_dir`): se propagan tal cual, ya que
-representan un problema de configuración/entorno (ruta de salida no
-escribible), no un fallo parcial de una fuente de datos o un agente de
-análisis (esos ya quedan reflejados dentro del propio `ResearchResult`,
-ver "Manejo de fallos parciales" arriba).
+Cubre la tarea "Implementar en el orquestador la función que obtiene y
+normaliza la serie histórica de una empresa para un ticker" (TASKS.md,
+Fase 3, "Orquestador"), sobre la decisión de integración ya documentada
+en `investmentops/core/TREND_INTEGRATION.md`.
+
+Siguen exactamente el mismo patrón de dos capas ya usado por
+`fetch_raw_data`/`fetch_and_normalize` (Fase 1), aplicado a la variante
+histórica:
+
+- **`fetch_raw_historical_data(ticker, ...)`**: dispara la consulta al
+  proveedor de datos fundamentales, pero invocando
+  `fetch_historical(ticker, period=..., limit=...)` (ver
+  `investmentops.data_providers.fundamentals.FMPFundamentalsProvider.fetch_historical`)
+  en vez de `fetch(ticker)`. Por defecto construye un
+  `FMPFundamentalsProvider` (mismo proveedor ya elegido para el MVP),
+  pero acepta un `provider` inyectado — pensado sobre todo para
+  pruebas — siempre que exponga un método `fetch_historical` con la
+  misma firma (no se define un `Protocol` nuevo para esto: hoy solo
+  existe una integración concreta de proveedor de datos fundamentales,
+  y forzar un contrato adicional antes de tener un segundo proveedor
+  real sería sobre-diseño, mismo criterio ya aplicado en
+  `investmentops/data_providers/market_data.py` y otros módulos del
+  proyecto).
+- **`fetch_and_normalize_historical(ticker, ...)`**: encadena
+  `fetch_raw_historical_data(ticker, ...)` con
+  `investmentops.data_layer.normalization.financial_statement_series_from_raw`,
+  devolviendo un `FinancialStatementSeries` (ver
+  `investmentops.data_layer.financial_statement_series`) ya listo para
+  el motor de análisis de evolución de ingresos y beneficios
+  (`investmentops.analysis_engines.trends.assemble_trend_analysis`).
+
+Ninguna de las dos funciones captura `DataProviderError` ni
+`NormalizationError`: las propagan tal cual, exactamente el mismo
+criterio ya documentado para `fetch_raw_data`/`fetch_and_normalize` —
+el manejo de fallos parciales sin detener el resto del flujo es
+responsabilidad de `investigate` (o de la futura integración de este
+motor en ese mismo flujo, tarea separada y siguiente de esta misma
+sección de `TASKS.md`, "Registrar la invocación de
+`assemble_trend_analysis`..."), no de estas piezas de bajo nivel.
+
+`period`/`limit` se exponen tal cual con los mismos valores por defecto
+que ya usa `FMPFundamentalsProvider.fetch_historical`
+(``period="annual"``, ``limit=5``), sin imponer un valor distinto desde
+el orquestador: no hay hoy ningún caso de uso que justifique un valor
+por defecto diferente al ya elegido en la Fase 3, "Fuente de datos
+histórica".
 
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
@@ -149,6 +194,12 @@ Fuera de alcance de este módulo (aún):
   "Orquestador y CLI"), que consumirá las rutas ya devueltas por
   `generate_reports`/`investigate_and_generate_reports` a través de
   `investmentops.cli.dispatch`.
+- Registrar la invocación de `assemble_trend_analysis` en el flujo de
+  análisis del orquestador e incluir su resultado (ya convertido a
+  `AnalysisResult` según `TREND_INTEGRATION.md`) en el `ResearchResult`
+  ensamblado, con manejo de fallos parciales: tareas separadas y
+  siguientes de esta misma sección de `TASKS.md`, que consumirán
+  `fetch_and_normalize_historical` como su pieza de obtención de datos.
 """
 
 from __future__ import annotations
@@ -171,11 +222,15 @@ from investmentops.analysis_engines.valuation import (
 )
 from investmentops.core.research_result import ResearchFailure, ResearchResult
 from investmentops.data_layer.domain import Company
+from investmentops.data_layer.financial_statement_series import (
+    FinancialStatementSeries,
+)
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
 from investmentops.data_layer.normalization import (
     NormalizationError,
     financial_statement_from_raw,
+    financial_statement_series_from_raw,
     market_data_from_raw,
 )
 from investmentops.data_providers.contracts import (
@@ -299,6 +354,140 @@ def fetch_and_normalize(
         financial_statement=financial_statement,
         market_data=market_data,
     )
+
+
+def fetch_raw_historical_data(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPFundamentalsProvider | None = None,
+    period: str = "annual",
+    limit: int = 5,
+) -> RawProviderData:
+    """Consulta al proveedor de datos fundamentales la serie histórica de `ticker`.
+
+    Equivalente histórico de `fetch_raw_data`: en vez de invocar
+    `DataProvider.fetch(ticker)` (un único corte, el más reciente),
+    invoca `fetch_historical(ticker, period=..., limit=...)` (ver
+    `investmentops.data_providers.fundamentals.FMPFundamentalsProvider.fetch_historical`),
+    que conserva varios periodos históricos.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a consultar (ej. ``"AAPL"``). Se pasa
+        tal cual al proveedor, que es quien valida/normaliza su formato.
+    config:
+        Configuración ya cargada (como la que devuelve
+        `investmentops.config.load_config`), usada para construir el
+        proveedor por defecto si no se indica `provider` explícitamente.
+        Útil para pruebas, para no depender de un `config.local.toml`
+        real en disco. Se ignora si `provider` ya se indica.
+    provider:
+        Proveedor de datos ya construido a usar en vez del proveedor por
+        defecto. A diferencia de `fetch_raw_data` (que acepta cualquier
+        `DataProvider`), aquí se requiere un objeto con un método
+        `fetch_historical(ticker, period=..., limit=...)` — hoy solo
+        `FMPFundamentalsProvider` lo implementa, ya que es el único
+        proveedor de datos fundamentales del MVP (ver
+        `investmentops/data_providers/HISTORICAL_DATA.md`). Si no se
+        indica, se construye un `FMPFundamentalsProvider`.
+    period:
+        Granularidad de los periodos a solicitar (``"annual"`` o
+        ``"quarter"``), propagada tal cual a `fetch_historical`. Por
+        defecto, ``"annual"`` (mismo valor por defecto ya elegido en
+        `FMPFundamentalsProvider.fetch_historical`).
+    limit:
+        Número máximo de periodos históricos a solicitar, propagado tal
+        cual a `fetch_historical`. Por defecto, ``5``.
+
+    Returns
+    -------
+    RawProviderData
+        Los datos crudos históricos obtenidos (varios periodos en
+        `payload["income_statement"]`/`payload["balance_sheet_statement"]`,
+        cada punto ya con su propia procedencia), junto con los
+        metadatos de procedencia de la consulta completa.
+
+    Raises
+    ------
+    DataProviderError
+        Si el proveedor no responde, el ticker no existe, `period`/
+        `limit` son inválidos, o la respuesta no se puede interpretar
+        (ver `FMPFundamentalsProvider.fetch_historical`). Esta función no
+        captura ni traduce esa excepción.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    data_provider = provider if provider is not None else FMPFundamentalsProvider(config=config)
+    return data_provider.fetch_historical(ticker, period=period, limit=limit)
+
+
+def fetch_and_normalize_historical(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPFundamentalsProvider | None = None,
+    period: str = "annual",
+    limit: int = 5,
+) -> FinancialStatementSeries:
+    """Consulta al proveedor de datos y normaliza la serie histórica de `ticker`.
+
+    Equivalente histórico de `fetch_and_normalize`: encadena
+    `fetch_raw_historical_data(ticker, ...)` con
+    `investmentops.data_layer.normalization.financial_statement_series_from_raw`,
+    devolviendo un `FinancialStatementSeries` (ver
+    `investmentops.data_layer.FinancialStatementSeries`) listo para el
+    motor de análisis de evolución de ingresos y beneficios
+    (`investmentops.analysis_engines.trends.assemble_trend_analysis`).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a consultar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a `fetch_raw_historical_data`.
+        Útil para pruebas, para no depender de un `config.local.toml`
+        real en disco.
+    provider:
+        Proveedor de datos ya construido, propagado a
+        `fetch_raw_historical_data`. Pensado sobre todo para pruebas.
+    period:
+        Granularidad de los periodos a solicitar, propagada tal cual a
+        `fetch_raw_historical_data`.
+    limit:
+        Número máximo de periodos históricos a solicitar, propagado tal
+        cual a `fetch_raw_historical_data`.
+
+    Returns
+    -------
+    FinancialStatementSeries
+        La serie normalizada de estados financieros, ordenada del
+        periodo más reciente al más antiguo (mismo orden que ya entrega
+        FMP y que ya asume `FinancialStatementSeries`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_raw_historical_data`.
+    NormalizationError
+        Si los datos crudos obtenidos no traen los campos imprescindibles
+        para construir cada `FinancialStatement` de la serie (ver
+        `financial_statement_series_from_raw`). Esta función no captura
+        ni traduce esa excepción: el manejo de fallos parciales sin
+        detener el resto del flujo es responsabilidad de quien integre
+        esta pieza en `investigate` (tarea separada y siguiente de esta
+        misma sección de TASKS.md), mismo criterio ya aplicado por
+        `fetch_and_normalize` para el corte único.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    raw = fetch_raw_historical_data(
+        ticker, config=config, provider=provider, period=period, limit=limit
+    )
+    return financial_statement_series_from_raw(raw)
 
 
 def run_analysis_engines(
