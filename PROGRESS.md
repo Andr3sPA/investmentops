@@ -2,185 +2,89 @@
 
 **Última actualización:** 2026-07-19
 
-## Última tarea completada
+## Última tarea completada (mantenimiento de proceso, no de código)
 
-Fase 3 → Motor de análisis: evolución de ingresos y beneficios →
-*"Ensamblar el resultado estructurado del motor (hallazgos, métricas de
-soporte, advertencias si hay huecos en la serie)."*
+Regranulación de `TASKS.md`: se revisaron todas las tareas **pendientes**
+(`- [ ]`) del roadmap y se dividieron las que resultaban demasiado
+grandes para completarse de principio a fin en una única conversación de
+Claude Web, sin cambiar el alcance del proyecto ni el contenido de
+`ROADMAP.md`/`GOALS.md`. Ninguna tarea ya completada (`- [x]`) se
+modificó: su registro histórico se conserva intacto.
 
-## Resolución previa: duplicación `trends.py`/`trend.py`
+Esta tarea **no modificó ningún archivo Python** ni introdujo código
+nuevo: es puramente de reorganización de `TASKS.md`.
 
-Antes de esta sesión, quedaba pendiente de confirmación del usuario la
-duplicación ya señalada en actualizaciones anteriores de este archivo:
-`investmentops/analysis_engines/trend.py` (singular) era un módulo
-incompatible y no canónico que cubría parcialmente la misma sección con
-otra API (`PeriodGrowth`/`RevenueGrowthResult` con campo `values`), junto
-a sus propios archivos de prueba. El usuario confirmó y eliminó
-`trend.py` y sus tests asociados antes de esta sesión. `trends.py`
-(plural) queda como la única implementación vigente de este motor de
-análisis, sin ambigüedad para trabajo futuro.
+## Qué se dividió
 
-## Verificación previa (sin duplicar trabajo)
+- **Fase 3, "Orquestador"** (2 tareas → 4 tareas): se separó explícitamente
+  la decisión de diseño pendiente ya señalada en una actualización
+  anterior de este archivo (cómo integrar `TrendAnalysisResult`, que no
+  tiene `AnalysisProvenance`, dentro de `ResearchResult.analysis_results`)
+  como su propia tarea previa a cualquier código. Luego se separó la
+  obtención/normalización de la serie histórica (pieza reutilizable del
+  orquestador) del registro de la invocación del motor, y de su inclusión
+  final en el `ResearchResult` con manejo de fallos parciales.
+- **Fase 3, "Reportes"** (reordenada, sin cambiar cantidad): se movió la
+  tarea de diseño ("decidir el formato de presentación de la serie")
+  antes de las tareas de implementación en Markdown y HTML, siguiendo el
+  mismo orden ya usado en el resto del documento.
+- **Fase 4, "Normalización"** (3 tareas → 4 tareas): "Persistir las
+  noticias normalizadas en la caché local" se dividió en guardado y
+  lectura por separado, igual que ya está hecho para `financial_statement`/
+  `market_data` (Fase 1) y `financial_statement_series` (Fase 3).
+- **Fase 5, "Normalización"** (3 tareas → 4 tareas): mismo criterio que
+  Fase 4, aplicado a la caché de comparables.
+- **Fase 5, "Orquestador y CLI"** (4 tareas → 6 tareas): "Registrar el
+  nuevo proveedor y el nuevo motor" se separó en dos tareas (una por
+  componente). "Conectar el comando de comparación con el orquestador"
+  se separó en la función de orquestación que ejecuta y ensambla la
+  comparación, y la conexión de esa función con la CLI.
+- **Fase 5, "Reportes"** (3 tareas → 4 tareas): "Adaptar los generadores
+  para soportar un reporte de comparación" se dividió por formato
+  (Markdown y HTML), ya que cada adaptación toca un módulo distinto.
+- **Fase 6, "Motores de análisis por estrategia"** (4 tareas → 9 tareas):
+  era la división más significativa. "Implementar el motor de análisis
+  para la estrategia X" (value/growth/calidad) combinaba en una sola
+  tarea la escritura del prompt, la invocación al proveedor de IA y el
+  parseo de la respuesta — exactamente las responsabilidades que en la
+  Fase 1 (salud financiera, valoración) sí estaban separadas. Se aplicó
+  ese mismo patrón (prompt → invocación → parseo) a cada una de las tres
+  estrategias, y se eliminó la tarea separada de "ensamblar el resultado
+  de cada motor" al quedar cubierta por el paso de parseo de cada
+  estrategia.
 
-Se confirmó que la tarea de ensamblado **no** estaba satisfecha por
-trabajo anterior: `trends.py` ya tenía `calculate_revenue_growth`,
-`calculate_net_income_growth`, `detect_revenue_trend` y
-`detect_net_income_trend`, pero ninguna función empaquetaba esos
-resultados en una única estructura de salida con hallazgos, métricas de
-soporte y advertencias de huecos — exactamente lo que pide esta tarea, y
-que `TREND_METRICS.md` ya dejaba explícitamente para "la tarea de
-ensamblado del motor".
+## Qué NO se tocó
 
-## Qué se implementó
-
-**`investmentops/analysis_engines/trends.py`** (modificado):
-
-- `TrendAnalysisResult` (dataclass inmutable): tipo de salida de
-  `assemble_trend_analysis`. Campos: `analysis_id` (siempre `AGENT_ID`,
-  `"trend_analysis"`), `findings` (dos hallazgos, ingresos y beneficios),
-  `supporting_metrics` (mapeo) y `limitations` (advertencias). **No**
-  incluye `provenance`: a diferencia de los motores de salud
-  financiera/valoración (Fase 1), `TASKS.md` no define para este motor
-  ninguna tarea de "escribir prompt" ni "invocar proveedor de IA" — esta
-  tarea concreta solo pide ensamblar hallazgos/métricas/advertencias a
-  partir de cálculos ya deterministas. Forzar el contrato común
-  `AnalysisResult`/`AnalysisProvenance` (que exige proveedor y modelo de
-  IA) habría implicado fabricar una procedencia de IA inexistente, algo
-  que el proyecto evita explícitamente en otros lugares (ver
-  `FINANCIAL_HEALTH_METRICS.md`, "no se inventa una aproximación"). Cómo
-  este resultado se incorpora al `ResearchResult` común (que hoy solo
-  acepta `AnalysisResult`) queda para la tarea separada "Orquestador" de
-  esta misma fase.
-- `assemble_trend_analysis(series) -> TrendAnalysisResult`: encadena
-  `calculate_revenue_growth`, `calculate_net_income_growth`,
-  `detect_revenue_trend`, `detect_net_income_trend` (ya existentes) y
-  `_detect_series_gaps` (nueva). Construye:
-  - `findings`: dos hallazgos en lenguaje natural (uno para ingresos, uno
-    para beneficios), generados por plantilla determinista (`_describe_trend`)
-    a partir de `SeriesTrend.trend` — no producidos por un modelo de
-    lenguaje.
-  - `supporting_metrics`: `revenue_trend`/`net_income_trend` (tendencia
-    agregada) y `revenue_growth_by_period`/`net_income_growth_by_period`
-    (variación por periodo, keyed por `period_end` en ISO 8601).
-  - `limitations`: agrega, sin perder ninguna, las advertencias de nivel
-    de serie (`SINGLE_PERIOD_WARNING`/`NET_INCOME_SINGLE_PERIOD_WARNING`),
-    las advertencias por punto degenerado (periodo base en cero), las
-    advertencias de tendencia no determinable
-    (`NO_REVENUE_TREND_WARNING`/`NO_NET_INCOME_TREND_WARNING`) y las
-    advertencias de huecos irregulares.
-- `_detect_series_gaps(series) -> list[str]` (función interna): con al
-  menos tres periodos (al menos dos saltos consecutivos), calcula la
-  mediana de los intervalos en días entre periodos consecutivos como
-  estimación robusta de la periodicidad esperada de la serie (anual,
-  trimestral, u otra), y marca como "hueco irregular" cualquier salto
-  fuera de `[0.5, 1.5] × mediana`, o que sea cero o negativo (periodos
-  duplicados o fuera de orden). Con menos de tres periodos no hay base
-  para estimar una periodicidad esperada, así que no se reporta ninguna
-  advertencia de huecos en ese caso (documentado explícitamente como
-  limitación de la propia detección, no como ausencia de huecos
-  confirmada). No se inventa un umbral fijo de días (ej. "siempre 365"),
-  ya que eso no serviría para series trimestrales.
-- `_describe_trend(label, trend) -> str` (función interna): plantilla
-  determinista compartida por ingresos y beneficios para redactar el
-  hallazgo correspondiente a partir de `SeriesTrend`.
-- `AGENT_ID = "trend_analysis"` (constante nueva): identificador de este
-  motor, usado como `TrendAnalysisResult.analysis_id`.
-- No se modificó el comportamiento de `calculate_revenue_growth`/
-  `calculate_net_income_growth`/`detect_revenue_trend`/
-  `detect_net_income_trend`/`_classify`/`_aggregate_classifications` ya
-  existentes; solo se amplió el docstring del módulo para cubrir la
-  nueva sección de ensamblado.
-
-**`investmentops/tests/test_analysis_engines_trend_assembly.py`** (nuevo):
-cubre: estructura básica del `TrendAnalysisResult` (analysis_id,
-inmutabilidad), hallazgos (uno por métrica, texto de tendencia creciente,
-texto de "sin datos suficientes" para series de un solo periodo),
-métricas de soporte (tendencias agregadas, variación por periodo keyed
-por fecha ISO, caso vacío para series de un solo periodo), advertencias
-(de nivel de serie, por punto degenerado, ausencia de limitaciones para
-una serie limpia y consistente), y detección de huecos (serie anual
-regular sin advertencias, un hueco de dos años en una serie por lo demás
-anual, ausencia de detección con menos de tres periodos, y detección de
-periodos duplicados/fuera de orden con brecha cero).
+- Ninguna tarea marcada `- [x]` (todo el trabajo ya completado de las
+  Fases 1 a 3 permanece exactamente igual, con sus referencias a
+  archivos concretos).
+- Tareas pendientes que ya tenían una sola responsabilidad clara y un
+  alcance verificable (ej. Fases 7, 8 y 9 casi en su totalidad, y varias
+  tareas de las Fases 4-6 que ya estaban bien acotadas).
+- `ROADMAP.md`, `GOALS.md` y `ARCHITECTURE.md`: no se modificó ningún
+  otro documento del proyecto.
+- Ningún archivo `.py`: esta tarea no tocó código.
 
 ## Archivos creados o modificados
 
-Creados:
-- `investmentops/tests/test_analysis_engines_trend_assembly.py` (nuevo)
-
 Modificados:
-- `investmentops/analysis_engines/trends.py` (se agregaron
-  `TrendAnalysisResult`, `assemble_trend_analysis`,
-  `_detect_series_gaps`, `_describe_trend`, `AGENT_ID`,
-  `_GAP_TOLERANCE_LOWER`/`_GAP_TOLERANCE_UPPER`; el resto del módulo no
-  cambió de comportamiento)
-- `TASKS.md` (tarea marcada como completada, Fase 3, "Motor de análisis:
-  evolución de ingresos y beneficios")
+- `TASKS.md` (regranulación de tareas pendientes; se agregó un anexo al
+  final documentando los criterios de división usados)
 - `PROGRESS.md` (este archivo)
 
-Eliminados (por el usuario, antes de esta sesión, confirmado):
-- `investmentops/analysis_engines/trend.py`
-- Sus archivos de prueba asociados (`test_analysis_engines_trend.py`,
-  `test_analysis_engines_trend_revenue.py`)
-
-No modificados: `GOALS.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
-`CONFIGURATION.md`, `config.example.toml`, `TREND_METRICS.md`, ni ningún
-otro módulo de código Python existente (en particular, no se tocó
-`investmentops/core/orchestrator.py`: registrar este motor en el
-orquestador es la tarea siguiente, separada).
-
-## Verificación realizada
-
-Se revisaron manualmente los 24 casos de prueba nuevos
-(`test_analysis_engines_trend_assembly.py`) contra la lógica de
-`assemble_trend_analysis`/`_detect_series_gaps`/`_describe_trend`,
-confirmando en particular:
-- Una serie anual consistentemente creciente de 4 periodos produce
-  `revenue_trend="creciente"`, `net_income_trend="creciente"`, hallazgos
-  con la palabra "creciente", y `limitations == []` (sin huecos, sin
-  advertencias de casos degenerados).
-- Sustituir un periodo intermedio por un salto de 2 años en una serie
-  por lo demás anual produce exactamente una advertencia de "hueco
-  irregular" mencionando ambos extremos del salto.
-- Una serie de un único periodo produce hallazgos de "no hay suficientes
-  datos", `supporting_metrics` con diccionarios de variación vacíos y
-  tendencias `None`, y las cuatro advertencias de nivel de serie/
-  tendencia esperadas.
-- Un periodo duplicado (misma fecha dos veces) se marca siempre como
-  hueco irregular (brecha de 0 días), independientemente de la mediana
-  del resto de la serie.
-
-No se ejecutó el entorno real de pruebas (`pytest`) en esta sesión por
-no tener acceso al repositorio del usuario; los archivos se entregan
-como artifacts para que el usuario los copie y corra la suite completa.
-
-## Problemas encontrados
-
-Ninguno nuevo. Se mantiene, ya anotado en actualizaciones previas, el
-hallazgo sobre la duplicación de carpetas de pruebas (`tests/` vs.
-`investmentops/tests/`), sin resolver por no ser parte del alcance de
-esta tarea.
+No modificados: todo el código Python del proyecto, `ROADMAP.md`,
+`GOALS.md`, `ARCHITECTURE.md`, `CONFIGURATION.md`, `config.example.toml`,
+ni ningún archivo de prompt.
 
 ## Próxima tarea recomendada
 
-La siguiente sección pendiente de `TASKS.md` (Fase 3, "Orquestador") no
-tiene tareas marcadas como completadas todavía:
+Con el roadmap ya regranulado, la siguiente tarea pendiente en orden es
+la primera subtarea nueva de Fase 3 → "Orquestador":
 
-> "Registrar el nuevo motor de análisis en el flujo del orquestador sin
-> modificar los motores existentes."
->
-> "Incluir el nuevo resultado en el 'Resultado de investigación'
-> ensamblado."
+> "Decidir cómo se integra `TrendAnalysisResult` (sin `AnalysisProvenance`)
+> en `ResearchResult.analysis_results`... y documentar la decisión, sin
+> modificar código todavía."
 
-Antes de implementarla, conviene decidir explícitamente cómo un
-`TrendAnalysisResult` (sin `AnalysisProvenance`) se incorpora a
-`ResearchResult.analysis_results`, que hoy es
-`Sequence[AnalysisResult]` (contrato que sí exige procedencia de IA).
-Esta decisión de diseño no se tomó en la presente sesión porque
-correspondía estrictamente a la tarea de ensamblado, no a la de
-integración con el orquestador; se deja señalada aquí para que la
-siguiente sesión la aborde explícitamente antes de escribir código (por
-ejemplo: extender `ResearchResult` para aceptar un tipo de resultado más
-general, o construir una `AnalysisProvenance` sintética marcando
-`ai_provider="none"`/`ai_model="deterministic"`, u otra alternativa —
-ninguna de las tres se ha decidido todavía).
+Es una tarea de diseño/documentación (no de código), pensada para
+desbloquear las tres subtareas de implementación que le siguen en la
+misma sección.

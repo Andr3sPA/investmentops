@@ -3,12 +3,15 @@
 Desglose de tareas por fase, derivado de `ROADMAP.md`, `ARCHITECTURE.md` y `GOALS.md`.
 
 Reglas de este documento:
-- Cada tarea es pequeña: implementable en menos de una hora.
+- Cada tarea es pequeña: implementable en menos de una hora (en una única conversación de Claude Web).
 - No se describe código, solo el trabajo a realizar.
 - Las tareas respetan las capas definidas en `ARCHITECTURE.md` (CLI, orquestador, fuentes de datos, normalización/almacenamiento, motores de análisis, reportes).
 - Ninguna tarea de ninguna fase debe introducir un veredicto de compra/venta, autenticación, servidor HTTP, ni gestión de portafolio (fuera de alcance según `GOALS.md`).
+- Cada tarea tiene una única responsabilidad, toca pocos archivos relacionados y puede completarse (implementación + actualización de `TASKS.md`/`PROGRESS.md`) sin dejar trabajo a medio hacer.
 
 Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las marcadas con `- [ ]` (o sin marcar) siguen pendientes. Se van marcando a medida que se implementan, una por conversación, según el flujo de trabajo acordado.
+
+> Nota sobre esta revisión: las tareas ya completadas (`- [x]`) se dejan intactas, tal como quedaron documentadas cuando se implementaron. La regranulación (dividir tareas grandes en subtareas más pequeñas) se aplicó únicamente a las tareas pendientes (`- [ ]`), que son las que ejecutará una futura conversación de Claude Web. Ver el resumen de criterios de división al final de este documento.
 
 ---
 
@@ -138,13 +141,21 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 - [x] Ensamblar el resultado estructurado del motor (hallazgos, métricas de soporte, advertencias si hay huecos en la serie). — `assemble_trend_analysis`/`TrendAnalysisResult` en `investmentops/analysis_engines/trends.py` (ver PROGRESS.md). Encadena `calculate_revenue_growth`/`calculate_net_income_growth`/`detect_revenue_trend`/`detect_net_income_trend` (ya implementadas) y produce un `TrendAnalysisResult` con: `findings` (dos hallazgos en lenguaje natural generados por plantilla determinista, uno para ingresos y uno para beneficios, a partir de la tendencia agregada — no vía IA, ver nota abajo), `supporting_metrics` (tendencia agregada de cada serie + variación por periodo, keyed por `period_end` ISO 8601) y `limitations` (advertencias de nivel de serie, por punto degenerado, de tendencia no determinable, y huecos irregulares en el calendario, detectados con `_detect_series_gaps` comparando cada intervalo contra la mediana de intervalos de la serie, sin umbral fijo de días). No usa `AnalysisResult`/`AnalysisProvenance` (el contrato común de Fase 1): este motor no invoca ningún proveedor de IA en esta tarea (`TASKS.md` no define para él tareas de "escribir prompt" ni "invocar proveedor de IA", a diferencia de salud financiera/valoración), por lo que forzar una `AnalysisProvenance` implicaría fabricar una procedencia de IA inexistente. Cómo este resultado se incorpora al `ResearchResult` común es la tarea siguiente y separada de "Orquestador".
 
 ### Orquestador
-- Registrar el nuevo motor de análisis en el flujo del orquestador sin modificar los motores existentes.
-- Incluir el nuevo resultado en el "Resultado de investigación" ensamblado.
+
+> Nota (regranulado): la integración de `TrendAnalysisResult` en el flujo del orquestador quedaba, según `PROGRESS.md`, pendiente de una decisión de diseño explícita (`TrendAnalysisResult` no tiene `AnalysisProvenance`, mientras que `ResearchResult.analysis_results` hoy es `Sequence[AnalysisResult]`). Se divide en cuatro tareas: primero la decisión de diseño (documentación, sin tocar código), luego la obtención/normalización de la serie histórica como pieza reutilizable, luego el registro de la invocación del motor, y por último su inclusión en el `ResearchResult` con manejo de fallos parciales.
+
+- [ ] Decidir cómo se integra `TrendAnalysisResult` (sin `AnalysisProvenance`) en `ResearchResult.analysis_results` — evaluar entre extender el contrato para aceptar un tipo de resultado más general o construir una `AnalysisProvenance` sintética (ej. `ai_provider="none"`, `ai_model="deterministic"`) — y documentar la decisión, sin modificar código todavía.
+- [ ] Implementar en el orquestador la función que obtiene y normaliza la serie histórica de una empresa para un ticker (encadenando `FMPFundamentalsProvider.fetch_historical` con `financial_statement_series_from_raw`), como pieza reutilizable análoga a `fetch_and_normalize`.
+- [ ] Registrar la invocación de `assemble_trend_analysis` en el flujo de análisis del orquestador, conforme a la decisión de integración ya tomada, sin modificar los motores existentes (salud financiera, valoración).
+- [ ] Incluir el resultado de evolución de ingresos y beneficios en el `ResearchResult` ensamblado, incluyendo el manejo de fallos parciales (serie histórica no disponible, error de normalización) sin detener el resto del flujo, siguiendo el mismo criterio ya usado por `investigate` para los demás agentes.
 
 ### Reportes
-- Añadir la sección "Evolución de ingresos y beneficios" a la plantilla Markdown.
-- Añadir la misma sección a la plantilla HTML.
-- Decidir el formato de presentación de la serie (tabla simple vs. descripción textual) para esta fase.
+
+> Nota (regranulado): se reordenó la tarea de diseño ("decidir el formato de presentación") antes de las tareas de implementación en Markdown/HTML, siguiendo el mismo orden ya usado en el resto del documento (definición antes que implementación). No se agregó ni se quitó ninguna tarea.
+
+- [ ] Decidir el formato de presentación de la serie (tabla simple vs. descripción textual) para esta fase.
+- [ ] Añadir la sección "Evolución de ingresos y beneficios" a la plantilla Markdown, conforme al formato ya decidido.
+- [ ] Añadir la misma sección a la plantilla HTML, conforme al formato ya decidido.
 
 ### Verificación
 - Probar el flujo completo con una empresa que tenga histórico disponible y revisar que la tendencia calculada es coherente.
@@ -154,30 +165,31 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 4 — Analizar noticias recientes
 
 ### Fuente de datos de noticias
-- Elegir el proveedor de noticias a usar para el MVP.
-- Implementar el contrato de "data provider" para noticias (ticker/nombre de empresa in, lista de eventos crudos out).
-- Adjuntar metadatos de procedencia (fuente, fecha de publicación, fecha de consulta) a cada noticia cruda.
-- Implementar manejo de error si el proveedor de noticias falla o no devuelve resultados.
+- [ ] Elegir el proveedor de noticias a usar para el MVP.
+- [ ] Implementar el contrato de "data provider" para noticias (ticker/nombre de empresa in, lista de eventos crudos out).
+- [ ] Adjuntar metadatos de procedencia (fuente, fecha de publicación, fecha de consulta) a cada noticia cruda.
+- [ ] Implementar manejo de error si el proveedor de noticias falla o no devuelve resultados.
 
 ### Normalización
-- Definir el modelo de dominio "Noticias" (fecha, fuente, resumen).
-- Implementar la transformación de noticias crudas al modelo normalizado.
-- Persistir las noticias normalizadas en la caché local.
+- [ ] Definir el modelo de dominio "Noticias" (fecha, fuente, resumen).
+- [ ] Implementar la transformación de noticias crudas al modelo normalizado.
+- [ ] Implementar el guardado de noticias normalizadas en la caché local tras cada consulta.
+- [ ] Implementar la lectura de noticias normalizadas desde caché para evitar una nueva llamada al proveedor si el dato ya existe y es reciente.
 
 ### Motor de análisis: noticias relevantes
-- Definir el criterio básico de relevancia/filtrado de noticias para el MVP (ej. ventana de tiempo reciente).
-- Implementar el filtrado de noticias según ese criterio.
-- Implementar un resumen breve por noticia relevante (o selección del resumen ya provisto por la fuente).
-- Ensamblar el resultado estructurado del motor (hallazgos, lista de noticias relevantes, advertencias si no hay noticias).
+- [ ] Definir el criterio básico de relevancia/filtrado de noticias para el MVP (ej. ventana de tiempo reciente).
+- [ ] Implementar el filtrado de noticias según ese criterio.
+- [ ] Implementar un resumen breve por noticia relevante (o selección del resumen ya provisto por la fuente).
+- [ ] Ensamblar el resultado estructurado del motor (hallazgos, lista de noticias relevantes, advertencias si no hay noticias).
 
 ### Orquestador
-- Registrar el nuevo proveedor de noticias sin modificar los proveedores existentes.
-- Registrar el nuevo motor de análisis sin modificar los motores existentes.
-- Incluir el nuevo resultado en el "Resultado de investigación".
+- [ ] Registrar el nuevo proveedor de noticias sin modificar los proveedores existentes.
+- [ ] Registrar el nuevo motor de análisis sin modificar los motores existentes.
+- [ ] Incluir el nuevo resultado en el "Resultado de investigación".
 
 ### Reportes
-- Añadir la sección "Noticias recientes relevantes" a la plantilla Markdown.
-- Añadir la misma sección a la plantilla HTML.
+- [ ] Añadir la sección "Noticias recientes relevantes" a la plantilla Markdown.
+- [ ] Añadir la misma sección a la plantilla HTML.
 
 ### Verificación
 - Probar el flujo con una empresa que tenga noticias recientes y revisar que aparecen en el reporte con su fuente y fecha.
@@ -188,31 +200,41 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 5 — Comparar con empresas similares
 
 ### Fuente de datos de comparables
-- Elegir el proveedor o método para obtener empresas pares/sector de una empresa dada.
-- Implementar la consulta de comparables (lista de empresas pares) para un ticker.
-- Implementar la consulta de métricas clave (las ya normalizadas en fases previas) para cada empresa par.
-- Adjuntar metadatos de procedencia a los datos de comparables.
+- [ ] Elegir el proveedor o método para obtener empresas pares/sector de una empresa dada.
+- [ ] Implementar la consulta de comparables (lista de empresas pares) para un ticker.
+- [ ] Implementar la consulta de métricas clave (las ya normalizadas en fases previas) para cada empresa par.
+- [ ] Adjuntar metadatos de procedencia a los datos de comparables.
 
 ### Normalización
-- Definir el modelo de dominio "Comparables" (conjunto de empresas pares y sus métricas equivalentes).
-- Implementar la transformación de los datos crudos de comparables al modelo normalizado.
-- Persistir los comparables normalizados en la caché local.
+- [ ] Definir el modelo de dominio "Comparables" (conjunto de empresas pares y sus métricas equivalentes).
+- [ ] Implementar la transformación de los datos crudos de comparables al modelo normalizado.
+- [ ] Implementar el guardado de comparables normalizados en la caché local tras cada consulta.
+- [ ] Implementar la lectura de comparables normalizados desde caché para evitar una nueva llamada al proveedor si el dato ya existe y es reciente.
 
 ### Motor de análisis: posicionamiento relativo
-- Definir qué métricas clave se comparan lado a lado (ej. valoración, márgenes, crecimiento).
-- Implementar el cálculo de la posición relativa de la empresa frente a sus pares en cada métrica.
-- Ensamblar el resultado estructurado del motor (hallazgos, tabla comparativa, advertencias si faltan datos de algún par).
+- [ ] Definir qué métricas clave se comparan lado a lado (ej. valoración, márgenes, crecimiento).
+- [ ] Implementar el cálculo de la posición relativa de la empresa frente a sus pares en cada métrica.
+- [ ] Ensamblar el resultado estructurado del motor (hallazgos, tabla comparativa, advertencias si faltan datos de algún par).
 
 ### Orquestador y CLI
-- Registrar el nuevo proveedor y el nuevo motor sin modificar los existentes.
-- Diseñar la sintaxis del nuevo comando CLI para comparar dos o más empresas directamente.
-- Implementar el parseo de argumentos del comando de comparación (lista de tickers).
-- Conectar el comando de comparación con el orquestador, reutilizando el flujo existente para cada empresa involucrada.
+
+> Nota (regranulado): "Registrar el nuevo proveedor y el nuevo motor" se dividió en dos tareas (una por componente), siguiendo el mismo patrón ya usado en las Fases 3 y 4. "Conectar el comando de comparación con el orquestador" se dividió en la implementación de la función de orquestación (ejecutar la investigación de varias empresas y ensamblar el resultado comparativo) y la conexión de esa función con la CLI, ya que combinaban dos responsabilidades distintas en una sola tarea.
+
+- [ ] Registrar el nuevo proveedor de comparables sin modificar los proveedores existentes.
+- [ ] Registrar el nuevo motor de posicionamiento relativo sin modificar los motores existentes.
+- [ ] Diseñar la sintaxis del nuevo comando CLI para comparar dos o más empresas directamente.
+- [ ] Implementar el parseo de argumentos del comando de comparación (lista de tickers).
+- [ ] Implementar en el orquestador la función que ejecuta la investigación de cada empresa involucrada en una comparación y ensambla sus resultados individuales en un resultado comparativo, reutilizando el flujo de investigación ya existente.
+- [ ] Conectar el comando CLI de comparación con esa función del orquestador.
 
 ### Reportes
-- Añadir la sección "Comparables del sector" a la plantilla Markdown.
-- Añadir la misma sección a la plantilla HTML.
-- Adaptar los generadores para soportar un reporte de comparación (varias empresas) además del reporte individual.
+
+> Nota (regranulado): "Adaptar los generadores para soportar un reporte de comparación" se dividió por formato (Markdown y HTML), ya que cada adaptación toca un módulo distinto.
+
+- [ ] Añadir la sección "Comparables del sector" a la plantilla Markdown.
+- [ ] Añadir la misma sección a la plantilla HTML.
+- [ ] Adaptar el generador Markdown para soportar un reporte de comparación (varias empresas) además del reporte individual.
+- [ ] Adaptar el generador HTML para soportar un reporte de comparación (varias empresas) además del reporte individual.
 
 ### Verificación
 - Probar el comando de investigación individual y confirmar que ahora incluye la sección de comparables.
@@ -223,23 +245,31 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 6 — Lecturas por estrategia de inversión
 
 ### Diseño de estrategias
-- Listar las estrategias/escuelas de inversión a cubrir en el MVP (ej. value, growth, calidad).
-- Para cada estrategia, definir de forma breve qué datos del modelo de dominio utiliza y qué pregunta responde.
+- [ ] Listar las estrategias/escuelas de inversión a cubrir en el MVP (ej. value, growth, calidad).
+- [ ] Para cada estrategia, definir de forma breve qué datos del modelo de dominio utiliza y qué pregunta responde.
 
 ### Motores de análisis por estrategia
-- Implementar el motor de análisis para la estrategia "value" (interpreta datos ya existentes, sin nuevas fuentes).
-- Implementar el motor de análisis para la estrategia "growth".
-- Implementar el motor de análisis para la estrategia "calidad".
-- Ensamblar el resultado estructurado de cada motor, dejando explícito que es una lectura desde un marco particular, no un veredicto.
+
+> Nota (regranulado): "Implementar el motor de análisis para la estrategia X" combinaba, en una sola tarea, la escritura del prompt, la invocación al proveedor de IA y el parseo de la respuesta — el mismo conjunto de responsabilidades que en la Fase 1 (salud financiera, valoración) sí estaban separadas en tareas independientes. Se dividió cada estrategia siguiendo ese mismo patrón ya usado (prompt → invocación → parseo), y se eliminó la tarea separada "Ensamblar el resultado estructurado de cada motor" al quedar cubierta por el paso de parseo de cada estrategia. Como estos motores "interpretan datos ya existentes, sin nuevas fuentes" (ver `ROADMAP.md`), no incluyen un paso de cálculo determinístico nuevo (ya cubierto por los modelos normalizados existentes).
+
+- [ ] Escribir el archivo de prompt del agente de estrategia "value" (fuera del código Python), indicando su marco de análisis y prohibiendo explícitamente cualquier recomendación de compra/venta o veredicto.
+- [ ] Implementar la invocación al proveedor de IA configurado para el agente "value", enviando los datos normalizados ya existentes (sin nuevas fuentes ni cálculos adicionales) junto con el prompt.
+- [ ] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente "value" (hallazgos, procedencia de IA, dejando explícito que es una lectura desde un marco particular, no un veredicto).
+- [ ] Escribir el archivo de prompt del agente de estrategia "growth" (fuera del código Python), indicando su marco de análisis y prohibiendo explícitamente cualquier recomendación de compra/venta o veredicto.
+- [ ] Implementar la invocación al proveedor de IA configurado para el agente "growth", enviando los datos normalizados ya existentes junto con el prompt.
+- [ ] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente "growth" (hallazgos, procedencia de IA, dejando explícito que es una lectura desde un marco particular, no un veredicto).
+- [ ] Escribir el archivo de prompt del agente de estrategia "calidad" (fuera del código Python), indicando su marco de análisis y prohibiendo explícitamente cualquier recomendación de compra/venta o veredicto.
+- [ ] Implementar la invocación al proveedor de IA configurado para el agente "calidad", enviando los datos normalizados ya existentes junto con el prompt.
+- [ ] Implementar el parseo de la respuesta del modelo al resultado estructurado del agente "calidad" (hallazgos, procedencia de IA, dejando explícito que es una lectura desde un marco particular, no un veredicto).
 
 ### Orquestador
-- Registrar los nuevos motores de estrategia sin modificar los motores existentes.
-- Incluir los resultados de cada estrategia en el "Resultado de investigación" como entradas independientes y contrastables.
+- [ ] Registrar los nuevos motores de estrategia sin modificar los motores existentes.
+- [ ] Incluir los resultados de cada estrategia en el "Resultado de investigación" como entradas independientes y contrastables.
 
 ### Reportes
-- Añadir la sección "Lecturas por estrategia de inversión" a la plantilla Markdown, presentando cada estrategia por separado.
-- Añadir la misma sección a la plantilla HTML.
-- Revisar que ninguna sección fusiona las lecturas en una única recomendación o veredicto.
+- [ ] Añadir la sección "Lecturas por estrategia de inversión" a la plantilla Markdown, presentando cada estrategia por separado.
+- [ ] Añadir la misma sección a la plantilla HTML.
+- [ ] Revisar que ninguna sección fusiona las lecturas en una única recomendación o veredicto.
 
 ### Verificación
 - Probar el flujo completo con una empresa real y revisar que las distintas lecturas de estrategia aparecen una junto a otra, sin mezclarse.
@@ -250,18 +280,18 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 7 — Registro personal de investigaciones
 
 ### Modelo de histórico
-- Definir qué campos del histórico ya guardado (desde la capa de normalización/caché) se expondrán al usuario (empresa, fecha, análisis ejecutados).
-- Confirmar que el histórico no incluye datos de portafolio (posiciones, montos, rendimientos), conforme a `GOALS.md`.
+- [ ] Definir qué campos del histórico ya guardado (desde la capa de normalización/caché) se expondrán al usuario (empresa, fecha, análisis ejecutados).
+- [ ] Confirmar que el histórico no incluye datos de portafolio (posiciones, montos, rendimientos), conforme a `GOALS.md`.
 
 ### Capa de datos
-- Implementar una función de consulta que liste las investigaciones previas guardadas en caché/histórico.
-- Implementar una función que recupere el detalle de una investigación previa específica sin volver a ejecutarlas.
+- [ ] Implementar una función de consulta que liste las investigaciones previas guardadas en caché/histórico.
+- [ ] Implementar una función que recupere el detalle de una investigación previa específica sin volver a ejecutarlas.
 
 ### CLI
-- Definir la sintaxis del nuevo comando para listar investigaciones anteriores.
-- Implementar el comando de listado (empresa, fecha de la última investigación).
-- Definir la sintaxis del nuevo comando para ver el detalle de una investigación anterior específica.
-- Implementar el comando de detalle, reutilizando los generadores de reporte existentes si aplica.
+- [ ] Definir la sintaxis del nuevo comando para listar investigaciones anteriores.
+- [ ] Implementar el comando de listado (empresa, fecha de la última investigación).
+- [ ] Definir la sintaxis del nuevo comando para ver el detalle de una investigación anterior específica.
+- [ ] Implementar el comando de detalle, reutilizando los generadores de reporte existentes si aplica.
 
 ### Verificación
 - Investigar dos empresas distintas, luego listar el histórico y confirmar que ambas aparecen con su fecha correcta.
@@ -272,20 +302,20 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 8 — Watchlist
 
 ### Modelo de watchlist
-- Definir la estructura de almacenamiento local de la watchlist (lista de tickers, sin datos de portafolio).
+- [ ] Definir la estructura de almacenamiento local de la watchlist (lista de tickers, sin datos de portafolio).
 
 ### Capa de datos
-- Implementar la función para agregar un ticker a la watchlist local.
-- Implementar la función para quitar un ticker de la watchlist local.
-- Implementar la función para listar los tickers actuales en la watchlist.
+- [ ] Implementar la función para agregar un ticker a la watchlist local.
+- [ ] Implementar la función para quitar un ticker de la watchlist local.
+- [ ] Implementar la función para listar los tickers actuales en la watchlist.
 
 ### CLI
-- Definir la sintaxis de los comandos de watchlist (agregar, quitar, listar).
-- Implementar el comando para agregar una empresa a la watchlist.
-- Implementar el comando para quitar una empresa de la watchlist.
-- Implementar el comando para listar la watchlist actual.
-- Definir la sintaxis del comando para re-investigar todas las empresas de la watchlist de una sola vez.
-- Implementar ese comando, reutilizando el orquestador existente para cada ticker de la lista.
+- [ ] Definir la sintaxis de los comandos de watchlist (agregar, quitar, listar).
+- [ ] Implementar el comando para agregar una empresa a la watchlist.
+- [ ] Implementar el comando para quitar una empresa de la watchlist.
+- [ ] Implementar el comando para listar la watchlist actual.
+- [ ] Definir la sintaxis del comando para re-investigar todas las empresas de la watchlist de una sola vez.
+- [ ] Implementar ese comando, reutilizando el orquestador existente para cada ticker de la lista.
 
 ### Verificación
 - Agregar, listar y quitar empresas de la watchlist y confirmar que los cambios persisten entre ejecuciones.
@@ -296,21 +326,21 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 9 — Automatización diaria
 
 ### Diseño de la ejecución programada
-- Definir el mecanismo local a usar para programar la ejecución (scheduler del sistema operativo), sin introducir un servidor.
-- Documentar los pasos para que el usuario configure la ejecución periódica en su propio entorno.
+- [ ] Definir el mecanismo local a usar para programar la ejecución (scheduler del sistema operativo), sin introducir un servidor.
+- [ ] Documentar los pasos para que el usuario configure la ejecución periódica en su propio entorno.
 
 ### Detección de cambios
-- Definir qué se considera "cambio relevante" desde la última ejecución (ej. nuevas noticias, variación de valoración por encima de un umbral).
-- Implementar la comparación entre el resultado de investigación actual y el guardado en el histórico de la ejecución anterior para el mismo ticker.
-- Implementar el marcado de qué elementos cambiaron respecto a la ejecución previa.
+- [ ] Definir qué se considera "cambio relevante" desde la última ejecución (ej. nuevas noticias, variación de valoración por encima de un umbral).
+- [ ] Implementar la comparación entre el resultado de investigación actual y el guardado en el histórico de la ejecución anterior para el mismo ticker.
+- [ ] Implementar el marcado de qué elementos cambiaron respecto a la ejecución previa.
 
 ### Orquestador y CLI
-- Definir la sintaxis del comando que ejecuta la investigación completa de la watchlist en modo "automatizado" (sin intervención manual).
-- Implementar ese comando reutilizando el flujo de la Fase 8, incorporando la detección de cambios.
+- [ ] Definir la sintaxis del comando que ejecuta la investigación completa de la watchlist en modo "automatizado" (sin intervención manual).
+- [ ] Implementar ese comando reutilizando el flujo de la Fase 8, incorporando la detección de cambios.
 
 ### Reportes
-- Añadir a la plantilla de reporte (Markdown y HTML) una sección opcional de "cambios desde la última ejecución".
-- Confirmar que esta sección solo contextualiza cambios, sin emitir ninguna sugerencia de acción.
+- [ ] Añadir a la plantilla de reporte (Markdown y HTML) una sección opcional de "cambios desde la última ejecución".
+- [ ] Confirmar que esta sección solo contextualiza cambios, sin emitir ninguna sugerencia de acción.
 
 ### Verificación
 - Ejecutar el comando automatizado dos veces seguidas (simulando dos días distintos) y confirmar que la segunda ejecución muestra correctamente qué cambió.
@@ -322,3 +352,17 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 - En cada fase, al revisar las tareas completadas, verificar que ningún texto generado por el sistema (consola, Markdown, HTML) emite una recomendación de compra/venta o un veredicto final, conforme al principio rector de `GOALS.md` y a la restricción arquitectónica de `ARCHITECTURE.md`.
 - En cada fase que agregue o modifique un agente de análisis, verificar que su prompt vive en un archivo independiente (no embebido en el código) y que el agente invoca al proveedor de IA únicamente a través de la interfaz común, sin acoplarse a un SDK específico.
+
+---
+
+## Anexo — Criterios usados para regranular las tareas pendientes (2026-07-19)
+
+Esta sección documenta los criterios aplicados en la revisión que dividió tareas pendientes demasiado grandes. No es parte del roadmap en sí; es un registro de la decisión, para que futuras revisiones entiendan el porqué de la granularidad actual.
+
+1. **Una responsabilidad por tarea.** Si una tarea combinaba varias responsabilidades independientes (ej. "registrar el proveedor y el motor", o "escribir prompt + invocar IA + parsear respuesta" en una sola línea), se dividió en una tarea por responsabilidad, siguiendo el mismo patrón ya usado en la Fase 1 para los agentes de salud financiera y valoración (métricas → prompt → invocación → parseo, cada uno su propia tarea).
+2. **Consistencia con el patrón ya establecido en fases completadas.** Cuando una fase pendiente repetía una estructura ya resuelta en una fase anterior (ej. "persistir en caché" en vez de "guardar" + "leer" por separado, como si hizo en la Fase 1/Fase 3), se alineó la granularidad de la fase pendiente con el precedente ya implementado.
+3. **Separar decisión de diseño e implementación.** Cuando una tarea mezclaba una decisión de diseño (qué formato, qué criterio, cómo integrar un tipo nuevo) con su implementación, se separaron en dos tareas y se ordenó la decisión antes que la implementación — igual que ya ocurre en el resto del documento (ej. "definir métricas" antes de "calcular métricas").
+4. **Resolver deuda de diseño señalada explícitamente.** La integración del motor de tendencia (Fase 3, "Orquestador") tenía una decisión de diseño pendiente y documentada en `PROGRESS.md` (cómo incorporar `TrendAnalysisResult`, que no tiene `AnalysisProvenance`, a `ResearchResult.analysis_results`). Se agregó como primera subtarea explícita, para que no quede implícita ni se posponga indefinidamente.
+5. **No tocar tareas ya completadas.** Ninguna tarea marcada `- [x]` se modificó, dividió ni reordenó: ya están implementadas y su registro histórico (con referencias a archivos concretos) se conserva tal cual.
+6. **No tocar tareas ya del tamaño adecuado.** Tareas pendientes de una sola responsabilidad clara y un solo archivo/módulo principal (ej. "Elegir el proveedor de noticias", "Definir la estructura de almacenamiento local de la watchlist") se dejaron sin cambios.
+7. **No se agregó alcance nuevo.** Ninguna subtarea introduce una funcionalidad, un archivo, o una capa que no estuviera ya implícita en la tarea original o en `ROADMAP.md`/`GOALS.md`. La división es puramente de granularidad, no de contenido.
