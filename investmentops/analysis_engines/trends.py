@@ -1,20 +1,23 @@
 """Motor de análisis: evolución de ingresos y beneficios — cálculo de
-variación periodo a periodo.
+variación periodo a periodo y detección simple de tendencia agregada.
 
-Cubre dos tareas de TASKS.md, Fase 3, "Motor de análisis: evolución de
+Cubre tres tareas de TASKS.md, Fase 3, "Motor de análisis: evolución de
 ingresos y beneficios":
 
 - "Implementar el cálculo de variación periodo a periodo de ingresos."
   (`calculate_revenue_growth`, ya completada, ver PROGRESS.md).
 - "Implementar el cálculo de variación periodo a periodo de beneficios."
-  (`calculate_net_income_growth`, esta tarea).
+  (`calculate_net_income_growth`, ya completada, ver PROGRESS.md).
+- "Implementar la detección simple de tendencia (creciente, decreciente,
+  estable) para cada serie." (`detect_revenue_trend`,
+  `detect_net_income_trend`, esta tarea).
 
-Ambas funciones viven sobre la definición ya fijada en
+Todas viven sobre la definición ya fijada en
 `investmentops/analysis_engines/TREND_METRICS.md`.
 
-Implementan únicamente el cálculo determinístico de variación
-(`revenue_growth`/`net_income_growth`) para cada par de periodos
-consecutivos de un `FinancialStatementSeries`
+Las dos primeras funciones implementan únicamente el cálculo
+determinístico de variación (`revenue_growth`/`net_income_growth`) para
+cada par de periodos consecutivos de un `FinancialStatementSeries`
 (investmentops.data_layer.FinancialStatementSeries), sin invocar ningún
 proveedor de IA, conforme a `ARCHITECTURE.md` ("La IA es un mecanismo
 central, no un accesorio... El cálculo determinístico de métricas... es
@@ -60,13 +63,58 @@ huecos... eso es responsabilidad de la tarea de ensamblado del motor").
 `calculate_revenue_growth`) sin duplicar la lógica de clasificación:
 ambas métricas comparten exactamente el mismo criterio de signo puro.
 
-Fuera de alcance de este módulo:
-- La detección de tendencia agregada para toda la serie (si el conjunto
-  de saltos es consistentemente creciente/decreciente/mixto): tarea
-  separada y posterior.
+## Detección simple de tendencia agregada (`detect_revenue_trend`/`detect_net_income_trend`)
+
+Cubre la tarea "Implementar la detección simple de tendencia (creciente,
+decreciente, estable) para cada serie" (TASKS.md, Fase 3). Es una síntesis
+distinta de la clasificación **por salto** ya calculada en cada
+`RevenueGrowthPoint.classification`/`NetIncomeGrowthPoint.classification`
+(ver TREND_METRICS.md, "Clasificación de tendencia": *"Esta clasificación
+es por salto entre periodos consecutivos, no un resumen único de toda la
+serie... esa síntesis... es explícitamente el alcance de la tarea
+siguiente"*).
+
+Dado el `RevenueGrowthResult`/`NetIncomeGrowthResult` ya producido por
+`calculate_revenue_growth`/`calculate_net_income_growth`, estas funciones
+sintetizan una única etiqueta de tendencia para **toda la serie de
+saltos**:
+
+- **``"creciente"``**: todos los saltos con clasificación calculable son
+  ``"creciente"``.
+- **``"decreciente"``**: todos los saltos con clasificación calculable
+  son ``"decreciente"``.
+- **``"estable"``**: todos los saltos con clasificación calculable son
+  ``"estable"``.
+- **``"mixta"``**: los saltos con clasificación calculable no son todos
+  iguales entre sí (ej. algunos crecientes y otros decrecientes/
+  estables).
+
+Se usa exclusivamente el **signo puro** de cada salto (misma decisión ya
+tomada en `TREND_METRICS.md` para la clasificación por salto, sin
+inventar un umbral de tolerancia adicional aquí): esta síntesis no
+recalcula nada, solo agrega las clasificaciones (`classification`) ya
+producidas por `calculate_revenue_growth`/`calculate_net_income_growth`.
+
+### Manejo de casos degenerados
+
+- **Puntos sin clasificación calculable** (`classification is None`,
+  producidos por un periodo base en cero, ver arriba): se **ignoran** al
+  sintetizar la tendencia agregada -no cuentan como "mixta" ni rompen una
+  tendencia por lo demás consistente-, ya que no aportan información
+  sobre la dirección del cambio. Si el resto de los saltos de la serie sí
+  son consistentes entre sí, la tendencia agregada refleja esa
+  consistencia con normalidad.
+- **Ningún salto con clasificación calculable** (serie vacía o de un
+  solo periodo -`points == ()`-, o todos los saltos degenerados por
+  periodo base en cero): no hay ninguna base para sintetizar una
+  tendencia. Se devuelve `trend=None` junto con una advertencia
+  explícita, en vez de inventar una etiqueta o fallar.
+
+Fuera de alcance de estas funciones:
 - El ensamblado del resultado estructurado del motor (hallazgos,
-  advertencias por huecos, invocación a un proveedor de IA si aplica):
-  tarea separada y posterior en la misma sección de `TASKS.md`.
+  métricas de soporte, advertencias si hay huecos en la serie, e
+  invocación a un proveedor de IA si aplica): tarea separada y posterior
+  en la misma sección de `TASKS.md`.
 - Cualquier umbral de tolerancia, CAGR, proyecciones o suavizado
   estadístico: descartados explícitamente para el MVP (ver
   TREND_METRICS.md).
@@ -96,6 +144,22 @@ SINGLE_PERIOD_WARNING = (
 NET_INCOME_SINGLE_PERIOD_WARNING = (
     "La serie tiene un único periodo (o ninguno): no hay ningún par de "
     "periodos consecutivos del que calcular variación de beneficios."
+)
+
+#: Advertencia usada cuando `detect_revenue_trend` no encuentra ningún
+#: salto con clasificación calculable (serie de un solo periodo, vacía, o
+#: todos los saltos degenerados por periodo base en cero) del que
+#: sintetizar una tendencia agregada de ingresos.
+NO_REVENUE_TREND_WARNING = (
+    "No hay suficientes variaciones de ingresos calculables en la serie "
+    "para determinar una tendencia agregada."
+)
+
+#: Misma advertencia que `NO_REVENUE_TREND_WARNING`, pero para la
+#: tendencia agregada de beneficios (`detect_net_income_trend`).
+NO_NET_INCOME_TREND_WARNING = (
+    "No hay suficientes variaciones de beneficios calculables en la "
+    "serie para determinar una tendencia agregada."
 )
 
 
@@ -213,6 +277,36 @@ class NetIncomeGrowthResult:
     warnings: Sequence[str]
 
 
+@dataclass(frozen=True)
+class SeriesTrend:
+    """Tendencia agregada de una serie completa de variaciones periodo a periodo.
+
+    Es el tipo de salida de `detect_revenue_trend`/`detect_net_income_trend`
+    (ver "Detección simple de tendencia agregada" en el docstring del
+    módulo): sintetiza, a partir de las clasificaciones por salto ya
+    calculadas (`RevenueGrowthPoint.classification`/
+    `NetIncomeGrowthPoint.classification`), una única etiqueta para toda
+    la serie.
+
+    Attributes
+    ----------
+    trend:
+        ``"creciente"``, ``"decreciente"`` o ``"estable"`` si todos los
+        saltos con clasificación calculable de la serie coinciden;
+        ``"mixta"`` si hay clasificaciones distintas entre sí; ``None``
+        si no hay ningún salto con clasificación calculable del que
+        sintetizar una tendencia (ver `warning`).
+    warning:
+        Advertencia explícita cuando `trend` es ``None`` (no hay ningún
+        salto con clasificación calculable: serie de un solo periodo,
+        vacía, o todos los saltos degenerados por periodo base en cero).
+        ``None`` si `trend` sí se pudo determinar.
+    """
+
+    trend: str | None
+    warning: str | None
+
+
 def _classify(growth: float) -> str:
     """Clasifica una variación según su signo puro (ver TREND_METRICS.md).
 
@@ -226,6 +320,24 @@ def _classify(growth: float) -> str:
     if growth < 0:
         return "decreciente"
     return "estable"
+
+
+def _aggregate_classifications(
+    classifications: Sequence[str],
+) -> str:
+    """Sintetiza una única etiqueta de tendencia a partir de clasificaciones por salto.
+
+    Compartida por `detect_revenue_trend` y `detect_net_income_trend`:
+    ambas funciones usan exactamente el mismo criterio de síntesis (ver
+    "Detección simple de tendencia agregada" en el docstring del módulo).
+    Asume que `classifications` ya excluye los saltos sin clasificación
+    calculable (``None``) y que tiene al menos un elemento; el manejo del
+    caso vacío vive en las funciones que llaman a esta.
+    """
+    unique = set(classifications)
+    if len(unique) == 1:
+        return unique.pop()
+    return "mixta"
 
 
 def calculate_revenue_growth(series: FinancialStatementSeries) -> RevenueGrowthResult:
@@ -365,3 +477,71 @@ def calculate_net_income_growth(
         )
 
     return NetIncomeGrowthResult(points=tuple(points), warnings=())
+
+
+def detect_revenue_trend(result: RevenueGrowthResult) -> SeriesTrend:
+    """Sintetiza una tendencia agregada de ingresos a partir de un `RevenueGrowthResult`.
+
+    Ver "Detección simple de tendencia agregada" en el docstring del
+    módulo para el criterio completo. Ignora los puntos sin clasificación
+    calculable (`classification is None`, ver `calculate_revenue_growth`)
+    al sintetizar; si ninguno de los puntos tiene clasificación
+    calculable, devuelve `trend=None` con `NO_REVENUE_TREND_WARNING`.
+
+    Parameters
+    ----------
+    result:
+        El `RevenueGrowthResult` ya producido por `calculate_revenue_growth`
+        para una serie.
+
+    Returns
+    -------
+    SeriesTrend
+        - `trend="creciente"`/`"decreciente"`/`"estable"` si todos los
+          puntos con clasificación calculable coinciden.
+        - `trend="mixta"` si hay clasificaciones distintas entre sí.
+        - `trend=None` con `warning=NO_REVENUE_TREND_WARNING` si
+          `result.points` está vacío o ningún punto tiene una
+          clasificación calculable.
+    """
+    classifications = [
+        point.classification for point in result.points if point.classification is not None
+    ]
+
+    if not classifications:
+        return SeriesTrend(trend=None, warning=NO_REVENUE_TREND_WARNING)
+
+    return SeriesTrend(trend=_aggregate_classifications(classifications), warning=None)
+
+
+def detect_net_income_trend(result: NetIncomeGrowthResult) -> SeriesTrend:
+    """Sintetiza una tendencia agregada de beneficios a partir de un `NetIncomeGrowthResult`.
+
+    Mismo criterio que `detect_revenue_trend`, aplicado a
+    `NetIncomeGrowthResult` (ver "Detección simple de tendencia agregada"
+    en el docstring del módulo).
+
+    Parameters
+    ----------
+    result:
+        El `NetIncomeGrowthResult` ya producido por
+        `calculate_net_income_growth` para una serie.
+
+    Returns
+    -------
+    SeriesTrend
+        - `trend="creciente"`/`"decreciente"`/`"estable"` si todos los
+          puntos con clasificación calculable coinciden.
+        - `trend="mixta"` si hay clasificaciones distintas entre sí.
+        - `trend=None` con `warning=NO_NET_INCOME_TREND_WARNING` si
+          `result.points` está vacío o ningún punto tiene una
+          clasificación calculable.
+    """
+    classifications = [
+        point.classification for point in result.points if point.classification is not None
+    ]
+
+    if not classifications:
+        return SeriesTrend(trend=None, warning=NO_NET_INCOME_TREND_WARNING)
+
+    return SeriesTrend(trend=_aggregate_classifications(classifications), warning=None)
