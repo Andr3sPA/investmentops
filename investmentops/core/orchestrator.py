@@ -3,11 +3,11 @@ de esos datos crudos a la capa de normalización, invocación secuencial de
 los agentes de análisis, ensamblado del "Resultado de investigación"
 final, manejo de fallos parciales sin detener el resto del flujo,
 generación de reportes (Markdown/HTML) tras ensamblar ese resultado,
-obtención/normalización de la serie histórica de ingresos y beneficios, y
-registro de la invocación del motor de evolución de ingresos y beneficios
-(Fase 3).
+obtención/normalización de la serie histórica de ingresos y beneficios,
+registro de la invocación del motor de evolución de ingresos y beneficios,
+y su inclusión en el "Resultado de investigación" ensamblado (Fase 3).
 
-Cubre nueve tareas:
+Cubre diez tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -45,7 +45,14 @@ Fase 3, "Orquestador" (TASKS.md):
   análisis del orquestador, conforme a la decisión de integración ya
   tomada, sin modificar los motores existentes (salud financiera,
   valoración)." (`run_trend_analysis_engine`,
-  `_trend_analysis_result_to_analysis_result`, esta tarea).
+  `_trend_analysis_result_to_analysis_result`, ya completada, ver
+  PROGRESS.md).
+- "Incluir el resultado de evolución de ingresos y beneficios en el
+  `ResearchResult` ensamblado, incluyendo el manejo de fallos parciales
+  (serie histórica no disponible, error de normalización) sin detener
+  el resto del flujo, siguiendo el mismo criterio ya usado por
+  `investigate` para los demás agentes." (esta tarea: `investigate`
+  ahora también invoca `run_trend_analysis_engine`, ver más abajo).
 
 Las siete primeras funciones viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
@@ -88,14 +95,69 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
    `run_analysis_engines`, que se detiene ante el primer fallo. Los
    resultados exitosos (puede haber cero, uno o dos) se recolectan en
    orden.
-3. **Ensamblado final**: se llama a `assemble_research_result(ticker,
+3. **Motor de evolución de ingresos y beneficios** (ver "Inclusión del
+   motor de tendencia" más abajo): se intenta a continuación, también en
+   su propio `try/except` independiente, sin afectar a los dos agentes
+   anteriores ni ser afectado por sus fallos.
+4. **Ensamblado final**: se llama a `assemble_research_result(ticker,
    <resultados exitosos>, failures=<fallos capturados>)`, reutilizando
    la función ya existente sin modificarla.
 
 `investigate` no reemplaza a `run_analysis_engines` ni a
-`fetch_and_normalize`: ambas se mantienen sin cambios. Tampoco invoca
-todavía `run_trend_analysis_engine` (ver más abajo): esa integración es
-la tarea siguiente y separada de esta misma sección de TASKS.md.
+`fetch_and_normalize`: ambas se mantienen sin cambios.
+
+## Inclusión del motor de tendencia en `investigate` (esta tarea)
+
+Cubre la tarea "Incluir el resultado de evolución de ingresos y
+beneficios en el `ResearchResult` ensamblado, incluyendo el manejo de
+fallos parciales (serie histórica no disponible, error de
+normalización) sin detener el resto del flujo, siguiendo el mismo
+criterio ya usado por `investigate` para los demás agentes" (TASKS.md,
+Fase 3, "Orquestador").
+
+`investigate` ahora invoca también `run_trend_analysis_engine(ticker,
+config=config, provider=provider)` (ya implementada en la tarea
+anterior de esta misma sección), en un `try/except` independiente de los
+dos ya existentes para salud financiera y valoración, capturando
+`DataProviderError`/`NormalizationError` (las mismas excepciones que ya
+puede levantar `fetch_and_normalize_historical`, encadenada dentro de
+`run_trend_analysis_engine`) y traduciéndolas a
+`ResearchFailure(stage="data_provider", identifier="trend_analysis",
+reason=<mensaje>)`, sin detener el resto del flujo ya ensamblado.
+
+### Por qué esta invocación es condicional a la capacidad del proveedor
+
+El parámetro `provider` de `investigate` está tipado como `DataProvider`
+(`investmentops.data_providers.contracts`), cuyo contrato solo exige un
+método `fetch(ticker)`. `run_trend_analysis_engine`, en cambio, necesita
+un proveedor que también exponga `fetch_historical(ticker, period=...,
+limit=...)` (hoy, únicamente `FMPFundamentalsProvider` lo implementa).
+No todo objeto que cumple `DataProvider` cumple también esa capacidad
+adicional — de hecho, varios proveedores mínimos de prueba ya existentes
+en el proyecto (ver `investmentops/tests/test_core_orchestrator.py`,
+`test_cli_dispatch.py`, etc.) solo implementan `fetch`.
+
+Para no romper ese uso ya establecido del contrato `DataProvider` (un
+proveedor mínimo con solo `fetch` sigue siendo, por diseño, un
+`DataProvider` válido, ver `investmentops/data_providers/contracts.py`),
+`investigate` solo intenta el motor de tendencia cuando:
+
+- **`provider is None`**: no se inyectó ningún proveedor, por lo que
+  tanto el flujo principal como `run_trend_analysis_engine` construyen,
+  cada uno por su cuenta, el mismo proveedor real por defecto
+  (`FMPFundamentalsProvider`, que sí implementa `fetch_historical`).
+- **`hasattr(provider, "fetch_historical")`**: el proveedor inyectado sí
+  expone esa capacidad adicional (ej. `FMPFundamentalsProvider`, o un
+  proveedor de prueba que implemente ambos métodos deliberadamente).
+
+Si el proveedor inyectado **no** expone `fetch_historical`, `investigate`
+simplemente **no incluye** ningún análisis de tendencia para esa
+investigación, sin registrarlo como `ResearchFailure`: es una limitación
+de capacidad del proveedor usado (una decisión de quien construye ese
+proveedor de prueba/alternativo), no un fallo en tiempo de ejecución de
+una consulta real. Esto es distinto de una `DataProviderError` real (ej.
+el ticker no tiene datos históricos, o la fuente no respondió), que sí
+se captura y se refleja como fallo parcial, tal como exige esta tarea.
 
 ## Generación de reportes (`generate_reports` / `investigate_and_generate_reports`)
 
@@ -187,11 +249,11 @@ envolver el resultado del motor en un `AnalysisResult` normal con una
 - `generated_at`: el momento en que se ensambló *este* análisis (mismo
   criterio ya usado por los demás agentes).
 
-Esta tarea implementa esa conversión (`_trend_analysis_result_to_analysis_result`)
-y la pieza que "registra la invocación" del motor dentro del flujo de
-análisis del orquestador (`run_trend_analysis_engine`), análoga en
-espíritu a `analyze_financial_health`/`analyze_valuation` (calcula
-→ produce resultado), pero encadenando en su lugar
+`_trend_analysis_result_to_analysis_result` implementa esa conversión, y
+`run_trend_analysis_engine` es la pieza que "registra la invocación" del
+motor dentro del flujo de análisis del orquestador, análoga en espíritu
+a `analyze_financial_health`/`analyze_valuation` (calcula → produce
+resultado), pero encadenando en su lugar
 `fetch_and_normalize_historical` (obtención + normalización de la serie)
 → `assemble_trend_analysis` (cálculo determinístico + síntesis de
 tendencia, ya implementado en `investmentops.analysis_engines.trends`)
@@ -200,13 +262,10 @@ tendencia, ya implementado en `investmentops.analysis_engines.trends`)
 `run_trend_analysis_engine` **no captura** ninguna excepción de las
 piezas que invoca (`DataProviderError`, `NormalizationError`): las
 propaga tal cual, mismo criterio ya aplicado por
-`fetch_and_normalize`/`fetch_and_normalize_historical`. Incorporar su
-resultado al `ResearchResult` ensamblado por `investigate`, con manejo
-de fallos parciales (serie histórica no disponible, error de
-normalización) sin detener el resto del flujo, es la tarea siguiente y
-separada de esta misma sección de TASKS.md — esta tarea únicamente deja
-lista y disponible la pieza que produce el `AnalysisResult` del motor de
-tendencias, sin conectarla todavía a `investigate`/`ResearchResult`.
+`fetch_and_normalize`/`fetch_and_normalize_historical`. Es `investigate`
+(ver "Inclusión del motor de tendencia en `investigate`" arriba) quien
+captura esas excepciones para reflejarlas como `ResearchFailure` sin
+detener el resto del flujo.
 
 Esta tarea tampoco modifica `run_analysis_engines`, `analyze_financial_health`
 ni `analyze_valuation`: ninguno de los motores existentes cambia.
@@ -217,12 +276,9 @@ Fuera de alcance de este módulo (aún):
   `assemble_research_result`).
 - Leer o escribir la caché de datos normalizados
   (investmentops.data_layer.cache): fuera de alcance.
-- Incluir el resultado de `run_trend_analysis_engine` en el
-  `ResearchResult` ensamblado por `investigate`, con manejo de fallos
-  parciales: tarea separada y siguiente de esta misma sección de
-  TASKS.md.
-- La presentación de este resultado en los reportes Markdown/HTML: tarea
-  separada y posterior (ver TASKS.md, Fase 3, "Reportes").
+- La presentación del resultado de tendencia en los reportes
+  Markdown/HTML: tarea separada y posterior (ver TASKS.md, Fase 3,
+  "Reportes").
 """
 
 from __future__ import annotations
@@ -510,10 +566,8 @@ def fetch_and_normalize_historical(
         para construir cada `FinancialStatement` de la serie (ver
         `financial_statement_series_from_raw`). Esta función no captura
         ni traduce esa excepción: el manejo de fallos parciales sin
-        detener el resto del flujo es responsabilidad de quien integre
-        esta pieza en `investigate` (tarea separada y siguiente de esta
-        misma sección de TASKS.md), mismo criterio ya aplicado por
-        `fetch_and_normalize` para el corte único.
+        detener el resto del flujo es responsabilidad de `investigate`
+        (ver docstring del módulo).
     ConfigError
         Si `provider` no se indica, `config` tampoco, y no se puede
         cargar `config.local.toml`.
@@ -592,11 +646,6 @@ def run_trend_analysis_engine(
 ) -> AnalysisResult:
     """Registra la invocación del motor de evolución de ingresos y beneficios.
 
-    Cubre la tarea "Registrar la invocación de `assemble_trend_analysis`
-    en el flujo de análisis del orquestador, conforme a la decisión de
-    integración ya tomada, sin modificar los motores existentes"
-    (TASKS.md, Fase 3, "Orquestador").
-
     Encadena, para `ticker`:
 
     1. `fetch_and_normalize_historical(ticker, ...)`: obtiene y normaliza
@@ -610,12 +659,7 @@ def run_trend_analysis_engine(
        docstring de esa función y `TREND_INTEGRATION.md`).
 
     No modifica `run_analysis_engines`, `analyze_financial_health` ni
-    `analyze_valuation`: ningún motor existente cambia. Tampoco se
-    invoca todavía desde `investigate`/`assemble_research_result`: esa
-    incorporación al `ResearchResult`, con manejo de fallos parciales
-    (serie histórica no disponible, error de normalización) sin detener
-    el resto del flujo, es la tarea siguiente y separada de esta misma
-    sección de TASKS.md.
+    `analyze_valuation`: ningún motor existente cambia.
 
     Parameters
     ----------
@@ -647,8 +691,8 @@ def run_trend_analysis_engine(
     ------
     DataProviderError
         Ver `fetch_and_normalize_historical`. Esta función no captura ni
-        traduce esa excepción: el manejo de fallos parciales queda para
-        la tarea siguiente de integración en `investigate`.
+        traduce esa excepción: el manejo de fallos parciales es
+        responsabilidad de `investigate` (ver docstring del módulo).
     NormalizationError
         Ver `fetch_and_normalize_historical`.
     ConfigError
@@ -678,8 +722,8 @@ def run_analysis_engines(
     módulo) ofrece en cambio manejo de fallos parciales, invocando cada
     agente por separado en vez de usar esta función. No incluye el motor
     de evolución de ingresos y beneficios (`run_trend_analysis_engine`):
-    su incorporación al flujo de análisis es la tarea siguiente y
-    separada de TASKS.md, Fase 3, "Orquestador".
+    ese motor se invoca directamente desde `investigate`, no desde esta
+    función (ver docstring del módulo).
     """
     financial_health_result = analyze_financial_health(
         company_data.financial_statement, config=config
@@ -727,24 +771,32 @@ def investigate(
     fallo parcial (fuente de datos o proveedor de IA de un agente) detenga
     el resto del flujo.
 
-    Ver el docstring del módulo, sección "Manejo de fallos parciales
-    (`investigate`)", para la explicación completa de las tres etapas
-    (consulta+normalización, agentes por separado, ensamblado) y de por
-    qué un fallo en la primera etapa impide continuar (ningún agente
-    tiene datos con los que trabajar) mientras que un fallo en un agente
-    de la segunda etapa no impide que el otro se ejecute.
+    Ver el docstring del módulo, secciones "Manejo de fallos parciales
+    (`investigate`)" e "Inclusión del motor de tendencia en
+    `investigate`", para la explicación completa de las etapas
+    (consulta+normalización, agentes por separado, motor de tendencia,
+    ensamblado) y de por qué un fallo en la primera etapa impide
+    continuar (ningún agente tiene datos con los que trabajar) mientras
+    que un fallo en un agente o en el motor de tendencia no impide que
+    los demás se ejecuten.
 
     Parameters
     ----------
     ticker:
         Identificador de la empresa a investigar (ej. ``"AAPL"``).
     config:
-        Configuración ya cargada, propagada a `fetch_and_normalize` y a
-        cada agente de análisis. Útil para pruebas, para no depender de
-        un `config.local.toml` real en disco.
+        Configuración ya cargada, propagada a `fetch_and_normalize`, a
+        cada agente de análisis y al motor de tendencia. Útil para
+        pruebas, para no depender de un `config.local.toml` real en
+        disco.
     provider:
-        Proveedor de datos ya construido, propagado a `fetch_and_normalize`.
-        Pensado sobre todo para pruebas.
+        Proveedor de datos ya construido, propagado a
+        `fetch_and_normalize`. Si además expone `fetch_historical` (o si
+        no se indica ninguno), también se propaga al motor de evolución
+        de ingresos y beneficios (ver "Inclusión del motor de tendencia
+        en `investigate`" en el docstring del módulo); si no la expone,
+        el motor de tendencia simplemente no se intenta para esta
+        investigación.
 
     Returns
     -------
@@ -754,13 +806,16 @@ def investigate(
           `ResearchFailure(stage="data_provider", identifier=<ticker
           normalizado>, reason=<mensaje del error>)`.
         - Si la normalización tiene éxito: `analysis_results` contiene
-          los resultados de los agentes que sí completaron su análisis
-          (cero, uno o dos, en el orden salud financiera → valoración), y
-          `failures` contiene un `ResearchFailure(stage="analysis_engine",
-          identifier=<analysis_id del agente>, reason=<mensaje del
-          error>)` por cada agente que falló
-          (`PromptError`, `AgentProviderSelectionError` o
-          `AIProviderError`).
+          los resultados de los agentes/motores que sí completaron su
+          análisis (salud financiera, valoración, y evolución de
+          ingresos/beneficios cuando el proveedor lo permite), en ese
+          orden, y `failures` contiene un
+          `ResearchFailure(stage="analysis_engine", identifier=<analysis_id>,
+          ...)` por cada agente que falló (`PromptError`,
+          `AgentProviderSelectionError` o `AIProviderError`), o un
+          `ResearchFailure(stage="data_provider", identifier="trend_analysis",
+          ...)` si el motor de tendencia falló (`DataProviderError` o
+          `NormalizationError` al obtener/normalizar la serie histórica).
 
     Notes
     -----
@@ -770,9 +825,7 @@ def investigate(
     `ResearchFailure`. Otras excepciones (ej. `ConfigError` si no se
     puede cargar `config.local.toml` en absoluto) sí se propagan, ya que
     representan un problema de configuración del entorno, no un fallo
-    parcial de una fuente o un agente concretos. Esta función todavía no
-    invoca `run_trend_analysis_engine`: esa integración es la tarea
-    siguiente y separada de TASKS.md, Fase 3, "Orquestador".
+    parcial de una fuente o un agente concretos.
     """
     try:
         company_data = fetch_and_normalize(ticker, config=config, provider=provider)
@@ -816,6 +869,35 @@ def investigate(
                 reason=str(exc),
             )
         )
+
+    # Motor de evolución de ingresos y beneficios (Fase 3): solo se intenta
+    # si el proveedor inyectado expone `fetch_historical` (o si no se
+    # inyectó ninguno, en cuyo caso `run_trend_analysis_engine` construye
+    # su propio `FMPFundamentalsProvider` por defecto, el mismo proveedor
+    # real ya usado para el resto del flujo). Un proveedor de prueba
+    # mínimo que solo cumple el contrato `DataProvider.fetch` (sin
+    # `fetch_historical`) no rompe `investigate`: simplemente no se
+    # incluye ningún análisis de tendencia para esa investigación, sin
+    # registrarlo como fallo (ver "Inclusión del motor de tendencia en
+    # investigate" en el docstring del módulo). Si el proveedor sí
+    # soporta series históricas pero la consulta o la normalización
+    # fallan (serie histórica no disponible para el ticker, datos
+    # incompletos), se captura como
+    # `ResearchFailure(stage="data_provider", identifier="trend_analysis")`,
+    # sin detener el resto del flujo ya ensamblado.
+    if provider is None or hasattr(provider, "fetch_historical"):
+        try:
+            analysis_results.append(
+                run_trend_analysis_engine(ticker, config=config, provider=provider)
+            )
+        except (DataProviderError, NormalizationError) as exc:
+            failures.append(
+                ResearchFailure(
+                    stage="data_provider",
+                    identifier=TREND_AGENT_ID,
+                    reason=str(exc),
+                )
+            )
 
     return assemble_research_result(ticker, analysis_results, failures=failures)
 
