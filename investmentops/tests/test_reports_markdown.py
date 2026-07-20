@@ -12,7 +12,11 @@ Cubre cuatro tareas de TASKS.md, Fase 2, "Generador Markdown":
   fecha) al final del reporte." (nuevas pruebas en este archivo).
 
 No prueba el guardado en disco: es una tarea separada y posterior de la
-misma sección.
+misma sección. La sección "Evolución de ingresos y beneficios" (Fase 3)
+tiene sus propias pruebas en `test_reports_markdown_trend.py`; este
+archivo solo se ajustó en el punto donde una prueba asumía que
+"Valoración" era la última sección del reporte, supuesto que dejó de
+cumplirse al agregarse esa nueva sección después.
 """
 
 from datetime import datetime, timezone
@@ -317,13 +321,22 @@ def test_render_omits_valuation_limitations_subsection_when_empty() -> None:
 
 def test_render_keeps_empty_valuation_section_when_agent_absent() -> None:
     """Si el agente de valoración no está en `analysis_results` (ej.
-    falló), la sección conserva solo su encabezado vacío."""
+    falló), la sección conserva solo su encabezado vacío.
+
+    Acotada por el encabezado de "Evolución de ingresos y beneficios"
+    (nueva desde Fase 3): "Valoración" ya no es la última sección del
+    reporte, por lo que la prueba ya no puede tomar todo lo que sigue a
+    "## Valoración" hasta el final del documento.
+    """
     result = assemble_research_result("AAPL", [])
 
     output = render_markdown(result)
 
     section_start = output.index("## Valoración")
-    section_body = output[section_start:].replace("## Valoración", "").strip()
+    section_end = output.index("## Evolución de ingresos y beneficios")
+    section_body = (
+        output[section_start:section_end].replace("## Valoración", "").strip()
+    )
     assert section_body == ""
 
 
@@ -337,7 +350,8 @@ def test_render_valuation_section_ignores_other_analysis_results() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Valoración")
-    assert "hallazgo de salud financiera" not in output[section_start:]
+    section_end = output.index("## Evolución de ingresos y beneficios")
+    assert "hallazgo de salud financiera" not in output[section_start:section_end]
 
 
 def test_render_includes_both_sections_when_both_agents_present() -> None:
