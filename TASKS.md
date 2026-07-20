@@ -153,7 +153,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 > Nota (regranulado): se reordenó la tarea de diseño ("decidir el formato de presentación") antes de las tareas de implementación en Markdown/HTML, siguiendo el mismo orden ya usado en el resto del documento (definición antes que implementación). No se agregó ni se quitó ninguna tarea.
 
-- [ ] Decidir el formato de presentación de la serie (tabla simple vs. descripción textual) para esta fase.
+- [x] Decidir el formato de presentación de la serie (tabla simple vs. descripción textual) para esta fase. — `investmentops/reports/TREND_PRESENTATION.md` (nuevo, ver PROGRESS.md). Decisión: **tabla simple** (Markdown/HTML) para la variación periodo a periodo (`revenue_growth_by_period`/`net_income_growth_by_period`, una fila por periodo, valores en porcentaje con signo, `"—"` si no calculable), reutilizando el volcado de texto ya existente para `findings` (hallazgos) y la tendencia agregada (ya incluida en esos mismos hallazgos). No se usa la lista plana "clave: valor" ya usada por salud financiera/valoración, porque `*_growth_by_period` es un mapeo con un elemento por periodo, no un escalar. `limitations` y `provenance` (centinela) siguen el mismo patrón ya implementado para las demás secciones.
 - [ ] Añadir la sección "Evolución de ingresos y beneficios" a la plantilla Markdown, conforme al formato ya decidido.
 - [ ] Añadir la misma sección a la plantilla HTML, conforme al formato ya decidido.
 
