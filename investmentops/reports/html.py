@@ -1,11 +1,14 @@
 """Generador de reportes en HTML.
 
-Cubre, hasta ahora, dos tareas de TASKS.md, Fase 2, "Generador HTML":
+Cubre, hasta ahora, tres tareas de TASKS.md, Fase 2 ("Generador HTML") y
+Fase 3 ("Reportes"):
 
 - "Implementar el volcado de las mismas secciones que en Markdown (salud
   financiera, valoración, fuentes)." (ya completada, ver PROGRESS.md).
 - "Implementar el guardado del archivo HTML generado en una ruta local
-  configurable." (esta tarea).
+  configurable." (ya completada, ver PROGRESS.md).
+- "Añadir la misma sección [Evolución de ingresos y beneficios] a la
+  plantilla HTML, conforme al formato ya decidido." (esta tarea).
 
 Sobre la base de diseño ya fijada en `investmentops/reports/HTML_TEMPLATE.md`:
 HTML5 mínimo, sin CSS elaborado, sin JavaScript, sin motor de templating
@@ -20,9 +23,65 @@ de las secciones son los mismos, cada generador de formato es
 independiente (ver ARCHITECTURE.md, "Extensibilidad sin reescritura" —
 "Agregar un nuevo formato de salida implica añadir un generador nuevo,
 no tocar los existentes"), por lo que las constantes de identificador de
-agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`) y el helper de
-búsqueda (`_find_analysis`) se duplican aquí en vez de importarse, mismo
-criterio ya documentado en versiones anteriores de este módulo.
+agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`,
+`TREND_ANALYSIS_AGENT_ID`) y el helper de búsqueda (`_find_analysis`) se
+duplican aquí en vez de importarse, mismo criterio ya documentado en
+versiones anteriores de este módulo.
+
+## Sección "Evolución de ingresos y beneficios" (esta tarea)
+
+Cubre la tarea "Añadir la misma sección a la plantilla HTML, conforme al
+formato ya decidido" (TASKS.md, Fase 3, "Reportes"), equivalente HTML de
+la sección ya implementada en
+`investmentops.reports.markdown.render_markdown`/
+`_render_trend_analysis_body`, sobre el formato fijado en
+`investmentops/reports/TREND_PRESENTATION.md`.
+
+`TREND_ANALYSIS_AGENT_ID` (``"trend_analysis"``, el mismo identificador
+usado en `investmentops.analysis_engines.trends.AGENT_ID` y propagado por
+`investmentops.core.orchestrator._trend_analysis_result_to_analysis_result`)
+se reutiliza junto con `_find_analysis` (ya genérica) para localizar el
+`AnalysisResult` correspondiente dentro de `ResearchResult.analysis_results`.
+Sigue siendo un `AnalysisResult` normal, con una `AnalysisProvenance`
+centinela (`ai_provider="none"`, `ai_model="deterministic"`, ver
+`investmentops/core/TREND_INTEGRATION.md`), por lo que no requiere ningún
+tipo ni contrato nuevo.
+
+A diferencia de "Salud financiera"/"Valoración" (que vuelcan
+`supporting_metrics` como una lista `<ul><li>clave: valor</li></ul>`),
+esta sección reemplaza esa lista por una tabla `<table>` para las dos
+claves que son mapeos por periodo
+(`revenue_growth_by_period`/`net_income_growth_by_period`), mismo
+contenido y orden que la tabla Markdown ya implementada
+(`_render_trend_analysis_body` en `investmentops/reports/markdown.py`):
+
+```html
+<table>
+  <tr><th>Periodo</th><th>Ingresos (var.)</th><th>Beneficios (var.)</th></tr>
+  <tr><td>2025-12-31</td><td>+8.3%</td><td>+8.3%</td></tr>
+</table>
+```
+
+- Una fila por cada clave presente en `revenue_growth_by_period` (mismo
+  orden en que ya vienen esas claves), combinando el valor equivalente
+  de `net_income_growth_by_period` para la misma fecha.
+- Cada valor se formatea como porcentaje con un decimal y signo
+  explícito (`_format_growth_percentage_html`, misma lógica que
+  `_format_growth_percentage` en el generador Markdown); un valor
+  `None` se muestra como `"—"`.
+- La tabla se omite por completo si ambos mapeos están vacíos (serie de
+  un solo periodo o vacía).
+- Los `findings` y la procedencia reutilizan el mismo formato de marcado
+  (`<p>`, bloque "Generado por: ...") ya usado por "Salud
+  financiera"/"Valoración".
+
+Orden dentro de la sección, igual que en la versión Markdown: hallazgos
+→ tabla (omitida si ambos mapeos están vacíos) → limitaciones →
+procedencia. El bloque `<h2>Evolución de ingresos y beneficios</h2>` se
+agrega a `render_html` después de `<h2>Valoración</h2>`, con el mismo
+comportamiento de encabezado vacío cuando el motor no completó su
+análisis (ej. el proveedor de datos inyectado no soporta series
+históricas, ver `investmentops.core.orchestrator.investigate`).
 
 ## Guardado del archivo HTML generado (`save_html_report`)
 
@@ -71,8 +130,10 @@ Fuera de alcance de este módulo:
   anteriores de este módulo).
 - Conectar `save_html_report` con el orquestador o con la CLI para que
   se invoque automáticamente tras ensamblar el resultado de
-  investigación: tarea separada y posterior (ver TASKS.md, "Orquestador
-  y CLI" de la Fase 2).
+  investigación: ya conectado desde Fase 2 (ver
+  `investmentops.core.orchestrator.generate_reports`).
+- Gráficos o visualizaciones de la serie: fuera de alcance del MVP (ver
+  `TREND_PRESENTATION.md`).
 """
 
 from __future__ import annotations
@@ -98,6 +159,15 @@ FINANCIAL_HEALTH_AGENT_ID = "financial_health"
 #: `FINANCIAL_HEALTH_AGENT_ID`.
 VALUATION_AGENT_ID = "valuation"
 
+#: Identificador del motor de evolución de ingresos y beneficios, el
+#: mismo usado en `investmentops.analysis_engines.trends.AGENT_ID` (y
+#: propagado tal cual por
+#: `investmentops.core.orchestrator._trend_analysis_result_to_analysis_result`
+#: al convertir su resultado a `AnalysisResult`). Mismo criterio que los
+#: dos identificadores anteriores: no se importa desde el módulo del
+#: motor para no acoplar este generador a su implementación concreta.
+TREND_ANALYSIS_AGENT_ID = "trend_analysis"
+
 #: Bloque `<style>` mínimo embebido, tal como lo fija `HTML_TEMPLATE.md`:
 #: tipografía de sistema, ancho máximo legible, espaciado básico. Sin
 #: hoja de estilos externa ni framework CSS.
@@ -117,7 +187,9 @@ def _find_analysis(
     en la lista), en cuyo caso la sección correspondiente del reporte
     conserva solo su encabezado vacío. Misma semántica que la función
     equivalente en `investmentops.reports.markdown`, duplicada aquí por
-    independencia entre generadores (ver docstring del módulo).
+    independencia entre generadores (ver docstring del módulo). Funciona
+    igual para cualquier `analysis_id` (``"financial_health"``,
+    ``"valuation"``, ``"trend_analysis"``), sin acoplarse a ninguno.
     """
     return next(
         (analysis for analysis in result.analysis_results if analysis.analysis_id == analysis_id),
@@ -132,8 +204,11 @@ def _render_analysis_body_html(analysis: AnalysisResult) -> list[str]:
     Orden fijado en `REPORT_SECTIONS.md`/`HTML_TEMPLATE.md`: hallazgos →
     métricas de soporte → limitaciones → procedencia de la interpretación
     de IA. Reutilizada tanto para "Salud financiera" como para
-    "Valoración" (no depende del `analysis_id` concreto). Todo el
-    contenido dinámico se escapa con `html.escape` antes de insertarse.
+    "Valoración" (no depende del `analysis_id` concreto). No se usa para
+    "Evolución de ingresos y beneficios": esa sección reemplaza el
+    volcado plano de `supporting_metrics` por una tabla (ver
+    `_render_trend_analysis_body_html`). Todo el contenido dinámico se
+    escapa con `html.escape` antes de insertarse.
     """
     lines: list[str] = []
 
@@ -164,22 +239,105 @@ def _render_analysis_body_html(analysis: AnalysisResult) -> list[str]:
     return lines
 
 
+def _format_growth_percentage_html(value: Any) -> str:
+    """Formatea una variación relativa (ej. ``0.083``) como porcentaje con signo.
+
+    Equivalente HTML de
+    `investmentops.reports.markdown._format_growth_percentage` (misma
+    lógica, duplicada aquí por independencia entre generadores, ver
+    docstring del módulo). Devuelve ``"—"`` si `value` es ``None``
+    (periodo base en cero, ver `TREND_METRICS.md`), conforme a
+    `TREND_PRESENTATION.md`, "Formato del valor".
+    """
+    if value is None:
+        return "—"
+    return f"{value * 100:+.1f}%"
+
+
+def _render_trend_analysis_body_html(analysis: AnalysisResult) -> list[str]:
+    """Construye las líneas HTML de la sección "Evolución de ingresos y beneficios".
+
+    Orden fijado en `TREND_PRESENTATION.md`: hallazgos → tabla `<table>`
+    de variación periodo a periodo (omitida si no hay datos) →
+    limitaciones → procedencia de IA (centinela). A diferencia de
+    `_render_analysis_body_html`, `supporting_metrics` no se vuelca como
+    lista `<ul>`: las claves `revenue_growth_by_period`/
+    `net_income_growth_by_period` (mapeos con un elemento por periodo) se
+    combinan en una única tabla, una fila por periodo. Las claves
+    `revenue_trend`/`net_income_trend` (tendencia agregada) no se repiten
+    aparte: ya están incluidas en el texto de `findings` (ver
+    `investmentops.analysis_engines.trends._describe_trend`). Todo el
+    contenido dinámico se escapa con `html.escape` antes de insertarse.
+    """
+    lines: list[str] = []
+
+    for finding in analysis.findings:
+        lines.append(f"<p>{escape(finding)}</p>")
+
+    revenue_by_period: dict[str, Any] = analysis.supporting_metrics.get(
+        "revenue_growth_by_period", {}
+    )
+    net_income_by_period: dict[str, Any] = analysis.supporting_metrics.get(
+        "net_income_growth_by_period", {}
+    )
+
+    if revenue_by_period or net_income_by_period:
+        lines.append("<table>")
+        lines.append(
+            "<tr><th>Periodo</th><th>Ingresos (var.)</th>"
+            "<th>Beneficios (var.)</th></tr>"
+        )
+        for period_end in revenue_by_period:
+            revenue_growth = revenue_by_period.get(period_end)
+            net_income_growth = net_income_by_period.get(period_end)
+            lines.append(
+                f"<tr><td>{escape(str(period_end))}</td>"
+                f"<td>{escape(_format_growth_percentage_html(revenue_growth))}</td>"
+                f"<td>{escape(_format_growth_percentage_html(net_income_growth))}</td></tr>"
+            )
+        lines.append("</table>")
+
+    if analysis.limitations:
+        lines.append("<h3>Limitaciones</h3>")
+        lines.append("<ul>")
+        for limitation in analysis.limitations:
+            lines.append(f"<li>{escape(limitation)}</li>")
+        lines.append("</ul>")
+
+    provenance = analysis.provenance
+    lines.append(
+        "<p><em>Generado por: "
+        f"{escape(provenance.ai_provider)} ({escape(provenance.ai_model)}) "
+        f"el {escape(provenance.generated_at.isoformat())}</em></p>"
+    )
+
+    return lines
+
+
 def render_html(result: ResearchResult) -> str:
     """Renderiza un `ResearchResult` como reporte HTML.
 
     Construye el documento HTML5 completo (según el esqueleto ya fijado
     en `HTML_TEMPLATE.md`): encabezado con identidad de la empresa
     investigada y fecha de ensamblado, más las secciones "Salud
-    financiera" y "Valoración", en el mismo orden y con el mismo
-    contenido que `investmentops.reports.markdown.render_markdown`.
+    financiera", "Valoración" y "Evolución de ingresos y beneficios", en
+    el mismo orden y con el mismo contenido que
+    `investmentops.reports.markdown.render_markdown` (la tercera sección
+    ubicada donde ya la agrega `investmentops.core.orchestrator.investigate`
+    en `ResearchResult.analysis_results`, después de valoración).
 
-    Ambas secciones vuelcan su contenido completo cuando el
-    `AnalysisResult` correspondiente está presente: hallazgos, métricas
-    de soporte, limitaciones y procedencia de la interpretación de IA
-    (proveedor, modelo, fecha). Si el agente no completó su análisis, la
-    sección conserva solo su encabezado (`<h2>`) vacío. Todavía no se
-    incluye la sección condicional de "Fallos parciales" (fuera de
-    alcance de esta tarea, ver docstring del módulo).
+    "Salud financiera" y "Valoración" vuelcan su contenido completo
+    cuando el `AnalysisResult` correspondiente está presente: hallazgos,
+    métricas de soporte, limitaciones y procedencia de la interpretación
+    de IA (proveedor, modelo, fecha). "Evolución de ingresos y
+    beneficios" vuelca hallazgos, una tabla de variación periodo a
+    periodo (en vez de la lista plana, ver
+    `_render_trend_analysis_body_html` y `TREND_PRESENTATION.md`),
+    limitaciones y procedencia (centinela, `ai_provider="none"`). Si el
+    agente/motor correspondiente no completó su análisis, la sección
+    conserva solo su encabezado (`<h2>`) vacío. Todavía no se incluye la
+    sección condicional de "Fallos parciales" (fuera de alcance de esta
+    tarea, ver docstring del módulo).
 
     Parameters
     ----------
@@ -217,6 +375,11 @@ def render_html(result: ResearchResult) -> str:
     valuation_result = _find_analysis(result, VALUATION_AGENT_ID)
     if valuation_result is not None:
         body_lines.extend(_render_analysis_body_html(valuation_result))
+
+    body_lines.append("<h2>Evolución de ingresos y beneficios</h2>")
+    trend_analysis_result = _find_analysis(result, TREND_ANALYSIS_AGENT_ID)
+    if trend_analysis_result is not None:
+        body_lines.extend(_render_trend_analysis_body_html(trend_analysis_result))
 
     body = "\n  ".join(body_lines)
 

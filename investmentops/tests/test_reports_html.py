@@ -305,15 +305,20 @@ def test_render_includes_valuation_limitations_when_present() -> None:
 
 
 def test_render_keeps_empty_valuation_section_when_agent_absent() -> None:
+    """Acotada por el encabezado de "Evolución de ingresos y beneficios"
+    (nueva desde Fase 3): "Valoración" ya no es la última sección del
+    reporte, por lo que la prueba ya no puede tomar todo lo que sigue a
+    "<h2>Valoración</h2>" hasta el cierre de `<body>`."""
     result = assemble_research_result("AAPL", [])
 
     output = render_html(result)
 
     section_start = output.index("<h2>Valoración</h2>")
-    remaining_body = output[section_start:].split("</body>")[0]
-    section_body = remaining_body.replace("<h2>Valoración</h2>", "").strip()
+    section_end = output.index("<h2>Evolución de ingresos y beneficios</h2>")
+    section_body = (
+        output[section_start:section_end].replace("<h2>Valoración</h2>", "").strip()
+    )
     assert section_body == ""
-
 
 def test_render_includes_both_sections_when_both_agents_present() -> None:
     result = assemble_research_result(
