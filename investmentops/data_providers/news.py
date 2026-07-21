@@ -1,10 +1,12 @@
+# investmentops/data_providers/news.py
 """Cliente mínimo de Financial Modeling Prep (FMP) — datos de noticias.
 
 Cubre las tareas "Implementar el contrato de 'data provider' para noticias
-(ticker/nombre de empresa in, lista de eventos crudos out)" y "Adjuntar
+(ticker/nombre de empresa in, lista de eventos crudos out)", "Adjuntar
 metadatos de procedencia (fuente, fecha de publicación, fecha de consulta)
-a cada noticia cruda" (TASKS.md, Fase 4, "Fuente de datos de noticias"),
-sobre la decisión ya tomada en
+a cada noticia cruda" e "Implementar manejo de error si el proveedor de
+noticias falla o no devuelve resultados" (TASKS.md, Fase 4, "Fuente de
+datos de noticias"), sobre la decisión ya tomada en
 `investmentops/data_providers/NEWS_PROVIDER.md`: reutilizar **FMP**, el
 mismo proveedor externo ya integrado desde la Fase 1
 (`investmentops/data_providers/fundamentals.py`), vía su endpoint
@@ -21,10 +23,10 @@ separada (ver TASKS.md, Fase 4, "Normalización").
 
 Cubre el **contrato** (ticker/nombre de empresa como entrada, lista de
 eventos crudos como salida, con metadatos de procedencia a nivel de toda
-la respuesta) y, desde esta tarea, la **procedencia por cada noticia
-individual**.
+la respuesta), la **procedencia por cada noticia individual**, y ahora el
+**manejo de error cuando el proveedor falla o no devuelve resultados**.
 
-### Procedencia por noticia (esta tarea)
+### Procedencia por noticia
 
 `RawProviderData.metadata` (un único `ProviderMetadata` para toda la
 respuesta) ya identifica de dónde y cuándo se obtuvo la consulta
@@ -46,13 +48,33 @@ de estados financieros:
 las respuestas originales de `response.json()`), igual criterio que
 `_attach_point_provenance`.
 
-## Qué queda fuera de alcance (tarea siguiente y separada)
+### Manejo de error: "no devuelve resultados" vs. "falla" (esta tarea)
 
-- **Manejo de error si el proveedor no devuelve resultados**: una lista
-  vacía sigue siendo una respuesta válida (una empresa puede
-  legítimamente no tener noticias recientes), no un error — eso es la
-  tarea siguiente de esta misma sección ("Implementar manejo de error si
-  el proveedor de noticias falla o no devuelve resultados").
+Dos casos distintos, que esta tarea distingue con cuidado en vez de
+tratarlos como el mismo problema:
+
+- **"No devuelve resultados" (lista vacía) NO es un error.** Una empresa
+  puede legítimamente no tener noticias recientes según FMP. `fetch`
+  sigue devolviendo un `RawProviderData` con `payload == []` en ese caso,
+  sin levantar ninguna excepción (ver `test_fetch_treats_empty_list_as_a_valid_response`
+  en `investmentops/tests/test_data_providers_news.py`, ya existente).
+  Convertir esto en error inventaría un fallo donde no lo hay.
+- **"Falla" cubre, desde antes de esta tarea, la falta de respuesta de
+  red, autenticación inválida (401/403) y errores de servidor (≥400)**,
+  todos ya traducidos a `DataProviderError`.
+- **Lo que esta tarea agrega:** el caso en que FMP responde `200` con un
+  cuerpo JSON válido mecánicamente (no lanza `ValueError` al parsear),
+  pero que **no tiene la forma esperada** (una lista de noticias) — por
+  ejemplo, un objeto de error como `{"Error Message": "Invalid API
+  KEY"}` (patrón real de FMP ante credenciales inválidas que no siempre
+  vienen con un código HTTP de error) o `null`. Sin esta validación, ese
+  payload llegaría intacto a `_attach_news_provenance`, que asume que
+  cada elemento es un dict iterable de esa forma, y produciría una
+  excepción no controlada (`TypeError`) en vez de un `DataProviderError`
+  legible, incumpliendo el contrato `DataProvider` (nunca dejar escapar
+  una excepción específica sin traducir). Se valida `isinstance(raw_items,
+  list)` justo después de parsear el JSON; si no lo es, se levanta
+  `DataProviderError` identificando el ticker afectado.
 
 Fuera de alcance de este módulo:
 - La transformación del payload crudo (lista de dicts de FMP, ya con
@@ -111,7 +133,8 @@ def _attach_news_provenance(
     ----------
     items:
         Lista de dicts crudos (una noticia por elemento), tal como los
-        devuelve el endpoint `/stock_news` de FMP.
+        devuelve el endpoint `/stock_news` de FMP. Se asume ya validada
+        como lista por quien invoca esta función (ver `fetch`).
     metadata:
         La procedencia de la consulta que obtuvo `items` (mismo
         `ProviderMetadata` que se adjunta a nivel de todo el
@@ -215,20 +238,21 @@ class FMPNewsProvider:
             `payload` es la lista cruda de noticias devuelta por FMP (uno
             o más dicts con campos como ``symbol``, ``publishedDate``,
             ``title``, ``text``, ``site``, ``url``, más ``"source"`` y
-            ``"queried_at"`` adjuntados por esta tarea), sin modificar
-            los campos originales. Una lista vacía es una respuesta
-            válida (la empresa no tiene noticias recientes según FMP), no
-            un error — ver "Qué queda fuera de alcance" en el docstring
-            del módulo.
+            ``"queried_at"`` adjuntados), sin modificar los campos
+            originales. Una lista vacía es una respuesta válida (la
+            empresa no tiene noticias recientes según FMP), no un error.
 
         Raises
         ------
         DataProviderError
             Si el ticker está vacío, si FMP no responde (error de red),
             si la API key es inválida, si FMP responde con un error HTTP,
-            o si la respuesta no se puede interpretar como JSON. Nunca
-            deja escapar una excepción específica de `requests` sin
-            traducir.
+            si la respuesta no se puede interpretar como JSON, o si el
+            JSON devuelto no tiene la forma esperada (una lista de
+            noticias) — por ejemplo, un objeto de error de FMP en vez de
+            una lista. Nunca deja escapar una excepción específica de
+            `requests` ni una excepción no controlada por un formato de
+            respuesta inesperado.
         """
         if not ticker or not ticker.strip():
             raise DataProviderError("El ticker no puede estar vacío.")
@@ -256,7 +280,7 @@ class FMPNewsProvider:
                 "sin permisos para este recurso)."
             )
         if response.status_code == 404:
-            raw_items: list[dict[str, Any]] = []
+            raw_items: Any = []
         elif response.status_code >= 400:
             raise DataProviderError(
                 f"FMP respondió con un error ({response.status_code}) al "
@@ -272,12 +296,22 @@ class FMPNewsProvider:
                     f"'{ticker}'."
                 ) from exc
 
+        if raw_items is None:
+            raw_items = []
+
+        if not isinstance(raw_items, list):
+            raise DataProviderError(
+                "FMP devolvió un formato inesperado (se esperaba una lista "
+                f"de noticias) al consultar noticias para el ticker "
+                f"'{ticker}'."
+            )
+
         metadata = ProviderMetadata(
             source="fmp",
             queried_at=datetime.now(timezone.utc),
             reliability="alta",
         )
 
-        payload = _attach_news_provenance(raw_items or [], metadata)
+        payload = _attach_news_provenance(raw_items, metadata)
 
         return RawProviderData(ticker=ticker, payload=payload, metadata=metadata)
