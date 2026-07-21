@@ -1,19 +1,21 @@
 """Transformación de datos crudos de un proveedor a los modelos de dominio
 "Estados financieros normalizados" (FinancialStatement), "Datos de
-mercado" (MarketData) y, desde esta tarea, "Serie de estados financieros
-normalizados" (FinancialStatementSeries).
+mercado" (MarketData), "Serie de estados financieros normalizados"
+(FinancialStatementSeries) y, desde esta tarea, "Noticias" (News).
 
 Cubre las tareas "Implementar la transformación de datos crudos del
 proveedor al modelo 'Estados financieros normalizados'" e "Implementar la
 transformación de datos crudos al modelo 'Datos de mercado'" (TASKS.md,
-Fase 1, "Normalización y almacenamiento"), y "Implementar la
+Fase 1, "Normalización y almacenamiento"), "Implementar la
 transformación de la respuesta cruda histórica al modelo de series
-temporales" (TASKS.md, Fase 3, "Normalización"). Todas viven en el mismo
-módulo, siguiendo la recomendación dejada en PROGRESS.md tras implementar
-la primera: son responsabilidades del mismo tipo (traducir el
-`RawProviderData` que entrega `investmentops.data_providers.fundamentals`
-a un modelo de dominio normalizado) y fragmentarlas en módulos separados
-no aporta claridad adicional.
+temporales" (TASKS.md, Fase 3, "Normalización"), y "Implementar la
+transformación de noticias crudas al modelo normalizado" (TASKS.md, Fase
+4, "Normalización"). Todas viven en el mismo módulo, siguiendo la
+recomendación dejada en PROGRESS.md tras implementar la primera: son
+responsabilidades del mismo tipo (traducir el `RawProviderData` que
+entregan los proveedores concretos de `investmentops.data_providers` a un
+modelo de dominio normalizado) y fragmentarlas en módulos separados no
+aporta claridad adicional.
 
 `financial_statement_from_raw` traduce las claves ``"income_statement"``
 y ``"balance_sheet_statement"`` del payload de `FMPFundamentalsProvider.fetch`
@@ -60,23 +62,74 @@ ver su propio docstring): esta función no reordena ni valida huecos o
 continuidad entre periodos (alcance explícito de
 `financial_statement_series.py`, no de esta transformación).
 
+## Transformación de noticias crudas (`news_from_raw`, esta tarea)
+
+Traduce el `RawProviderData` que entrega
+`investmentops.data_providers.news.FMPNewsProvider.fetch` (una lista
+cruda de noticias, cada una ya con su propia procedencia — `"source"`,
+`"queried_at"` — adjuntada por `_attach_news_provenance`) a una lista de
+`News` (`investmentops.data_layer.news`).
+
+A diferencia de `financial_statement_from_raw`/`market_data_from_raw`
+(que construyen un único objeto a partir del corte más reciente),
+`news_from_raw` construye **una `News` por cada elemento** del payload
+crudo, conservando el mismo orden en que FMP entrega las noticias (no se
+reordena ni se filtra por relevancia: eso es responsabilidad del futuro
+motor de análisis de noticias, ver TASKS.md, "Motor de análisis:
+noticias relevantes").
+
+Mapeo de campos (payload crudo de FMP -> `News`):
+
+- ``"title"`` -> `News.title`.
+- ``"text"`` -> `News.summary` (el resumen/cuerpo de la noticia).
+- ``"site"`` -> `News.source` (el medio que publicó la noticia, ej.
+  ``"Reuters"``; **no** el proveedor de datos que la entregó, que ya vive
+  en `ProviderMetadata.source`/el campo `"source"` adjuntado por
+  `_attach_news_provenance` — ver el docstring de
+  `investmentops.data_layer.news.News.source` para la misma distinción
+  ya documentada allí).
+- ``"publishedDate"`` -> `News.published_at`, interpretada como fecha y
+  hora (FMP la entrega con el formato ``"YYYY-MM-DD HH:MM:SS"``, que
+  `datetime.fromisoformat` ya interpreta correctamente en Python 3.11).
+- ``"url"`` -> `News.url`.
+
+Conforme a `investmentops/data_providers/news.py` ("'No devuelve
+resultados' (lista vacía) NO es un error"), una lista de noticias vacía o
+ausente en `raw.payload` produce una lista vacía de `News`, sin levantar
+ninguna excepción: una empresa sin noticias recientes es un caso válido,
+no un fallo de normalización.
+
+`NormalizationError` se levanta únicamente si una noticia individual (no
+toda la respuesta) no trae alguno de los cinco campos imprescindibles, o
+si `publishedDate` no tiene un formato de fecha/hora reconocible,
+identificando en el mensaje qué noticia (por posición) falló, mismo
+criterio ya aplicado por `financial_statement_series_from_raw` para
+identificar qué periodo concreto falla en una serie.
+
 Fuera de alcance de este módulo:
 - El cálculo de múltiplos de valoración (P/E, P/B, etc.): responsabilidad
   del agente de análisis de valoración (ver TASKS.md, "Agente de
   análisis: valoración"), no de esta capa. `market_data_from_raw` deja
   `MarketData.multiples` vacío por esta razón.
-- El cacheo/persistencia de los datos normalizados (corte único o serie):
-  tareas separadas ("Normalización y almacenamiento" en Fase 1, y
-  "Extender la caché local para persistir series históricas" en Fase 3).
+- El cacheo/persistencia de los datos normalizados (corte único, serie o
+  noticias): tareas separadas ("Normalización y almacenamiento" en Fase
+  1, "Extender la caché local para persistir series históricas" en Fase
+  3, y "Implementar el guardado de noticias normalizadas en la caché
+  local..." en Fase 4).
 - Series históricas de `MarketData`: `ARCHITECTURE.md`/`ROADMAP.md`
   centran la Fase 3 explícitamente en ingresos y beneficios, no en
   precio de mercado (ver también
   `investmentops/data_providers/HISTORICAL_DATA.md`).
+- Cualquier filtrado o interpretación de relevancia de las noticias
+  normalizadas: responsabilidad del futuro motor de análisis de noticias
+  (ver TASKS.md, Fase 4, "Motor de análisis: noticias relevantes").
 - Cualquier proveedor distinto de FMP: este módulo asume la forma
-  concreta del `payload` que entregan `FMPFundamentalsProvider.fetch` y
-  `.fetch_historical` (ver investmentops/data_providers/fundamentals.py).
-  Si en el futuro se agrega otro proveedor de datos, su propia
-  transformación es una tarea aparte, sin modificar esta.
+  concreta del `payload` que entregan `FMPFundamentalsProvider.fetch`,
+  `.fetch_historical` y `FMPNewsProvider.fetch` (ver
+  investmentops/data_providers/fundamentals.py y
+  investmentops/data_providers/news.py). Si en el futuro se agrega otro
+  proveedor de datos, su propia transformación es una tarea aparte, sin
+  modificar esta.
 """
 
 from __future__ import annotations
@@ -88,6 +141,7 @@ from investmentops.data_layer.financial_statement_series import (
 )
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
+from investmentops.data_layer.news import News
 from investmentops.data_providers.contracts import RawProviderData
 
 
@@ -97,12 +151,12 @@ class NormalizationError(RuntimeError):
     Cubre el caso en que el `payload` crudo no trae los campos
     imprescindibles para construir el modelo normalizado correspondiente
     (ej. falta el estado de resultados, falta la cotización, no incluye
-    la fecha de corte, o la fecha/timestamp no tiene un formato
-    reconocible). Se distingue de `DataProviderError`
-    (investmentops.data_providers.contracts) porque el fallo no ocurre al
-    consultar al proveedor -esa consulta ya tuvo éxito, `RawProviderData`
-    ya existe-, sino al traducir su respuesta al modelo de dominio
-    interno.
+    la fecha de corte, a una noticia le falta el título, o la
+    fecha/timestamp no tiene un formato reconocible). Se distingue de
+    `DataProviderError` (investmentops.data_providers.contracts) porque
+    el fallo no ocurre al consultar al proveedor -esa consulta ya tuvo
+    éxito, `RawProviderData` ya existe-, sino al traducir su respuesta al
+    modelo de dominio interno.
     """
 
 
@@ -386,3 +440,98 @@ def financial_statement_series_from_raw(
         )
 
     return FinancialStatementSeries(ticker=raw.ticker, statements=statements)
+
+
+def news_from_raw(raw: RawProviderData) -> list[News]:
+    """Construye una lista de `News` a partir de datos crudos de noticias de FMP.
+
+    Traduce el `RawProviderData` que entrega
+    `investmentops.data_providers.news.FMPNewsProvider.fetch(ticker)`
+    (`raw.payload` es la lista cruda de noticias, cada una ya con
+    `"source"`/`"queried_at"` adjuntados por `_attach_news_provenance`) a
+    una lista de `News` (ver `investmentops.data_layer.News`), una por
+    cada elemento del payload, en el mismo orden en que las entrega FMP.
+
+    A diferencia de `financial_statement_from_raw`/`market_data_from_raw`
+    (que toman solo el corte más reciente), esta función normaliza
+    **todas** las noticias del payload: no hay un único "dato más
+    reciente" que tenga sentido aquí, ya que el futuro motor de análisis
+    de noticias relevantes (ver TASKS.md, Fase 4) necesita ver el
+    conjunto completo para poder filtrar/priorizar.
+
+    Parameters
+    ----------
+    raw:
+        Datos crudos ya obtenidos del proveedor de noticias (ver
+        `investmentops.data_providers.contracts.RawProviderData`),
+        típicamente el resultado de `FMPNewsProvider.fetch(ticker)`.
+
+    Returns
+    -------
+    list[News]
+        Una `News` por cada noticia cruda del payload, en el mismo orden
+        recibido. Lista vacía si `raw.payload` está vacío o ausente: una
+        empresa sin noticias recientes es una respuesta válida (ver
+        `investmentops.data_providers.news`, "'No devuelve resultados'
+        (lista vacía) NO es un error"), no algo que esta función deba
+        señalar como fallo de normalización.
+
+    Raises
+    ------
+    NormalizationError
+        Si a alguna noticia cruda le faltan campos imprescindibles
+        (título, resumen, medio/fuente, fecha de publicación, URL), o si
+        su fecha de publicación no tiene un formato reconocible. El
+        mensaje identifica la posición (índice, comenzando en 1) de la
+        noticia afectada dentro del payload.
+    """
+    items = raw.payload or []
+
+    news_list: list[News] = []
+
+    for index, item in enumerate(items, start=1):
+        title = item.get("title")
+        summary = item.get("text")
+        source = item.get("site")
+        published_at_raw = item.get("publishedDate")
+        url = item.get("url")
+
+        missing = [
+            field_name
+            for field_name, value in (
+                ("title", title),
+                ("summary (text)", summary),
+                ("source (site)", source),
+                ("published_at (publishedDate)", published_at_raw),
+                ("url", url),
+            )
+            if value is None
+        ]
+        if missing:
+            raise NormalizationError(
+                "No se puede construir 'Noticias' normalizadas para "
+                f"'{raw.ticker}': faltan campos imprescindibles en la "
+                f"noticia cruda #{index}: {', '.join(missing)}."
+            )
+
+        try:
+            published_at = datetime.fromisoformat(str(published_at_raw))
+        except ValueError as exc:
+            raise NormalizationError(
+                "No se puede construir 'Noticias' normalizadas para "
+                f"'{raw.ticker}': la fecha de publicación de la noticia "
+                f"#{index} ('{published_at_raw}') no tiene un formato "
+                "reconocible (se espera 'YYYY-MM-DD HH:MM:SS')."
+            ) from exc
+
+        news_list.append(
+            News(
+                title=str(title),
+                summary=str(summary),
+                source=str(source),
+                published_at=published_at,
+                url=str(url),
+            )
+        )
+
+    return news_list

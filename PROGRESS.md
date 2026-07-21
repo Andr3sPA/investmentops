@@ -4,53 +4,64 @@
 
 ## Última tarea completada
 
-Fase 4, "Normalización" → "Definir el modelo de dominio 'Noticias'
-(fecha, fuente, resumen)" (TASKS.md).
+Fase 4, "Normalización" → "Implementar la transformación de noticias
+crudas al modelo normalizado" (TASKS.md).
 
 ### Qué se implementó
 
-`News` en `investmentops/data_layer/news.py` (nuevo): dataclass
-inmutable que representa un evento noticioso normalizado, siguiendo
-exactamente el mismo patrón ya usado por `Company`, `FinancialStatement`
-y `MarketData` (Fase 1/Fase 3).
+`news_from_raw` en `investmentops/data_layer/normalization.py` (mismo
+módulo que ya aloja `financial_statement_from_raw`, `market_data_from_raw`
+y `financial_statement_series_from_raw`, siguiendo el mismo criterio ya
+documentado de no fragmentar transformaciones de este tipo en módulos
+separados).
 
-Campos elegidos:
+Traduce el `RawProviderData` que entrega `FMPNewsProvider.fetch`
+(`investmentops/data_providers/news.py`) — una lista cruda de noticias,
+cada una ya con `"source"`/`"queried_at"` adjuntados por
+`_attach_news_provenance` — a `list[News]` (`investmentops.data_layer.News`),
+una `News` por cada elemento del payload, en el mismo orden en que las
+entrega FMP (a diferencia de `financial_statement_from_raw`/
+`market_data_from_raw`, que solo toman el corte más reciente: aquí no
+hay un único "dato más reciente" relevante, el futuro motor de noticias
+necesita ver el conjunto completo).
 
-- `title`: titular de la noticia.
-- `summary`: resumen/cuerpo de la noticia (el "resumen" que pide
-  `ARCHITECTURE.md`).
-- `source`: el medio/sitio que publicó la noticia (ej. "Reuters"),
-  distinto de `ProviderMetadata.source` (el proveedor de datos, ej.
-  "fmp") — mismo criterio de distinción ya aplicado por
-  `FinancialStatement.source`/`MarketData.source`.
-- `published_at`: fecha y hora de publicación (la "fecha" que pide
-  `ARCHITECTURE.md`). Se usa `datetime`, no `date`, porque el
-  `publishedDate` que entrega FMP (`FMPNewsProvider.fetch`) tiene
-  granularidad de minutos, a diferencia de `period_end`/`as_of`.
-- `url`: enlace a la noticia completa, para trazabilidad.
+Mapeo de campos: `"title"` -> `title`, `"text"` -> `summary`, `"site"`
+-> `source` (el medio que publicó la noticia, distinto del proveedor de
+datos que la entregó — misma distinción ya documentada en
+`investmentops/data_layer/news.py`), `"publishedDate"` -> `published_at`
+(parseado con `datetime.fromisoformat`, que en Python 3.11 ya interpreta
+el formato `"YYYY-MM-DD HH:MM:SS"` que entrega FMP), `"url"` -> `url`.
 
-Se dejó fuera deliberadamente `queried_at` (metadato de la consulta, ya
-disponible en `ProviderMetadata`/el payload crudo, no del dato de
-dominio en sí) y cualquier lógica de relevancia/filtrado (responsabilidad
-del futuro motor de análisis de noticias).
+Un `raw.payload` vacío o `None` produce una lista vacía sin levantar
+ninguna excepción, consistente con que `FMPNewsProvider.fetch` ya trata
+"sin noticias" como una respuesta válida, no un error. `NormalizationError`
+se levanta únicamente si a una noticia individual le falta alguno de los
+cinco campos imprescindibles, o si su fecha de publicación no es
+interpretable; el mensaje identifica la posición (índice, comenzando en
+1) de la noticia afectada dentro del payload, mismo criterio ya usado por
+`financial_statement_series_from_raw` para identificar el periodo que
+falla en una serie.
 
-Re-exportado desde `investmentops/data_layer/__init__.py`. Nuevo archivo
-de pruebas `investmentops/tests/test_data_layer_news.py`.
+Nuevo archivo de pruebas
+`investmentops/tests/test_data_layer_normalization_news.py`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/data_layer/news.py`
-- `investmentops/tests/test_data_layer_news.py`
+- `investmentops/tests/test_data_layer_normalization_news.py`
 
 Modificados:
-- `investmentops/data_layer/__init__.py` (re-exporta `News`)
+- `investmentops/data_layer/normalization.py` (nueva función `news_from_raw`
+  y ampliación del docstring del módulo; sin cambios en las funciones ya
+  existentes)
 - `TASKS.md` (tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Normalización" → "Implementar la transformación de noticias
-crudas al modelo normalizado", sobre la base ya disponible en
-`investmentops/data_providers/news.py` (`FMPNewsProvider.fetch`) y el
-modelo `News` recién definido.
+Fase 4, "Normalización" → "Implementar el guardado de noticias
+normalizadas en la caché local tras cada consulta", sobre la base ya
+disponible en `investmentops/data_layer/cache.py` (mismo patrón ya usado
+por `save_financial_statement_series` para persistir una lista de
+elementos por ticker) y el modelo `News`/`news_from_raw` recién
+completados.
