@@ -26,6 +26,15 @@ provider = ""          # ej. "example_provider"
 api_key = ""
 # base_url = ""         # opcional, solo si el proveedor lo requiere
 
+[data_providers.news]
+# Proveedor de noticias (Fase 4, ver
+# investmentops/data_providers/NEWS_PROVIDER.md). Sección separada de
+# [data_providers.fundamentals], aunque hoy ambas apunten al mismo
+# proveedor externo (FMP).
+provider = ""          # ej. "fmp"
+api_key = ""
+# base_url = ""         # opcional, solo si el proveedor lo requiere
+
 # --- Proveedores de IA (investmentops.ai_providers) ------------------------
 # Una sección por proveedor soportado por la interfaz común. No es
 # necesario completar todos: solo los que efectivamente se vayan a usar.
