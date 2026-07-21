@@ -30,15 +30,21 @@ aquí para que el resto del sistema los importe directamente desde
   de `FinancialStatement`, uno por periodo, ordenada del más reciente al
   más antiguo (ver TASKS.md, Fase 3, "Normalización" > "Extender el
   modelo 'Estados financieros normalizados' para incluir series
-  temporales"). Aún sin un consumidor real: la transformación desde la
-  respuesta cruda histórica de `FMPFundamentalsProvider.fetch_historical`
-  es una tarea separada y posterior de la misma sección.
+  temporales").
 - `MarketData` (en `investmentops.data_layer.market_data`): datos de
   mercado normalizados de una empresa en un corte (precio, capitalización,
   múltiplos, con fuente y fecha de corte).
+- `News` (en `investmentops.data_layer.news`): evento noticioso
+  normalizado relacionado con una empresa (titular, resumen, fuente,
+  fecha de publicación, enlace), ver TASKS.md, Fase 4, "Normalización" >
+  "Definir el modelo de dominio 'Noticias' (fecha, fuente, resumen)". Aún
+  sin un consumidor real: la transformación desde la respuesta cruda de
+  `FMPNewsProvider.fetch` es una tarea separada y posterior de la misma
+  sección.
 
 Aún sin implementación (ver TASKS.md, sección "Normalización y
-almacenamiento" de la Fase 1, y "Normalización" de la Fase 3).
+almacenamiento" de la Fase 1, "Normalización" de la Fase 3, y
+"Normalización" de la Fase 4).
 """
 
 from investmentops.data_layer.domain import Company
@@ -47,10 +53,12 @@ from investmentops.data_layer.financial_statement_series import (
 )
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
+from investmentops.data_layer.news import News
 
 __all__ = [
     "Company",
     "FinancialStatement",
     "FinancialStatementSeries",
     "MarketData",
+    "News",
 ]
