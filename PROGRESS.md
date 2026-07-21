@@ -4,64 +4,71 @@
 
 ## Última tarea completada
 
-Fase 4, "Normalización" → "Implementar la transformación de noticias
-crudas al modelo normalizado" (TASKS.md).
+Fase 4, "Normalización" → "Implementar el guardado de noticias
+normalizadas en la caché local tras cada consulta" (TASKS.md).
 
 ### Qué se implementó
 
-`news_from_raw` en `investmentops/data_layer/normalization.py` (mismo
-módulo que ya aloja `financial_statement_from_raw`, `market_data_from_raw`
-y `financial_statement_series_from_raw`, siguiendo el mismo criterio ya
-documentado de no fragmentar transformaciones de este tipo en módulos
-separados).
+`save_news`/`load_news` en `investmentops/data_layer/cache.py` (mismo
+módulo que ya aloja el guardado/lectura de `financial_statement`,
+`market_data` y `financial_statement_series`).
 
-Traduce el `RawProviderData` que entrega `FMPNewsProvider.fetch`
-(`investmentops/data_providers/news.py`) — una lista cruda de noticias,
-cada una ya con `"source"`/`"queried_at"` adjuntados por
-`_attach_news_provenance` — a `list[News]` (`investmentops.data_layer.News`),
-una `News` por cada elemento del payload, en el mismo orden en que las
-entrega FMP (a diferencia de `financial_statement_from_raw`/
-`market_data_from_raw`, que solo toman el corte más reciente: aquí no
-hay un único "dato más reciente" relevante, el futuro motor de noticias
-necesita ver el conjunto completo).
+Siguen exactamente el mismo patrón ya usado por
+`save_financial_statement_series`/`load_financial_statement_series`
+(Fase 3), aplicado a `News` en vez de a la serie de estados financieros:
 
-Mapeo de campos: `"title"` -> `title`, `"text"` -> `summary`, `"site"`
--> `source` (el medio que publicó la noticia, distinto del proveedor de
-datos que la entregó — misma distinción ya documentada en
-`investmentops/data_layer/news.py`), `"publishedDate"` -> `published_at`
-(parseado con `datetime.fromisoformat`, que en Python 3.11 ya interpreta
-el formato `"YYYY-MM-DD HH:MM:SS"` que entrega FMP), `"url"` -> `url`.
+- **Sección nueva:** `"news"`, en el mismo archivo `<TICKER>.json`, junto
+  a las tres secciones ya existentes. Guardar/leer noticias no toca
+  ninguna otra sección (misma fusión ya usada en el resto del módulo).
+- **Forma de la sección:** `{"items": [...], "cached_at": ...}`, donde
+  cada elemento de `"items"` serializa los cinco campos de `News`
+  (`title`, `summary`, `source`, `published_at` en ISO 8601, `url`).
+  No se reutiliza `_save_section`/`dataclasses.asdict` directamente por
+  la misma razón que la serie histórica: `News.published_at` es un
+  `datetime`, y `News` se guarda como una lista, no como un único
+  dataclass plano.
+- **Lista vacía como valor válido:** una empresa sin noticias recientes
+  (`payload == []`, ver `investmentops.data_providers.news`, "'No
+  devuelve resultados' NO es un error") se guarda y se lee tal cual
+  (`[]`), distinguiéndose explícitamente de `None` (nada cacheado, o
+  cacheado pero vencido) — quien invoque `load_news` no debe confundir
+  "ya sé que no hay noticias" con "todavía no sé si hay noticias".
+- **Manejo de fallos:** mismo criterio que las demás secciones
+  (`CacheError` ante ticker vacío, fallos de E/S, sección corrupta o
+  incompleta — un elemento de `"items"` sin algún campo imprescindible,
+  o con `published_at` no interpretable).
 
-Un `raw.payload` vacío o `None` produce una lista vacía sin levantar
-ninguna excepción, consistente con que `FMPNewsProvider.fetch` ya trata
-"sin noticias" como una respuesta válida, no un error. `NormalizationError`
-se levanta únicamente si a una noticia individual le falta alguno de los
-cinco campos imprescindibles, o si su fecha de publicación no es
-interpretable; el mensaje identifica la posición (índice, comenzando en
-1) de la noticia afectada dentro del payload, mismo criterio ya usado por
-`financial_statement_series_from_raw` para identificar el periodo que
-falla en una serie.
+Reutiliza sin duplicar `_resolve_cache_dir`, `_ticker_file`,
+`_read_existing` y `_load_section`, ya existentes en el módulo.
 
 Nuevo archivo de pruebas
-`investmentops/tests/test_data_layer_normalization_news.py`.
+`investmentops/tests/test_data_layer_cache_news.py`, siguiendo el mismo
+patrón de `test_data_layer_cache_series.py`, incluyendo pruebas de
+no-ruptura del roundtrip ya existente de `financial_statement`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_layer_normalization_news.py`
+- `investmentops/tests/test_data_layer_cache_news.py`
 
 Modificados:
-- `investmentops/data_layer/normalization.py` (nueva función `news_from_raw`
-  y ampliación del docstring del módulo; sin cambios en las funciones ya
+- `investmentops/data_layer/cache.py` (nuevas funciones `save_news`/
+  `load_news`, nueva constante `_NEWS_SECTION`, import de `News`,
+  ampliación del docstring del módulo; sin cambios en las funciones ya
   existentes)
 - `TASKS.md` (tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Normalización" → "Implementar el guardado de noticias
-normalizadas en la caché local tras cada consulta", sobre la base ya
-disponible en `investmentops/data_layer/cache.py` (mismo patrón ya usado
-por `save_financial_statement_series` para persistir una lista de
-elementos por ticker) y el modelo `News`/`news_from_raw` recién
-completados.
+Fase 4, "Normalización" → "Implementar la lectura de noticias
+normalizadas desde caché para evitar una nueva llamada al proveedor si
+el dato ya existe y es reciente" — nota: `load_news` ya quedó
+implementada en esta misma tarea (junto con `save_news`, siguiendo el
+mismo criterio ya aplicado en Fase 3 a
+`save_financial_statement_series`/`load_financial_statement_series`, que
+también se implementaron en conjunto). La próxima conversación debería
+verificar esto primero y, si se confirma que ya está satisfecha, marcarla
+como completada sin duplicar código, dejando como siguiente tarea real
+"Definir el criterio básico de relevancia/filtrado de noticias para el
+MVP" (Fase 4, "Motor de análisis: noticias relevantes").

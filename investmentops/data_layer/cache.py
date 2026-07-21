@@ -1,3 +1,4 @@
+# investmentops/data_layer/cache.py
 """Guardado y lectura en caché local de datos normalizados (Data Layer).
 
 Cubre las tareas (TASKS.md, Fase 1, "Normalización y almacenamiento"):
@@ -7,19 +8,24 @@ Cubre las tareas (TASKS.md, Fase 1, "Normalización y almacenamiento"):
 - "Implementar la lectura desde caché para evitar una nueva llamada al
   proveedor si el dato ya existe y es reciente."
 
-Y, desde esta tarea, TASKS.md, Fase 3, "Normalización":
+TASKS.md, Fase 3, "Normalización":
 
 - "Extender la caché local para persistir series históricas sin romper
   los datos ya guardados de Fase 1."
+
+Y, desde esta tarea, TASKS.md, Fase 4, "Normalización":
+
+- "Implementar el guardado de noticias normalizadas en la caché local
+  tras cada consulta."
 
 Implementa el mecanismo ya decidido y documentado en
 `investmentops/data_layer/CACHE.md`: un archivo JSON por ticker, bajo la
 ruta configurada en `config.local.toml` ([cache].path, ver
 CONFIGURATION.md), con una clave por modelo de dominio cacheado
-(``"financial_statement"``, ``"market_data"``, y ahora
-``"financial_statement_series"``) y un campo ``cached_at`` propio de la
-caché (no del modelo de dominio) que registra cuándo se escribió esa
-sección.
+(``"financial_statement"``, ``"market_data"``,
+``"financial_statement_series"``, y ahora ``"news"``) y un campo
+``cached_at`` propio de la caché (no del modelo de dominio) que registra
+cuándo se escribió esa sección.
 
 Guardar una sección nunca sobrescribe las demás secciones ya cacheadas
 para el mismo ticker (ver CACHE.md, "Estructura del archivo"): el
@@ -28,25 +34,26 @@ sección antes de volver a escribirlo.
 
 ## Lectura y frescura
 
-`load_financial_statement`/`load_market_data`/`load_financial_statement_series`
-leen la sección correspondiente de `<cache_path>/<TICKER>.json`,
-reconstruyen el modelo de dominio (inverso de la serialización de
-`_save_section`/`save_financial_statement_series`) y lo devuelven solo si
-su `cached_at` sigue siendo "reciente" según `max_age`. Si la sección no
-existe, o existe pero está vencida, devuelven ``None`` — quien las invoca
-(el futuro orquestador/proveedor de datos) interpreta un ``None`` como
-"hay que consultar al proveedor de nuevo", nunca como un error. Un archivo
-o sección corrupta (`cached_at` no interpretable, campos imprescindibles
-ausentes) sí se señala mediante `CacheError`, porque en ese caso el
-problema no es la ausencia del dato sino la caché en un estado
-inconsistente que no debe usarse en silencio.
+`load_financial_statement`/`load_market_data`/`load_financial_statement_series`/
+`load_news` leen la sección correspondiente de
+`<cache_path>/<TICKER>.json`, reconstruyen el modelo de dominio (inverso
+de la serialización de `_save_section`/`save_financial_statement_series`/
+`save_news`) y lo devuelven solo si su `cached_at` sigue siendo
+"reciente" según `max_age`. Si la sección no existe, o existe pero está
+vencida, devuelven ``None`` — quien las invoca (el futuro orquestador/
+proveedor de datos) interpreta un ``None`` como "hay que consultar al
+proveedor de nuevo", nunca como un error. Un archivo o sección corrupta
+(`cached_at` no interpretable, campos imprescindibles ausentes) sí se
+señala mediante `CacheError`, porque en ese caso el problema no es la
+ausencia del dato sino la caché en un estado inconsistente que no debe
+usarse en silencio.
 
 `DEFAULT_MAX_AGE` (24 horas) es el umbral de frescura elegido para el
-MVP, reutilizado tal cual por la serie histórica: no hay hoy evidencia de
-que una serie de varios periodos deba considerarse "vieja" con un umbral
-distinto al de un corte único, y agregar un segundo umbral antes de tener
-ese caso de uso real iría contra el criterio de no sobre-diseñar ya
-aplicado en el resto de este módulo.
+MVP, reutilizado tal cual por la serie histórica y por las noticias: no
+hay hoy evidencia de que estos datos deban considerarse "viejos" con un
+umbral distinto al de un corte único, y agregar un umbral separado antes
+de tener ese caso de uso real iría contra el criterio de no
+sobre-diseñar ya aplicado en el resto de este módulo.
 
 ## Caché de series históricas (`save_financial_statement_series`/`load_financial_statement_series`)
 
@@ -84,15 +91,51 @@ de la misma clave... sin romper este formato de archivo por ticker"*.
   corrupta/incompleta — por ejemplo, un elemento de `"statements"` sin
   alguno de sus campos imprescindibles, o con una fecha no interpretable).
 
+## Caché de noticias normalizadas (`save_news`/`load_news`, esta tarea)
+
+Cubre la tarea "Implementar el guardado de noticias normalizadas en la
+caché local tras cada consulta" (TASKS.md, Fase 4, "Normalización"),
+sobre el modelo `News` (`investmentops.data_layer.news`) y su
+transformación ya implementada (`news_from_raw`, ver
+`investmentops/data_layer/normalization.py`).
+
+- **Clave nueva:** `"news"`, junto a `"financial_statement"`,
+  `"market_data"` y `"financial_statement_series"` ya existentes, en el
+  mismo archivo `<TICKER>.json`. Guardar noticias no toca ni sobrescribe
+  las demás secciones (misma fusión ya usada por `_save_section`/
+  `save_financial_statement_series`).
+- **Forma de la sección:** mismo patrón que
+  `"financial_statement_series"` — un objeto con `"items"` (la lista de
+  noticias, en el mismo orden recibido, cada una serializada con los
+  campos de `News` — `title`, `summary`, `source`, `published_at` en ISO
+  8601, `url`) más `"cached_at"`. Una lista vacía (empresa sin noticias
+  recientes, ver `investmentops.data_providers.news`, "'No devuelve
+  resultados' NO es un error") es una sección válida y cacheable: se
+  guarda igual que una lista no vacía, para que una lectura posterior no
+  vuelva a disparar la consulta al proveedor solo porque no había
+  noticias.
+- **No se reutiliza `_save_section`** por la misma razón que la serie
+  histórica: `News` tiene un campo `datetime` que `dataclasses.asdict`
+  no serializa a texto por sí solo, y es una lista de dataclasses, no un
+  único dataclass plano. Se construye la lista serializada
+  explícitamente, reutilizando `_resolve_cache_dir`, `_ticker_file`,
+  `_read_existing` y `_load_section` sin duplicar esa infraestructura,
+  mismo criterio que `save_financial_statement_series`.
+- **Manejo de fallos:** mismo criterio que las demás secciones
+  (`CacheError` ante ticker vacío, fallos de E/S, o una sección cacheada
+  corrupta/incompleta — a algún elemento de `"items"` le falta un campo
+  imprescindible, o `published_at` no tiene un formato interpretable).
+
 Fuera de alcance de este módulo:
-- Cachear la serie de `MarketData` (no existe tal serie: la Fase 3 se
-  centra en ingresos y beneficios, no en precio de mercado, ver
-  `investmentops/data_providers/HISTORICAL_DATA.md`).
+- La lectura de noticias desde caché (`load_news`, ya implementada aquí
+  junto con `save_news` por ser la misma pieza natural de
+  infraestructura, mismo criterio ya aplicado a
+  `save_financial_statement_series`/`load_financial_statement_series` en
+  la Fase 3, que también se implementaron juntas).
 - Decidir qué hace el orquestador/proveedor cuando `load_*` devuelve
   ``None`` (es decir, disparar la llamada real al proveedor de datos):
   eso es responsabilidad de quien invoque estas funciones (ver TASKS.md,
-  "Orquestador mínimo"/futuro consumidor de series en la Fase 3), no de
-  este módulo.
+  futuro consumidor de noticias en la Fase 4), no de este módulo.
 """
 
 from __future__ import annotations
@@ -109,6 +152,7 @@ from investmentops.data_layer.financial_statement_series import (
 )
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
+from investmentops.data_layer.news import News
 
 #: Valor por defecto si no se indica una ruta de caché ni se puede leer
 #: `config.local.toml` (mismo valor documentado como ejemplo en
@@ -119,13 +163,18 @@ DEFAULT_CACHE_PATH = ".investmentops_cache/"
 #: sección cacheada se considera "reciente" si su `cached_at` tiene menos
 #: de este tiempo transcurrido (ver CACHE.md, "Qué determina 'reciente'",
 #: decisión tomada como parte de esta tarea). Reutilizado tal cual por la
-#: caché de series históricas (ver docstring del módulo).
+#: caché de series históricas y por la caché de noticias (ver docstring
+#: del módulo).
 DEFAULT_MAX_AGE = timedelta(hours=24)
 
 #: Nombre de la sección usada para la serie histórica de estados
 #: financieros dentro de `<TICKER>.json`, junto a `"financial_statement"`
 #: y `"market_data"` ya existentes.
 _FINANCIAL_STATEMENT_SERIES_SECTION = "financial_statement_series"
+
+#: Nombre de la sección usada para las noticias normalizadas dentro de
+#: `<TICKER>.json`, junto a las tres secciones ya existentes.
+_NEWS_SECTION = "news"
 
 
 class CacheError(RuntimeError):
@@ -472,6 +521,173 @@ def load_financial_statement_series(
     return FinancialStatementSeries(
         ticker=ticker.strip().upper(), statements=statements
     )
+
+
+def save_news(
+    ticker: str,
+    news_items: list[News],
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> Path:
+    """Persiste una lista de `News` normalizadas en la caché local del ticker.
+
+    Escribe la sección ``"news"`` de `<cache_path>/<TICKER>.json` (ver
+    "Caché de noticias normalizadas" en el docstring del módulo), sin
+    afectar las demás secciones (`"financial_statement"`, `"market_data"`,
+    `"financial_statement_series"`) ya cacheadas para el mismo ticker
+    (mismo criterio de fusión ya usado por las demás funciones `save_*`).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa (ej. ``"AAPL"``). Se normaliza a
+        mayúsculas para el nombre del archivo, mismo criterio que las
+        demás funciones `save_*` de este módulo.
+    news_items:
+        La lista de `News` ya normalizadas a persistir (ver
+        `investmentops.data_layer.normalization.news_from_raw`), en el
+        mismo orden en que se recibieron. Una lista vacía (empresa sin
+        noticias recientes) es un valor válido y se guarda igual que
+        cualquier otro, para no volver a consultar al proveedor
+        únicamente por no haber noticias.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas sin depender de un
+        `config.local.toml` real en disco.
+
+    Returns
+    -------
+    Path
+        La ruta del archivo `<TICKER>.json` escrito.
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío o si ocurre un fallo de E/S al escribir.
+    """
+    if not ticker or not ticker.strip():
+        raise CacheError("El ticker no puede estar vacío.")
+
+    cache_dir = _resolve_cache_dir(cache_path, config)
+
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise CacheError(
+            f"No se pudo crear el directorio de caché '{cache_dir}': {exc}"
+        ) from exc
+
+    file_path = _ticker_file(cache_dir, ticker)
+    existing = _read_existing(file_path)
+
+    items_data = [
+        {
+            "title": item.title,
+            "summary": item.summary,
+            "source": item.source,
+            "published_at": item.published_at.isoformat(),
+            "url": item.url,
+        }
+        for item in news_items
+    ]
+    section_data = {
+        "items": items_data,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+    }
+    existing[_NEWS_SECTION] = section_data
+
+    try:
+        with file_path.open("w", encoding="utf-8") as cache_file:
+            json.dump(existing, cache_file, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        raise CacheError(
+            f"No se pudo escribir el archivo de caché '{file_path}': {exc}"
+        ) from exc
+
+    return file_path
+
+
+def load_news(
+    ticker: str,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+    max_age: timedelta = DEFAULT_MAX_AGE,
+) -> list[News] | None:
+    """Lee una lista de `News` desde la caché local, si existe y es reciente.
+
+    Misma semántica de frescura/ausencia que las demás funciones
+    `load_*` de este módulo: devuelve ``None`` si no hay nada cacheado
+    para este ticker o si la sección cacheada ya superó `max_age`, y
+    levanta `CacheError` solo ante una sección corrupta o un fallo de
+    E/S. Una lista vacía cacheada (empresa sin noticias recientes) se
+    devuelve tal cual (``[]``), no como ``None``: son dos cosas
+    distintas — ``[]`` significa "se consultó y no había noticias";
+    ``None`` significa "no hay nada cacheado (o está vencido), hay que
+    consultar de nuevo".
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a buscar en caché (ej. ``"AAPL"``).
+        Se normaliza a mayúsculas, igual criterio que las demás
+        funciones `load_*`.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas.
+    max_age:
+        Antigüedad máxima aceptada desde `cached_at` para considerar las
+        noticias "recientes". Por defecto, `DEFAULT_MAX_AGE` (24 horas).
+
+    Returns
+    -------
+    list[News] | None
+        La lista de `News` reconstruida (en el mismo orden en que se
+        guardaron) si hay una sección cacheada y no ha vencido según
+        `max_age`; ``None`` en caso contrario.
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío, si ocurre un fallo de E/S al leer el
+        archivo, o si la sección cacheada existe pero está corrupta o
+        incompleta (falta `cached_at`, algún elemento de `"items"` no
+        tiene un campo imprescindible, o `published_at` no tiene un
+        formato reconocible).
+    """
+    section = _load_section(
+        ticker,
+        _NEWS_SECTION,
+        cache_path=cache_path,
+        config=config,
+        max_age=max_age,
+    )
+    if section is None:
+        return None
+
+    try:
+        news_list = [
+            News(
+                title=item["title"],
+                summary=item["summary"],
+                source=item["source"],
+                published_at=datetime.fromisoformat(item["published_at"]),
+                url=item["url"],
+            )
+            for item in section["items"]
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CacheError(
+            f"La sección '{_NEWS_SECTION}' cacheada para '{ticker}' está "
+            f"corrupta o incompleta: {exc}"
+        ) from exc
+
+    return news_list
 
 
 def _save_section(
