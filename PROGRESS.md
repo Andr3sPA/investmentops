@@ -1,63 +1,56 @@
 # InvestmentOps — Progreso
 
-**Última actualización:** 2026-07-20
+**Última actualización:** 2026-07-21
 
 ## Última tarea completada
 
-Fase 4, "Motor de análisis: noticias relevantes" → "Ensamblar el
-resultado estructurado del motor (hallazgos, lista de noticias
-relevantes, advertencias si no hay noticias)" (TASKS.md).
+Fase 4, "Orquestador" → "Registrar el nuevo proveedor de noticias sin
+modificar los proveedores existentes" (TASKS.md).
 
 ### Qué se implementó
 
-`assemble_news_relevance_analysis`/`NewsRelevanceResult` en
-`investmentops/analysis_engines/news_relevance.py`, encadenando las dos
-piezas ya implementadas en este módulo (`filter_relevant_news`,
-`select_news_summary`):
+`fetch_raw_news_data`/`fetch_and_normalize_news` en
+`investmentops/core/orchestrator.py`, siguiendo exactamente el mismo
+patrón de dos capas ya usado por `fetch_raw_data`/`fetch_and_normalize`
+(Fase 1) y `fetch_raw_historical_data`/`fetch_and_normalize_historical`
+(Fase 3):
 
-- **`findings`**: un único hallazgo en lenguaje natural, generado por
-  plantilla determinista (no por un modelo de lenguaje), indicando
-  cuántas noticias relevantes se encontraron dentro de la ventana
-  configurada (con singular/plural correcto), o su ausencia explícita
-  si no se encontró ninguna.
-- **`supporting_metrics`**: `{"relevant_news": [...]}`, donde cada
-  elemento es un `dict` serializable con `title`, `summary` (ya
-  recortado vía `select_news_summary`), `source`, `published_at` (ISO
-  8601) y `url`, en el mismo orden relativo en que llegaron las
-  noticias filtradas. Lista vacía si no hay ninguna noticia relevante.
-- **`limitations`**: vacío si se encontró al menos una noticia
-  relevante; una única advertencia explícita (identificando el tamaño
-  de la ventana usada) en caso contrario — mismo tratamiento tanto para
-  una lista de entrada vacía como para "ninguna noticia dentro de la
-  ventana" (dos casos que `NEWS_RELEVANCE.md` ya identificaba como
-  equivalentes desde la perspectiva de este ensamblado).
+- **`fetch_raw_news_data(ticker, ...)`**: dispara la consulta al
+  proveedor de noticias (`investmentops.data_providers.news.FMPNewsProvider.fetch`).
+  Por defecto construye un `FMPNewsProvider`, pero acepta un `provider`
+  inyectado (pensado sobre todo para pruebas).
+- **`fetch_and_normalize_news(ticker, ...)`**: encadena
+  `fetch_raw_news_data(ticker, ...)` con
+  `investmentops.data_layer.normalization.news_from_raw`, devolviendo
+  una `list[News]` (lista vacía si la empresa no tiene noticias
+  recientes, mismo criterio ya aplicado en `investmentops.data_providers.news`:
+  eso no es un error).
 
-Mismo criterio de diseño ya aplicado por `TrendAnalysisResult`
-(`investmentops.analysis_engines.trends`, Fase 3): este motor tampoco
-invoca ningún proveedor de IA en las tareas ya definidas para él en
-`TASKS.md` (el "resumen breve" es un recorte determinístico, no una
-interpretación generada por IA), por lo que `NewsRelevanceResult` no
-lleva `AnalysisProvenance` — se define como un tipo de resultado propio
-(`analysis_id`, `findings`, `supporting_metrics`, `limitations`), sin
-forzar el contrato `AnalysisResult`. Su incorporación al `ResearchResult`
-común queda como tarea separada y posterior ("Orquestador", Fase 4).
+Ninguna de las dos captura `DataProviderError` ni `NormalizationError`:
+las propagan tal cual, mismo criterio que las funciones equivalentes de
+Fase 1 y Fase 3. No se modificó `FMPFundamentalsProvider` ni ninguna
+función ya existente del orquestador (`fetch_raw_data`,
+`fetch_and_normalize`, `fetch_raw_historical_data`,
+`fetch_and_normalize_historical`, `run_trend_analysis_engine`,
+`investigate`, etc.): es un cambio puramente aditivo.
+
+Registrar el motor de análisis de noticias relevantes en el flujo del
+orquestador e incluir su resultado en `ResearchResult` quedan como
+tareas separadas y siguientes de esta misma sección.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_analysis_engines_news_assembly.py`
+- `investmentops/tests/test_core_orchestrator_news.py`
 
 Modificados:
-- `investmentops/analysis_engines/news_relevance.py` (agregado
-  `AGENT_ID`, `NewsRelevanceResult`, `assemble_news_relevance_analysis`
-  y sus helpers internos `_build_no_relevant_news_warning`/
-  `_describe_relevant_news_count`; `filter_relevant_news` y
-  `select_news_summary` no cambiaron)
-- `TASKS.md` (una línea: tarea de ensamblado del motor de noticias
-  relevantes marcada como completada)
+- `investmentops/core/orchestrator.py` (agregado `fetch_raw_news_data`,
+  `fetch_and_normalize_news`, imports de `News`, `news_from_raw` y
+  `FMPNewsProvider`; ninguna función existente cambió su comportamiento)
+- `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Orquestador" → "Registrar el nuevo proveedor de noticias sin
-modificar los proveedores existentes."
+Fase 4, "Orquestador" → "Registrar el nuevo motor de análisis sin
+modificar los motores existentes."

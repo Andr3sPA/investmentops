@@ -5,9 +5,10 @@ final, manejo de fallos parciales sin detener el resto del flujo,
 generación de reportes (Markdown/HTML) tras ensamblar ese resultado,
 obtención/normalización de la serie histórica de ingresos y beneficios,
 registro de la invocación del motor de evolución de ingresos y beneficios,
-y su inclusión en el "Resultado de investigación" ensamblado (Fase 3).
+su inclusión en el "Resultado de investigación" ensamblado (Fase 3), y
+obtención/normalización de noticias recientes de una empresa (Fase 4).
 
-Cubre diez tareas:
+Cubre once tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -51,16 +52,28 @@ Fase 3, "Orquestador" (TASKS.md):
   `ResearchResult` ensamblado, incluyendo el manejo de fallos parciales
   (serie histórica no disponible, error de normalización) sin detener
   el resto del flujo, siguiendo el mismo criterio ya usado por
-  `investigate` para los demás agentes." (esta tarea: `investigate`
-  ahora también invoca `run_trend_analysis_engine`, ver más abajo).
+  `investigate` para los demás agentes." (`investigate` ahora también
+  invoca `run_trend_analysis_engine`, ya completada, ver PROGRESS.md).
 
-Las siete primeras funciones viven en el mismo módulo porque son piezas
+Fase 4, "Orquestador" (TASKS.md):
+- "Registrar el nuevo proveedor de noticias sin modificar los
+  proveedores existentes." (`fetch_raw_news_data`,
+  `fetch_and_normalize_news`, esta tarea). Sigue exactamente el mismo
+  patrón de dos capas ya usado por `fetch_raw_data`/`fetch_and_normalize`
+  (Fase 1) y `fetch_raw_historical_data`/`fetch_and_normalize_historical`
+  (Fase 3), aplicado ahora al proveedor de noticias
+  (`investmentops.data_providers.news.FMPNewsProvider`, Fase 4): el
+  orquestador aprende a invocarlo sin modificar `FMPFundamentalsProvider`
+  ni ninguna de las funciones ya existentes de este módulo, un cambio
+  puramente aditivo (ver ARCHITECTURE.md, "Extensibilidad sin
+  reescritura"). Todavía no se registra ningún motor de análisis de
+  noticias ni se incluye su resultado en `ResearchResult`: esas son
+  tareas separadas y siguientes de esta misma sección.
+
+Las funciones de Fase 1-3 viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
-del flujo de una investigación", pasos 3-8). Las de esta tarea se suman
-al mismo módulo por el mismo motivo, y porque es aquí -no en
-`investmentops.analysis_engines.trends`- donde vive el adaptador
-decidido en `investmentops/core/TREND_INTEGRATION.md` (ver esa sección
-más abajo).
+del flujo de una investigación", pasos 3-8). Las de Fase 4 se suman al
+mismo módulo por el mismo motivo.
 
 ## Manejo de fallos parciales (`investigate`)
 
@@ -106,7 +119,7 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
 `investigate` no reemplaza a `run_analysis_engines` ni a
 `fetch_and_normalize`: ambas se mantienen sin cambios.
 
-## Inclusión del motor de tendencia en `investigate` (esta tarea)
+## Inclusión del motor de tendencia en `investigate`
 
 Cubre la tarea "Incluir el resultado de evolución de ingresos y
 beneficios en el `ResearchResult` ensamblado, incluyendo el manejo de
@@ -270,6 +283,34 @@ detener el resto del flujo.
 Esta tarea tampoco modifica `run_analysis_engines`, `analyze_financial_health`
 ni `analyze_valuation`: ninguno de los motores existentes cambia.
 
+## Obtención y normalización de noticias (`fetch_raw_news_data` / `fetch_and_normalize_news`)
+
+Cubre la tarea "Registrar el nuevo proveedor de noticias sin modificar
+los proveedores existentes" (TASKS.md, Fase 4, "Orquestador"). Sigue
+exactamente el mismo patrón de dos capas ya usado por
+`fetch_raw_data`/`fetch_and_normalize` (Fase 1) y
+`fetch_raw_historical_data`/`fetch_and_normalize_historical` (Fase 3):
+
+- **`fetch_raw_news_data(ticker, ...)`**: dispara la consulta al
+  proveedor de noticias (ver
+  `investmentops.data_providers.news.FMPNewsProvider.fetch`). Por
+  defecto construye un `FMPNewsProvider` (el proveedor ya elegido en
+  `investmentops/data_providers/NEWS_PROVIDER.md`), pero acepta un
+  `provider` inyectado para pruebas.
+- **`fetch_and_normalize_news(ticker, ...)`**: encadena
+  `fetch_raw_news_data(ticker, ...)` con
+  `investmentops.data_layer.normalization.news_from_raw`, devolviendo
+  una `list[News]` (lista vacía si la empresa no tiene noticias
+  recientes: no es un error, ver `investmentops.data_providers.news`).
+
+Ninguna de las dos captura `DataProviderError` ni `NormalizationError`:
+las propagan tal cual, mismo criterio ya aplicado por las funciones
+equivalentes de Fase 1 y Fase 3. No se modifica `FMPFundamentalsProvider`
+ni ninguna función ya existente de este módulo: es un cambio puramente
+aditivo. Registrar el motor de análisis de noticias relevantes e
+incluir su resultado en `ResearchResult` quedan como tareas separadas y
+siguientes de esta misma sección (ver TASKS.md).
+
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
   hoy una fuente de datos que los provea (ver docstring de
@@ -279,6 +320,9 @@ Fuera de alcance de este módulo (aún):
 - La presentación del resultado de tendencia en los reportes
   Markdown/HTML: tarea separada y posterior (ver TASKS.md, Fase 3,
   "Reportes").
+- Registrar el motor de análisis de noticias relevantes en el flujo del
+  orquestador e incluir su resultado en `ResearchResult`: tareas
+  separadas y siguientes de "Fase 4 > Orquestador" (ver TASKS.md).
 """
 
 from __future__ import annotations
@@ -311,11 +355,13 @@ from investmentops.data_layer.financial_statement_series import (
 )
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
+from investmentops.data_layer.news import News
 from investmentops.data_layer.normalization import (
     NormalizationError,
     financial_statement_from_raw,
     financial_statement_series_from_raw,
     market_data_from_raw,
+    news_from_raw,
 )
 from investmentops.data_providers.contracts import (
     DataProvider,
@@ -323,6 +369,7 @@ from investmentops.data_providers.contracts import (
     RawProviderData,
 )
 from investmentops.data_providers.fundamentals import FMPFundamentalsProvider
+from investmentops.data_providers.news import FMPNewsProvider
 from investmentops.reports import (
     render_html,
     render_markdown,
@@ -576,6 +623,114 @@ def fetch_and_normalize_historical(
         ticker, config=config, provider=provider, period=period, limit=limit
     )
     return financial_statement_series_from_raw(raw)
+
+
+def fetch_raw_news_data(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPNewsProvider | None = None,
+) -> RawProviderData:
+    """Consulta al proveedor de noticias (Fase 4) para `ticker`.
+
+    Análoga a `fetch_raw_data` (Fase 1) y `fetch_raw_historical_data`
+    (Fase 3), aplicada al proveedor de noticias registrado en esta tarea
+    (TASKS.md, Fase 4, "Orquestador" > "Registrar el nuevo proveedor de
+    noticias sin modificar los proveedores existentes"): el orquestador
+    aprende a invocar `FMPNewsProvider.fetch(ticker)` sin tocar
+    `FMPFundamentalsProvider` ni ninguna de las funciones ya existentes
+    de este módulo, un cambio puramente aditivo (ver ARCHITECTURE.md,
+    "Extensibilidad sin reescritura").
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a consultar (ej. ``"AAPL"``). Se pasa
+        tal cual al proveedor, que es quien valida/normaliza su formato
+        (ver `FMPNewsProvider.fetch`).
+    config:
+        Configuración ya cargada, usada para construir el proveedor por
+        defecto si no se indica `provider` explícitamente. Útil para
+        pruebas, para no depender de un `config.local.toml` real en
+        disco. Se ignora si `provider` ya se indica.
+    provider:
+        Proveedor de noticias ya construido a usar en vez del proveedor
+        por defecto. Si no se indica, se construye un `FMPNewsProvider`
+        (el proveedor ya elegido para noticias, ver
+        `investmentops/data_providers/NEWS_PROVIDER.md`).
+
+    Returns
+    -------
+    RawProviderData
+        Los datos crudos de noticias obtenidos (lista de noticias, cada
+        una ya con su propia procedencia), junto con los metadatos de
+        procedencia de la consulta completa.
+
+    Raises
+    ------
+    DataProviderError
+        Si el proveedor no responde, el ticker está vacío, o la
+        respuesta no tiene la forma esperada (ver `FMPNewsProvider.fetch`).
+        Esta función no captura ni traduce esa excepción.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    news_provider = provider if provider is not None else FMPNewsProvider(config=config)
+    return news_provider.fetch(ticker)
+
+
+def fetch_and_normalize_news(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPNewsProvider | None = None,
+) -> list[News]:
+    """Consulta al proveedor de noticias y normaliza el resultado para `ticker`.
+
+    Encadena `fetch_raw_news_data(ticker, ...)` con
+    `investmentops.data_layer.normalization.news_from_raw`, mismo patrón
+    de dos capas ya usado por `fetch_and_normalize`/
+    `fetch_and_normalize_historical`.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a consultar.
+    config:
+        Configuración ya cargada, propagada a `fetch_raw_news_data`.
+        Útil para pruebas, para no depender de un `config.local.toml`
+        real en disco.
+    provider:
+        Proveedor de noticias ya construido, propagado a
+        `fetch_raw_news_data`. Pensado sobre todo para pruebas.
+
+    Returns
+    -------
+    list[News]
+        Las noticias normalizadas de la empresa, en el mismo orden en
+        que las entrega el proveedor. Lista vacía si la empresa no tiene
+        noticias recientes (no es un error, ver
+        `investmentops.data_providers.news`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_raw_news_data`.
+    NormalizationError
+        Si alguna noticia cruda no trae los campos imprescindibles o su
+        fecha de publicación no es interpretable (ver
+        `investmentops.data_layer.normalization.news_from_raw`). Esta
+        función no captura ni traduce esa excepción: el manejo de
+        fallos parciales sin detener el resto del flujo queda para una
+        tarea separada y posterior de esta misma sección (ver TASKS.md,
+        Fase 4, "Orquestador").
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    raw = fetch_raw_news_data(ticker, config=config, provider=provider)
+    return news_from_raw(raw)
 
 
 def _trend_analysis_result_to_analysis_result(
