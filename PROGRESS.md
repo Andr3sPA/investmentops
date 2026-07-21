@@ -4,67 +4,51 @@
 
 ## Última tarea completada
 
-Fase 4, "Reportes" → "Añadir la misma sección [Noticias recientes
-relevantes] a la plantilla HTML" (TASKS.md).
+Fase 5, "Fuente de datos de comparables" → "Elegir el proveedor o método
+para obtener empresas pares/sector de una empresa dada" (TASKS.md).
 
 ### Qué se implementó
 
-`render_html` (`investmentops/reports/html.py`) ahora agrega el bloque
-`<h2>Noticias recientes relevantes</h2>` después de `<h2>Evolución de
-ingresos y beneficios</h2>`, buscando el `AnalysisResult` con
-`analysis_id == "news_relevance"` (`NEWS_RELEVANCE_AGENT_ID`, nuevo en
-este módulo) vía `_find_analysis` (ya genérica, sin cambios).
+`investmentops/data_providers/COMPARABLES_PROVIDER.md` (nuevo). Decisión:
+reutilizar **Financial Modeling Prep (FMP)**, el mismo proveedor ya
+integrado desde la Fase 1 (`FMPFundamentalsProvider`) y reutilizado en
+Fase 4 para noticias (`FMPNewsProvider`), esta vez vía su endpoint
+`/v4/stock_peers`, que devuelve para un ticker dado una lista de empresas
+"pares" (mismo sector/industria, tamaño de mercado comparable) ya
+calculada por el propio FMP — evita que este proyecto tenga que definir
+o mantener su propio criterio de comparabilidad.
 
-Siguiendo el mismo criterio ya usado para la sección de tendencia
-(`_render_trend_analysis_body_html`, que reemplaza la lista plana
-`<ul><li>clave: valor</li></ul>` por una tabla), esta nueva función
-`_render_news_relevance_body_html` reemplaza esa misma lista plana por
-una lista `<ul>` de noticias, ya que `supporting_metrics["relevant_news"]`
-es una lista de dicts con varios campos de texto libre por noticia
-(título, resumen, fuente, fecha, URL), no un mapeo por periodo (como
-tendencia) ni escalares sueltos (como salud financiera/valoración). Cada
-noticia relevante se vuelca como:
+Las métricas clave de cada empresa par (ingresos, beneficio neto, deuda,
+precio, capitalización) se obtendrán reutilizando, sin duplicar, los
+clientes y transformaciones ya existentes de la Fase 1
+(`FMPFundamentalsProvider.fetch`, `financial_statement_from_raw`,
+`market_data_from_raw`): la única pieza nueva que aporta esta decisión es
+cómo obtener la *lista* de tickers pares.
 
-```html
-<li><strong>título</strong> (fuente, fecha ISO 8601): resumen
-    (<a href="url">Leer más</a>)</li>
-```
+Se decide usar una sección de configuración nueva y separada,
+`[data_providers.comparables]`, siguiendo el mismo criterio ya aplicado
+en `NEWS_PROVIDER.md` para no acoplar accidentalmente distintas fuentes
+de datos que hoy comparten el mismo proveedor externo.
 
-equivalente elemento a elemento a la línea Markdown ya implementada en
-`investmentops.reports.markdown._render_news_relevance_body`. Todo el
-contenido dinámico (título, fuente, fecha, resumen, url) se escapa con
-`html.escape`, mismo criterio ya aplicado en el resto de este generador
-(los hallazgos y limitaciones ya vienen de texto libre y no deben
-interpretarse como marcado HTML).
-
-`_render_news_relevance_body_html` construye la sección completa:
-hallazgos → lista de noticias (omitida por completo si `relevant_news`
-está vacía) → limitaciones → procedencia centinela (`ai_provider="none"`,
-`ai_model="deterministic"`, ya usada por este motor desde su integración
-al orquestador en la Fase 4).
-
-Con esta tarea, ambos generadores (Markdown y HTML) quedan alineados:
-las cuatro secciones de análisis (salud financiera, valoración,
-evolución de ingresos y beneficios, noticias recientes relevantes) ya
-se vuelcan en ambos formatos, en el mismo orden.
+Es una tarea de decisión/documentación, no de código: no se modificó
+ningún archivo `.py` existente ni se creó ningún cliente concreto.
 
 ## Archivos creados o modificados
 
+Creados:
+- `investmentops/data_providers/COMPARABLES_PROVIDER.md`
+
 Modificados:
-- `investmentops/reports/html.py` (`NEWS_RELEVANCE_AGENT_ID`,
-  `_render_news_relevance_body_html`, `render_html` extendido; docstring
-  del módulo actualizado)
-- `TASKS.md` (una línea: tarea marcada como completada)
+- `TASKS.md` (una línea: tarea marcada como completada, con referencia a
+  la decisión)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Verificación":
-- Probar el flujo con una empresa que tenga noticias recientes y revisar
-  que aparecen en el reporte con su fuente y fecha.
-- Probar el flujo con una empresa sin noticias recientes y revisar que
-  el reporte lo indica explícitamente en vez de omitirlo en silencio.
-
-(Estas son tareas de verificación manual, no de código; la siguiente
-tarea de implementación real sería el inicio de la Fase 5, "Comparar con
-empresas similares".)
+Fase 5, "Fuente de datos de comparables":
+- "Implementar la consulta de comparables (lista de empresas pares) para
+  un ticker." Implica crear `investmentops/data_providers/comparables.py`
+  con un cliente mínimo (similar a `FMPNewsProvider`) que consulte
+  `/v4/stock_peers` para un ticker y devuelva un `RawProviderData` con la
+  lista cruda de tickers pares, leyendo su API key desde
+  `[data_providers.comparables]` en `config.local.toml`.

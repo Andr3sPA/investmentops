@@ -200,7 +200,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 5 — Comparar con empresas similares
 
 ### Fuente de datos de comparables
-- [ ] Elegir el proveedor o método para obtener empresas pares/sector de una empresa dada.
+- [x] Elegir el proveedor o método para obtener empresas pares/sector de una empresa dada. — `investmentops/data_providers/COMPARABLES_PROVIDER.md` (nuevo, ver PROGRESS.md). Decisión: reutilizar **Financial Modeling Prep (FMP)**, el mismo proveedor ya integrado desde la Fase 1, vía su endpoint `/v4/stock_peers` (lista de tickers pares por sector/industria y tamaño de mercado comparable, ya calculada por FMP), en vez de sumar un proveedor externo nuevo o construir lógica de filtrado propia. Las métricas de cada par se obtendrán reutilizando los clientes y transformaciones ya existentes de la Fase 1 (`FMPFundamentalsProvider.fetch`, `financial_statement_from_raw`, `market_data_from_raw`). Se decide usar una sección de configuración nueva y separada, `[data_providers.comparables]`, sin acoplarla a `[data_providers.fundamentals]`.
 - [ ] Implementar la consulta de comparables (lista de empresas pares) para un ticker.
 - [ ] Implementar la consulta de métricas clave (las ya normalizadas en fases previas) para cada empresa par.
 - [ ] Adjuntar metadatos de procedencia a los datos de comparables.
