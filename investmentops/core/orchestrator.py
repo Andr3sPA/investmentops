@@ -434,7 +434,9 @@ Fuera de alcance de este módulo (aún):
 """
 
 from __future__ import annotations
+# --- Import nuevo, junto a los demás imports de data_providers ---
 
+from investmentops.data_providers.comparables import FMPComparablesProvider
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -855,7 +857,192 @@ def fetch_and_normalize_news(
     raw = fetch_raw_news_data(ticker, config=config, provider=provider)
     return news_from_raw(raw)
 
+# --- Nuevo bloque, insertado después de fetch_and_normalize_news
+#     y antes de _news_relevance_result_to_analysis_result ---
 
+
+@dataclass(frozen=True)
+class PeerMetrics:
+    """Métricas clave ya normalizadas de una empresa par (comparable).
+
+    Es el tipo de salida de `fetch_peer_key_metrics`: agrupa, para un
+    ticker par concreto, los mismos modelos de dominio normalizados ya
+    usados por el resto del sistema desde la Fase 1
+    (`FinancialStatement`, `MarketData`), sin introducir ningún modelo de
+    dominio "Comparables" nuevo (esa definición es una tarea separada y
+    posterior, ver TASKS.md, Fase 5, "Normalización" > "Definir el
+    modelo de dominio 'Comparables'").
+
+    Attributes
+    ----------
+    ticker:
+        Identificador de la empresa par (ej. ``"MSFT"``), tal como lo
+        devuelve `FMPComparablesProvider.fetch` dentro de `"peersList"`.
+    financial_statement:
+        Estados financieros normalizados de la empresa par (ver
+        `investmentops.data_layer.FinancialStatement`), obtenidos y
+        normalizados reutilizando `fetch_and_normalize`.
+    market_data:
+        Datos de mercado normalizados de la misma empresa par (ver
+        `investmentops.data_layer.MarketData`).
+    """
+
+    ticker: str
+    financial_statement: FinancialStatement
+    market_data: MarketData
+
+
+def fetch_peer_tickers(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPComparablesProvider | None = None,
+) -> list[str]:
+    """Obtiene la lista de tickers de empresas pares (comparables) de `ticker`.
+
+    Consulta `FMPComparablesProvider.fetch(ticker)` (ver
+    `investmentops.data_providers.comparables`, Fase 5,
+    `COMPARABLES_PROVIDER.md`) y extrae los tickers pares del payload
+    crudo tal como lo entrega FMP: una lista con, a lo sumo, un único
+    elemento que incluye la clave ``"peersList"`` (ej.
+    ``[{"symbol": "AAPL", "peersList": ["MSFT", "GOOG"]}]``). Esta
+    extracción es una lectura directa de una forma ya conocida y
+    documentada del payload, no una transformación al modelo de dominio
+    "Comparables" (esa definición es una tarea separada y posterior, ver
+    TASKS.md, Fase 5, "Normalización").
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa para la que se buscan pares (ej.
+        ``"AAPL"``). Se pasa tal cual al proveedor, que es quien
+        valida/normaliza su formato (ver `FMPComparablesProvider.fetch`).
+    config:
+        Configuración ya cargada, usada para construir el proveedor por
+        defecto si no se indica `provider` explícitamente. Útil para
+        pruebas, para no depender de un `config.local.toml` real en
+        disco. Se ignora si `provider` ya se indica.
+    provider:
+        Proveedor de comparables ya construido a usar en vez del
+        proveedor por defecto. Si no se indica, se construye un
+        `FMPComparablesProvider` (el proveedor ya elegido para
+        comparables, ver `COMPARABLES_PROVIDER.md`).
+
+    Returns
+    -------
+    list[str]
+        Los tickers de las empresas pares, en el mismo orden en que
+        aparecen en `"peersList"`. Lista vacía si FMP no devolvió ningún
+        elemento para `ticker`, o si el elemento devuelto no trae
+        `"peersList"` (ambos casos válidos, no un error: FMP puede no
+        encontrar pares para un ticker, ver
+        `FMPComparablesProvider.fetch`, "Una lista vacía es una
+        respuesta válida").
+
+    Raises
+    ------
+    DataProviderError
+        Si el proveedor no responde, el ticker está vacío, o la
+        respuesta no se puede interpretar (ver
+        `FMPComparablesProvider.fetch`). Esta función no captura ni
+        traduce esa excepción.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    comparables_provider = (
+        provider if provider is not None else FMPComparablesProvider(config=config)
+    )
+    raw = comparables_provider.fetch(ticker)
+
+    payload = raw.payload or []
+    if not payload:
+        return []
+
+    peers_list = payload[0].get("peersList") or []
+    return [str(peer) for peer in peers_list]
+
+
+def fetch_peer_key_metrics(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    comparables_provider: FMPComparablesProvider | None = None,
+    fundamentals_provider: DataProvider | None = None,
+) -> list[PeerMetrics]:
+    """Obtiene y normaliza las métricas clave de cada empresa par de `ticker`.
+
+    Encadena, para cada ticker par devuelto por `fetch_peer_tickers`, una
+    llamada a `fetch_and_normalize` (ya existente desde la Fase 1): no
+    duplica ningún cliente HTTP ni ninguna transformación de
+    normalización, reutilizando exactamente el mismo pipeline
+    proveedor -> `financial_statement_from_raw`/`market_data_from_raw`
+    ya usado para la propia empresa investigada (ver
+    `COMPARABLES_PROVIDER.md`, "Las métricas de cada par ya son las que
+    el sistema ya sabe obtener y normalizar").
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa para la que se buscan y consultan
+        pares (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada tanto a `fetch_peer_tickers`
+        como a cada llamada de `fetch_and_normalize`. Útil para pruebas,
+        para no depender de un `config.local.toml` real en disco.
+    comparables_provider:
+        Proveedor de comparables ya construido, propagado a
+        `fetch_peer_tickers`. Pensado sobre todo para pruebas.
+    fundamentals_provider:
+        Proveedor de datos fundamentales ya construido, propagado a cada
+        llamada de `fetch_and_normalize` para consultar las cifras de
+        cada empresa par. Cumple el contrato `DataProvider` (mismo tipo
+        ya usado por `fetch_and_normalize`/`investigate`). Si no se
+        indica, cada llamada construye su propio `FMPFundamentalsProvider`
+        por defecto.
+
+    Returns
+    -------
+    list[PeerMetrics]
+        Una entrada por cada ticker par, en el mismo orden devuelto por
+        `fetch_peer_tickers`, con sus `FinancialStatement`/`MarketData`
+        ya normalizados. Lista vacía si `ticker` no tiene empresas pares
+        según el proveedor de comparables.
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_peer_tickers` y `fetch_and_normalize`. Esta función no
+        captura ni traduce esa excepción: si la consulta o normalización
+        de cualquier empresa par falla, la excepción se propaga tal
+        cual, deteniendo el resto de la consulta (mismo criterio "todo o
+        nada" ya usado por `run_analysis_engines`; el manejo de fallos
+        parciales por par, si se necesita, es una decisión de una tarea
+        posterior).
+    NormalizationError
+        Ver `fetch_and_normalize`.
+    ConfigError
+        Si algún proveedor no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    peer_tickers = fetch_peer_tickers(
+        ticker, config=config, provider=comparables_provider
+    )
+
+    peer_metrics: list[PeerMetrics] = []
+    for peer_ticker in peer_tickers:
+        company_data = fetch_and_normalize(
+            peer_ticker, config=config, provider=fundamentals_provider
+        )
+        peer_metrics.append(
+            PeerMetrics(
+                ticker=peer_ticker,
+                financial_statement=company_data.financial_statement,
+                market_data=company_data.market_data,
+            )
+        )
+
+    return peer_metrics
 def _news_relevance_result_to_analysis_result(
     news_result: NewsRelevanceResult,
     *,

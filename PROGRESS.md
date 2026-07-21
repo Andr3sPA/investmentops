@@ -5,49 +5,58 @@
 ## Última tarea completada
 
 Fase 5, "Fuente de datos de comparables" → "Implementar la consulta de
-comparables (lista de empresas pares) para un ticker" (TASKS.md).
+métricas clave (las ya normalizadas en fases previas) para cada empresa
+par" (TASKS.md).
 
 ### Qué se implementó
 
-`FMPComparablesProvider` en `investmentops/data_providers/comparables.py`
-(nuevo). Cumple el contrato `DataProvider`
-(investmentops.data_providers.contracts): `fetch(ticker)` consulta el
-endpoint `/stock_peers` de la API **v4** de FMP (distinta de la v3 usada
-por `FMPFundamentalsProvider`/`FMPNewsProvider`) y devuelve un
-`RawProviderData` cuyo `payload` es la respuesta cruda tal como la
-entrega FMP (típicamente una lista con un único elemento que incluye
-`"peersList"`), sin transformarla ni extraer los tickers pares — esa
-interpretación es responsabilidad de la capa de normalización, tarea
-separada y posterior de esta misma sección.
+`PeerMetrics`, `fetch_peer_tickers` y `fetch_peer_key_metrics` en
+`investmentops/core/orchestrator.py` (nuevos).
 
-Sigue exactamente el mismo patrón ya usado por `FMPNewsProvider`
-(`investmentops/data_providers/news.py`): lee sus credenciales desde una
-sección nueva y separada, `[data_providers.comparables]` (no desde
-`[data_providers.fundamentals]`, aunque ambas apunten hoy al mismo
-proveedor externo), y traduce cualquier fallo (red, autenticación,
-errores de servidor, JSON inválido) a `DataProviderError`. Una lista
-vacía (FMP no encontró empresas pares para el ticker) se trata como una
-respuesta válida, no como un error.
+- `fetch_peer_tickers(ticker, ...)`: consulta
+  `FMPComparablesProvider.fetch(ticker)` y extrae los tickers pares de
+  `payload[0]["peersList"]` (forma ya conocida y documentada del
+  payload crudo de FMP, ver `COMPARABLES_PROVIDER.md`). Una lista vacía
+  o sin `"peersList"` no es un error, mismo criterio ya aplicado por el
+  propio `FMPComparablesProvider.fetch`.
+- `fetch_peer_key_metrics(ticker, ...)`: para cada ticker par devuelto
+  por `fetch_peer_tickers`, reutiliza **sin duplicarla**
+  `fetch_and_normalize` (ya existente desde la Fase 1) para obtener su
+  `FinancialStatement`/`MarketData` ya normalizados, empaquetados en un
+  `PeerMetrics` nuevo (`ticker`, `financial_statement`, `market_data`).
 
-Se actualizaron `config.example.toml` y `CONFIGURATION.md` con la nueva
-sección `[data_providers.comparables]`, siguiendo el mismo criterio ya
-aplicado para `[data_providers.news]` en la Fase 4.
+Ambas funciones viven en `investmentops/core/orchestrator.py` (no en
+`investmentops/data_providers/comparables.py`) para respetar la regla
+de dependencia de `ARCHITECTURE.md`: combinar `FMPComparablesProvider`
+con `FMPFundamentalsProvider` + `financial_statement_from_raw`/
+`market_data_from_raw` requeriría que un módulo de `data_providers`
+importe de `data_layer`, invirtiendo la dependencia ya establecida
+(`data_layer` depende de `data_providers`, nunca al revés) — mismo
+criterio arquitectónico ya aplicado a `fetch_and_normalize_historical`/
+`fetch_and_normalize_news` en fases anteriores.
+
+Ninguna de las dos funciones captura `DataProviderError`/
+`NormalizationError`: las propaga tal cual (comportamiento "todo o
+nada" si falla la consulta de comparables o la de cualquier empresa
+par), mismo criterio ya usado por el resto de funciones `fetch_*`/
+`fetch_and_normalize_*` del orquestador. No se modificó
+`FMPComparablesProvider`, `FMPFundamentalsProvider`, ningún modelo de
+dominio ni ninguna función ya existente: cambio puramente aditivo.
 
 Quedan explícitamente fuera de esta tarea (ver TASKS.md, tareas
-siguientes de la misma sección): adjuntar procedencia por empresa par
-individual, y consultar las métricas clave de cada par reutilizando
-`FMPFundamentalsProvider.fetch`/`financial_statement_from_raw`/
-`market_data_from_raw`.
+siguientes de la misma sección): adjuntar metadatos de procedencia a
+los datos de comparables, y el modelo de dominio "Comparables" (sección
+"Normalización").
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/data_providers/comparables.py`
-- `investmentops/tests/test_data_providers_comparables.py`
+- `investmentops/tests/test_core_orchestrator_comparables.py`
 
 Modificados:
-- `config.example.toml` (nueva sección `[data_providers.comparables]`)
-- `CONFIGURATION.md` (mención de la nueva sección)
+- `investmentops/core/orchestrator.py` (import de `FMPComparablesProvider`,
+  nuevo dataclass `PeerMetrics`, nuevas funciones `fetch_peer_tickers` y
+  `fetch_peer_key_metrics`)
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
   la implementación)
 - `PROGRESS.md` (este archivo)
@@ -55,9 +64,9 @@ Modificados:
 ## Próxima tarea recomendada
 
 Fase 5, "Fuente de datos de comparables":
-- "Implementar la consulta de métricas clave (las ya normalizadas en
-  fases previas) para cada empresa par." Implica, para cada ticker par
-  devuelto por `FMPComparablesProvider.fetch`, reutilizar
-  `FMPFundamentalsProvider.fetch` + `financial_statement_from_raw` +
-  `market_data_from_raw` (ya existentes desde la Fase 1) para obtener sus
-  cifras normalizadas, sin duplicar esos clientes ni transformaciones.
+- "Adjuntar metadatos de procedencia a los datos de comparables."
+  Mismo patrón ya usado por `_attach_point_provenance`
+  (`investmentops/data_providers/fundamentals.py`) y
+  `_attach_news_provenance` (`investmentops/data_providers/news.py`):
+  adjuntar `"source"`/`"queried_at"` a cada elemento del payload crudo
+  de `FMPComparablesProvider.fetch`.
