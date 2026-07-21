@@ -35,6 +35,15 @@ provider = ""          # ej. "fmp"
 api_key = ""
 # base_url = ""         # opcional, solo si el proveedor lo requiere
 
+[data_providers.comparables]
+# Proveedor de comparables/empresas pares (Fase 5, ver
+# investmentops/data_providers/COMPARABLES_PROVIDER.md). Sección separada
+# de [data_providers.fundamentals]/[data_providers.news], aunque hoy las
+# tres apunten al mismo proveedor externo (FMP).
+provider = ""          # ej. "fmp"
+api_key = ""
+# base_url = ""         # opcional; por defecto usa la API v4 de FMP
+
 # --- Proveedores de IA (investmentops.ai_providers) ------------------------
 # Una sección por proveedor soportado por la interfaz común. No es
 # necesario completar todos: solo los que efectivamente se vayan a usar.

@@ -4,51 +4,60 @@
 
 ## Última tarea completada
 
-Fase 5, "Fuente de datos de comparables" → "Elegir el proveedor o método
-para obtener empresas pares/sector de una empresa dada" (TASKS.md).
+Fase 5, "Fuente de datos de comparables" → "Implementar la consulta de
+comparables (lista de empresas pares) para un ticker" (TASKS.md).
 
 ### Qué se implementó
 
-`investmentops/data_providers/COMPARABLES_PROVIDER.md` (nuevo). Decisión:
-reutilizar **Financial Modeling Prep (FMP)**, el mismo proveedor ya
-integrado desde la Fase 1 (`FMPFundamentalsProvider`) y reutilizado en
-Fase 4 para noticias (`FMPNewsProvider`), esta vez vía su endpoint
-`/v4/stock_peers`, que devuelve para un ticker dado una lista de empresas
-"pares" (mismo sector/industria, tamaño de mercado comparable) ya
-calculada por el propio FMP — evita que este proyecto tenga que definir
-o mantener su propio criterio de comparabilidad.
+`FMPComparablesProvider` en `investmentops/data_providers/comparables.py`
+(nuevo). Cumple el contrato `DataProvider`
+(investmentops.data_providers.contracts): `fetch(ticker)` consulta el
+endpoint `/stock_peers` de la API **v4** de FMP (distinta de la v3 usada
+por `FMPFundamentalsProvider`/`FMPNewsProvider`) y devuelve un
+`RawProviderData` cuyo `payload` es la respuesta cruda tal como la
+entrega FMP (típicamente una lista con un único elemento que incluye
+`"peersList"`), sin transformarla ni extraer los tickers pares — esa
+interpretación es responsabilidad de la capa de normalización, tarea
+separada y posterior de esta misma sección.
 
-Las métricas clave de cada empresa par (ingresos, beneficio neto, deuda,
-precio, capitalización) se obtendrán reutilizando, sin duplicar, los
-clientes y transformaciones ya existentes de la Fase 1
-(`FMPFundamentalsProvider.fetch`, `financial_statement_from_raw`,
-`market_data_from_raw`): la única pieza nueva que aporta esta decisión es
-cómo obtener la *lista* de tickers pares.
+Sigue exactamente el mismo patrón ya usado por `FMPNewsProvider`
+(`investmentops/data_providers/news.py`): lee sus credenciales desde una
+sección nueva y separada, `[data_providers.comparables]` (no desde
+`[data_providers.fundamentals]`, aunque ambas apunten hoy al mismo
+proveedor externo), y traduce cualquier fallo (red, autenticación,
+errores de servidor, JSON inválido) a `DataProviderError`. Una lista
+vacía (FMP no encontró empresas pares para el ticker) se trata como una
+respuesta válida, no como un error.
 
-Se decide usar una sección de configuración nueva y separada,
-`[data_providers.comparables]`, siguiendo el mismo criterio ya aplicado
-en `NEWS_PROVIDER.md` para no acoplar accidentalmente distintas fuentes
-de datos que hoy comparten el mismo proveedor externo.
+Se actualizaron `config.example.toml` y `CONFIGURATION.md` con la nueva
+sección `[data_providers.comparables]`, siguiendo el mismo criterio ya
+aplicado para `[data_providers.news]` en la Fase 4.
 
-Es una tarea de decisión/documentación, no de código: no se modificó
-ningún archivo `.py` existente ni se creó ningún cliente concreto.
+Quedan explícitamente fuera de esta tarea (ver TASKS.md, tareas
+siguientes de la misma sección): adjuntar procedencia por empresa par
+individual, y consultar las métricas clave de cada par reutilizando
+`FMPFundamentalsProvider.fetch`/`financial_statement_from_raw`/
+`market_data_from_raw`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/data_providers/COMPARABLES_PROVIDER.md`
+- `investmentops/data_providers/comparables.py`
+- `investmentops/tests/test_data_providers_comparables.py`
 
 Modificados:
+- `config.example.toml` (nueva sección `[data_providers.comparables]`)
+- `CONFIGURATION.md` (mención de la nueva sección)
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
-  la decisión)
+  la implementación)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
 Fase 5, "Fuente de datos de comparables":
-- "Implementar la consulta de comparables (lista de empresas pares) para
-  un ticker." Implica crear `investmentops/data_providers/comparables.py`
-  con un cliente mínimo (similar a `FMPNewsProvider`) que consulte
-  `/v4/stock_peers` para un ticker y devuelva un `RawProviderData` con la
-  lista cruda de tickers pares, leyendo su API key desde
-  `[data_providers.comparables]` en `config.local.toml`.
+- "Implementar la consulta de métricas clave (las ya normalizadas en
+  fases previas) para cada empresa par." Implica, para cada ticker par
+  devuelto por `FMPComparablesProvider.fetch`, reutilizar
+  `FMPFundamentalsProvider.fetch` + `financial_statement_from_raw` +
+  `market_data_from_raw` (ya existentes desde la Fase 1) para obtener sus
+  cifras normalizadas, sin duplicar esos clientes ni transformaciones.

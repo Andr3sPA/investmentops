@@ -66,11 +66,15 @@ exige `ARCHITECTURE.md`:
   configurado (ej. `[data_providers.fundamentals]` para el proveedor de
   datos financieros fundamentales de la Fase 1, `[data_providers.news]`
   para el proveedor de noticias de la Fase 4, ver
-  `investmentops/data_providers/NEWS_PROVIDER.md`). Cada una guarda su
-  propia API key y, si aplica, la URL base del proveedor — incluso si
-  dos secciones apuntan hoy al mismo proveedor externo (como
-  `fundamentals` y `news`, ambas resueltas hoy contra FMP), se mantienen
-  separadas para no acoplar accidentalmente su configuración.
+  `investmentops/data_providers/NEWS_PROVIDER.md`, y
+  `[data_providers.comparables]` para el proveedor de empresas
+  pares/comparables de la Fase 5, ver
+  `investmentops/data_providers/COMPARABLES_PROVIDER.md`). Cada una
+  guarda su propia API key y, si aplica, la URL base del proveedor —
+  incluso si varias secciones apuntan hoy al mismo proveedor externo
+  (como `fundamentals`, `news` y `comparables`, las tres resueltas hoy
+  contra FMP), se mantienen separadas para no acoplar accidentalmente su
+  configuración.
 - **`[ai_providers.<nombre>]`** — una sección por proveedor de IA
   soportado por la interfaz común (`investmentops.ai_providers`):
   `anthropic`, `gemini`, `openai`, `ollama`. Cada una guarda su API key
