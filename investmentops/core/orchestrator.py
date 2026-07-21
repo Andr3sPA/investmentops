@@ -1,3 +1,4 @@
+# investmentops/core/orchestrator.py
 """Orquestador mínimo — disparo de la consulta al proveedor de datos, paso
 de esos datos crudos a la capa de normalización, invocación secuencial de
 los agentes de análisis, ensamblado del "Resultado de investigación"
@@ -5,10 +6,11 @@ final, manejo de fallos parciales sin detener el resto del flujo,
 generación de reportes (Markdown/HTML) tras ensamblar ese resultado,
 obtención/normalización de la serie histórica de ingresos y beneficios,
 registro de la invocación del motor de evolución de ingresos y beneficios,
-su inclusión en el "Resultado de investigación" ensamblado (Fase 3), y
-obtención/normalización de noticias recientes de una empresa (Fase 4).
+su inclusión en el "Resultado de investigación" ensamblado (Fase 3),
+obtención/normalización de noticias recientes de una empresa, y registro
+de la invocación del motor de noticias relevantes (Fase 4).
 
-Cubre once tareas:
+Cubre doce tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -58,17 +60,28 @@ Fase 3, "Orquestador" (TASKS.md):
 Fase 4, "Orquestador" (TASKS.md):
 - "Registrar el nuevo proveedor de noticias sin modificar los
   proveedores existentes." (`fetch_raw_news_data`,
-  `fetch_and_normalize_news`, esta tarea). Sigue exactamente el mismo
-  patrón de dos capas ya usado por `fetch_raw_data`/`fetch_and_normalize`
-  (Fase 1) y `fetch_raw_historical_data`/`fetch_and_normalize_historical`
-  (Fase 3), aplicado ahora al proveedor de noticias
-  (`investmentops.data_providers.news.FMPNewsProvider`, Fase 4): el
-  orquestador aprende a invocarlo sin modificar `FMPFundamentalsProvider`
-  ni ninguna de las funciones ya existentes de este módulo, un cambio
-  puramente aditivo (ver ARCHITECTURE.md, "Extensibilidad sin
-  reescritura"). Todavía no se registra ningún motor de análisis de
-  noticias ni se incluye su resultado en `ResearchResult`: esas son
-  tareas separadas y siguientes de esta misma sección.
+  `fetch_and_normalize_news`, ya completada, ver PROGRESS.md).
+- "Registrar el nuevo motor de análisis sin modificar los motores
+  existentes." (`run_news_relevance_engine`,
+  `_news_relevance_result_to_analysis_result`, esta tarea). Sigue
+  exactamente el mismo patrón ya usado por `run_trend_analysis_engine`/
+  `_trend_analysis_result_to_analysis_result` (Fase 3):
+  `investmentops.analysis_engines.news_relevance.NewsRelevanceResult`
+  tampoco lleva `provenance` (este motor no invoca ningún proveedor de
+  IA, ver docstring de `news_relevance.py`), por lo que se envuelve en
+  un `AnalysisResult` normal con una `AnalysisProvenance` centinela
+  (`ai_provider="none"`, `ai_model="deterministic"`) — mismo criterio ya
+  documentado y justificado en `investmentops/core/TREND_INTEGRATION.md`
+  para el motor de tendencias, reutilizado aquí sin necesidad de una
+  nueva decisión de diseño (el problema y su solución ya son idénticos).
+  `run_news_relevance_engine` encadena `fetch_and_normalize_news`
+  (Fase 4, ya implementada) → `assemble_news_relevance_analysis`
+  (Fase 4, ya implementada) → la conversión centinela. No modifica
+  `run_analysis_engines`, `analyze_financial_health`, `analyze_valuation`
+  ni `run_trend_analysis_engine`, y **todavía no se invoca desde
+  `investigate`**: incorporar su resultado al `ResearchResult` ensamblado
+  (con manejo de fallos parciales) es la tarea siguiente y separada de
+  esta misma sección de `TASKS.md`.
 
 Las funciones de Fase 1-3 viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
@@ -307,9 +320,40 @@ Ninguna de las dos captura `DataProviderError` ni `NormalizationError`:
 las propagan tal cual, mismo criterio ya aplicado por las funciones
 equivalentes de Fase 1 y Fase 3. No se modifica `FMPFundamentalsProvider`
 ni ninguna función ya existente de este módulo: es un cambio puramente
-aditivo. Registrar el motor de análisis de noticias relevantes e
-incluir su resultado en `ResearchResult` quedan como tareas separadas y
-siguientes de esta misma sección (ver TASKS.md).
+aditivo.
+
+## Registro de la invocación del motor de noticias relevantes (`run_news_relevance_engine`, esta tarea)
+
+Cubre la tarea "Registrar el nuevo motor de análisis sin modificar los
+motores existentes" (TASKS.md, Fase 4, "Orquestador"). Mismo problema y
+misma solución ya resueltos para el motor de tendencias (ver "Registro
+de la invocación del motor de evolución de ingresos y beneficios"
+arriba y `investmentops/core/TREND_INTEGRATION.md`, cuya justificación
+aplica aquí sin cambios): `investmentops.analysis_engines.news_relevance.NewsRelevanceResult`
+tampoco lleva `provenance` (este motor no invoca ningún proveedor de
+IA), por lo que se envuelve en un `AnalysisResult` normal con la misma
+procedencia centinela (`ai_provider="none"`, `ai_model="deterministic"`).
+
+`_news_relevance_result_to_analysis_result` implementa esa conversión
+(misma forma que `_trend_analysis_result_to_analysis_result`), y
+`run_news_relevance_engine` "registra la invocación" del motor,
+encadenando `fetch_and_normalize_news` (obtención + normalización de las
+noticias, ya implementada) → `assemble_news_relevance_analysis` (filtrado
+por ventana de tiempo + resumen breve + ensamblado, ya implementado en
+`investmentops.analysis_engines.news_relevance`) → la conversión
+centinela.
+
+`run_news_relevance_engine` **no captura** ninguna excepción de las
+piezas que invoca (`DataProviderError`, `NormalizationError`): las
+propaga tal cual, mismo criterio ya aplicado por `run_trend_analysis_engine`.
+**Todavía no se invoca desde `investigate`**: incorporar su resultado al
+`ResearchResult` ensamblado, con manejo de fallos parciales, es la tarea
+siguiente y separada de esta misma sección de `TASKS.md` ("Incluir el
+nuevo resultado en el 'Resultado de investigación'").
+
+Esta tarea no modifica `run_analysis_engines`, `analyze_financial_health`,
+`analyze_valuation` ni `run_trend_analysis_engine`: ningún motor
+existente cambia.
 
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
@@ -317,12 +361,12 @@ Fuera de alcance de este módulo (aún):
   `assemble_research_result`).
 - Leer o escribir la caché de datos normalizados
   (investmentops.data_layer.cache): fuera de alcance.
-- La presentación del resultado de tendencia en los reportes
-  Markdown/HTML: tarea separada y posterior (ver TASKS.md, Fase 3,
-  "Reportes").
-- Registrar el motor de análisis de noticias relevantes en el flujo del
-  orquestador e incluir su resultado en `ResearchResult`: tareas
-  separadas y siguientes de "Fase 4 > Orquestador" (ver TASKS.md).
+- La presentación del resultado de tendencia o de noticias relevantes
+  en los reportes Markdown/HTML: tareas separadas y posteriores (ver
+  TASKS.md, Fase 3/Fase 4, "Reportes").
+- Incluir el resultado del motor de noticias relevantes en
+  `ResearchResult` (vía `investigate`): tarea separada y siguiente de
+  "Fase 4 > Orquestador" (ver TASKS.md).
 """
 
 from __future__ import annotations
@@ -337,6 +381,13 @@ from investmentops.analysis_engines.contracts import AnalysisProvenance, Analysi
 from investmentops.analysis_engines.financial_health import (
     AGENT_ID as FINANCIAL_HEALTH_AGENT_ID,
     analyze_financial_health,
+)
+from investmentops.analysis_engines.news_relevance import (
+    AGENT_ID as NEWS_RELEVANCE_AGENT_ID,
+    DEFAULT_RELEVANCE_WINDOW_DAYS,
+    DEFAULT_SUMMARY_MAX_LENGTH,
+    NewsRelevanceResult,
+    assemble_news_relevance_analysis,
 )
 from investmentops.analysis_engines.prompts import PromptError
 from investmentops.analysis_engines.trends import (
@@ -393,6 +444,15 @@ ALL_REPORT_FORMATS: tuple[str, ...] = ("markdown", "html")
 #: modelo de lenguaje, a diferencia de salud financiera/valoración.
 TREND_ANALYSIS_AI_PROVIDER = "none"
 TREND_ANALYSIS_AI_MODEL = "deterministic"
+
+#: Procedencia centinela usada para el `AnalysisResult` que envuelve el
+#: resultado del motor de noticias relevantes (ver "Registro de la
+#: invocación del motor de noticias relevantes" en el docstring del
+#: módulo). Mismos valores y misma justificación que
+#: `TREND_ANALYSIS_AI_PROVIDER`/`TREND_ANALYSIS_AI_MODEL`: este motor
+#: tampoco invoca ningún proveedor de IA.
+NEWS_RELEVANCE_AI_PROVIDER = "none"
+NEWS_RELEVANCE_AI_MODEL = "deterministic"
 
 
 def fetch_raw_data(
@@ -733,6 +793,139 @@ def fetch_and_normalize_news(
     return news_from_raw(raw)
 
 
+def _news_relevance_result_to_analysis_result(
+    news_result: NewsRelevanceResult,
+    *,
+    generated_at: datetime | None = None,
+) -> AnalysisResult:
+    """Convierte un `NewsRelevanceResult` en un `AnalysisResult` normal.
+
+    Mismo adaptador ya usado por `_trend_analysis_result_to_analysis_result`
+    para el motor de tendencias (ver ese docstring y
+    `investmentops/core/TREND_INTEGRATION.md` para la justificación
+    completa, reutilizada aquí sin cambios): el motor de noticias
+    relevantes (`investmentops.analysis_engines.news_relevance`) tampoco
+    invoca ningún proveedor de IA, por lo que su resultado
+    (`NewsRelevanceResult`) no lleva `provenance`. Esta función lo
+    envuelve en un `AnalysisResult` con una `AnalysisProvenance`
+    **centinela** (`ai_provider="none"`, `ai_model="deterministic"`).
+
+    No modifica `NewsRelevanceResult` ni `AnalysisResult`/
+    `AnalysisProvenance`: es puramente un adaptador entre ambos tipos ya
+    existentes.
+
+    Parameters
+    ----------
+    news_result:
+        El `NewsRelevanceResult` ya producido por
+        `investmentops.analysis_engines.news_relevance.assemble_news_relevance_analysis`.
+    generated_at:
+        Momento en que se generó esta interpretación. Si no se indica,
+        se usa el momento de la llamada (mismo criterio ya usado por
+        `_trend_analysis_result_to_analysis_result`).
+
+    Returns
+    -------
+    AnalysisResult
+        - `analysis_id`: `news_result.analysis_id` (siempre
+          `NEWS_RELEVANCE_AGENT_ID`, ``"news_relevance"``).
+        - `findings`, `supporting_metrics`, `limitations`: tomados
+          directamente de `news_result`, sin transformarlos.
+        - `provenance`: `AnalysisProvenance(ai_provider="none",
+          ai_model="deterministic", generated_at=...)`.
+    """
+    provenance = AnalysisProvenance(
+        ai_provider=NEWS_RELEVANCE_AI_PROVIDER,
+        ai_model=NEWS_RELEVANCE_AI_MODEL,
+        generated_at=generated_at if generated_at is not None else datetime.now(timezone.utc),
+    )
+
+    return AnalysisResult(
+        analysis_id=news_result.analysis_id,
+        findings=list(news_result.findings),
+        supporting_metrics=news_result.supporting_metrics,
+        limitations=list(news_result.limitations),
+        provenance=provenance,
+    )
+
+
+def run_news_relevance_engine(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPNewsProvider | None = None,
+    days: int = DEFAULT_RELEVANCE_WINDOW_DAYS,
+    now: datetime | None = None,
+    summary_max_length: int = DEFAULT_SUMMARY_MAX_LENGTH,
+) -> AnalysisResult:
+    """Registra la invocación del motor de noticias relevantes.
+
+    Encadena, para `ticker`:
+
+    1. `fetch_and_normalize_news(ticker, ...)`: obtiene y normaliza las
+       noticias recientes de la empresa.
+    2. `investmentops.analysis_engines.news_relevance.assemble_news_relevance_analysis(...)`:
+       filtra por ventana de tiempo reciente, selecciona un resumen breve
+       por noticia relevante, y ensambla el resultado del motor (ya
+       implementado, sin modificar).
+    3. `_news_relevance_result_to_analysis_result(...)`: envuelve ese
+       resultado en un `AnalysisResult` con procedencia centinela (ver
+       docstring de esa función).
+
+    No modifica `run_analysis_engines`, `analyze_financial_health`,
+    `analyze_valuation` ni `run_trend_analysis_engine`: ningún motor
+    existente cambia.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a analizar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a `fetch_and_normalize_news`.
+        Útil para pruebas, para no depender de un `config.local.toml`
+        real en disco.
+    provider:
+        Proveedor de noticias ya construido, propagado a
+        `fetch_and_normalize_news`. Pensado sobre todo para pruebas.
+    days:
+        Tamaño de la ventana de relevancia, en días, propagado tal cual a
+        `assemble_news_relevance_analysis`. Por defecto,
+        `DEFAULT_RELEVANCE_WINDOW_DAYS` (7).
+    now:
+        Momento de referencia contra el que se calcula la ventana,
+        propagado tal cual a `assemble_news_relevance_analysis`. Si no se
+        indica, se usa el reloj real. Pensado sobre todo para pruebas.
+    summary_max_length:
+        Longitud máxima del resumen breve de cada noticia relevante,
+        propagada tal cual a `assemble_news_relevance_analysis`. Por
+        defecto, `DEFAULT_SUMMARY_MAX_LENGTH` (280).
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado del motor de noticias relevantes, ya envuelto en el
+        contrato común (ver `_news_relevance_result_to_analysis_result`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_and_normalize_news`. Esta función no captura ni
+        traduce esa excepción: el manejo de fallos parciales queda para
+        una tarea separada y posterior de esta misma sección (ver
+        TASKS.md, Fase 4, "Orquestador").
+    NormalizationError
+        Ver `fetch_and_normalize_news`.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    news_items = fetch_and_normalize_news(ticker, config=config, provider=provider)
+    news_result = assemble_news_relevance_analysis(
+        news_items, days=days, now=now, summary_max_length=summary_max_length
+    )
+    return _news_relevance_result_to_analysis_result(news_result)
+
+
 def _trend_analysis_result_to_analysis_result(
     trend_result: TrendAnalysisResult,
     *,
@@ -876,9 +1069,9 @@ def run_analysis_engines(
     quien lo necesite explícitamente; `investigate` (en este mismo
     módulo) ofrece en cambio manejo de fallos parciales, invocando cada
     agente por separado en vez de usar esta función. No incluye el motor
-    de evolución de ingresos y beneficios (`run_trend_analysis_engine`):
-    ese motor se invoca directamente desde `investigate`, no desde esta
-    función (ver docstring del módulo).
+    de evolución de ingresos y beneficios (`run_trend_analysis_engine`)
+    ni el de noticias relevantes (`run_news_relevance_engine`): ninguno
+    de los dos se invoca desde esta función (ver docstring del módulo).
     """
     financial_health_result = analyze_financial_health(
         company_data.financial_statement, config=config
@@ -980,7 +1173,11 @@ def investigate(
     `ResearchFailure`. Otras excepciones (ej. `ConfigError` si no se
     puede cargar `config.local.toml` en absoluto) sí se propagan, ya que
     representan un problema de configuración del entorno, no un fallo
-    parcial de una fuente o un agente concretos.
+    parcial de una fuente o un agente concretos. El motor de noticias
+    relevantes (`run_news_relevance_engine`) todavía **no** se invoca
+    desde esta función (ver docstring del módulo, "Registro de la
+    invocación del motor de noticias relevantes"): esa incorporación es
+    una tarea separada y posterior de la misma sección de `TASKS.md`.
     """
     try:
         company_data = fetch_and_normalize(ticker, config=config, provider=provider)
