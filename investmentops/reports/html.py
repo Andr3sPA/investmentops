@@ -1,14 +1,18 @@
+# investmentops/reports/html.py
 """Generador de reportes en HTML.
 
-Cubre, hasta ahora, tres tareas de TASKS.md, Fase 2 ("Generador HTML") y
-Fase 3 ("Reportes"):
+Cubre, hasta ahora, cuatro tareas de TASKS.md, Fase 2 ("Generador HTML"),
+Fase 3 ("Reportes") y Fase 4 ("Reportes"):
 
 - "Implementar el volcado de las mismas secciones que en Markdown (salud
   financiera, valoración, fuentes)." (ya completada, ver PROGRESS.md).
 - "Implementar el guardado del archivo HTML generado en una ruta local
   configurable." (ya completada, ver PROGRESS.md).
 - "Añadir la misma sección [Evolución de ingresos y beneficios] a la
-  plantilla HTML, conforme al formato ya decidido." (esta tarea).
+  plantilla HTML, conforme al formato ya decidido." (ya completada, ver
+  PROGRESS.md).
+- "Añadir la misma sección [Noticias recientes relevantes] a la
+  plantilla HTML." (esta tarea).
 
 Sobre la base de diseño ya fijada en `investmentops/reports/HTML_TEMPLATE.md`:
 HTML5 mínimo, sin CSS elaborado, sin JavaScript, sin motor de templating
@@ -24,11 +28,11 @@ independiente (ver ARCHITECTURE.md, "Extensibilidad sin reescritura" —
 "Agregar un nuevo formato de salida implica añadir un generador nuevo,
 no tocar los existentes"), por lo que las constantes de identificador de
 agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`,
-`TREND_ANALYSIS_AGENT_ID`) y el helper de búsqueda (`_find_analysis`) se
-duplican aquí en vez de importarse, mismo criterio ya documentado en
-versiones anteriores de este módulo.
+`TREND_ANALYSIS_AGENT_ID`, `NEWS_RELEVANCE_AGENT_ID`) y el helper de
+búsqueda (`_find_analysis`) se duplican aquí en vez de importarse, mismo
+criterio ya documentado en versiones anteriores de este módulo.
 
-## Sección "Evolución de ingresos y beneficios" (esta tarea)
+## Sección "Evolución de ingresos y beneficios"
 
 Cubre la tarea "Añadir la misma sección a la plantilla HTML, conforme al
 formato ya decidido" (TASKS.md, Fase 3, "Reportes"), equivalente HTML de
@@ -53,35 +57,63 @@ esta sección reemplaza esa lista por una tabla `<table>` para las dos
 claves que son mapeos por periodo
 (`revenue_growth_by_period`/`net_income_growth_by_period`), mismo
 contenido y orden que la tabla Markdown ya implementada
-(`_render_trend_analysis_body` en `investmentops/reports/markdown.py`):
+(`_render_trend_analysis_body` en `investmentops/reports/markdown.py`).
+
+## Sección "Noticias recientes relevantes" (esta tarea)
+
+Cubre la tarea "Añadir la misma sección a la plantilla HTML" (TASKS.md,
+Fase 4, "Reportes"), equivalente HTML de la sección ya implementada en
+`investmentops.reports.markdown.render_markdown`/
+`_render_news_relevance_body`, sobre el formato decidido inline en el
+docstring de `markdown.py` ("Sección 'Noticias recientes relevantes'").
+
+`NEWS_RELEVANCE_AGENT_ID` (``"news_relevance"``, el mismo identificador
+usado en `investmentops.analysis_engines.news_relevance.AGENT_ID` y
+propagado tal cual por
+`investmentops.core.orchestrator._news_relevance_result_to_analysis_result`
+al convertir su resultado a `AnalysisResult`) se reutiliza junto con
+`_find_analysis` (ya genérica) para localizar el `AnalysisResult`
+correspondiente. Es un `AnalysisResult` normal, con una
+`AnalysisProvenance` centinela (`ai_provider="none"`,
+`ai_model="deterministic"`, mismo criterio ya justificado en
+`TREND_INTEGRATION.md` y reutilizado sin una nueva decisión de diseño
+para este motor).
+
+Igual que en la versión Markdown, `supporting_metrics["relevant_news"]`
+es una lista de dicts (`title`, `summary`, `source`, `published_at`,
+`url`), no un mapeo por periodo (a diferencia de la tabla de tendencia)
+ni un puñado de escalares (a diferencia de salud financiera/valoración).
+Esta sección usa una **lista HTML** (`<ul><li>`), un ítem por noticia
+relevante, equivalente elemento a elemento a la lista Markdown ya
+implementada:
 
 ```html
-<table>
-  <tr><th>Periodo</th><th>Ingresos (var.)</th><th>Beneficios (var.)</th></tr>
-  <tr><td>2025-12-31</td><td>+8.3%</td><td>+8.3%</td></tr>
-</table>
+<ul>
+  <li><strong>título</strong> (fuente, fecha ISO 8601): resumen
+      (<a href="url">Leer más</a>)</li>
+</ul>
 ```
 
-- Una fila por cada clave presente en `revenue_growth_by_period` (mismo
-  orden en que ya vienen esas claves), combinando el valor equivalente
-  de `net_income_growth_by_period` para la misma fecha.
-- Cada valor se formatea como porcentaje con un decimal y signo
-  explícito (`_format_growth_percentage_html`, misma lógica que
-  `_format_growth_percentage` en el generador Markdown); un valor
-  `None` se muestra como `"—"`.
-- La tabla se omite por completo si ambos mapeos están vacíos (serie de
-  un solo periodo o vacía).
-- Los `findings` y la procedencia reutilizan el mismo formato de marcado
-  (`<p>`, bloque "Generado por: ...") ya usado por "Salud
-  financiera"/"Valoración".
+- Un `<li>` por elemento de `relevant_news`, en el mismo orden en que ya
+  vienen (preservado desde `filter_relevant_news`).
+- La lista se omite por completo si `relevant_news` está vacía: en ese
+  caso basta con el hallazgo ya generado ("No se encontraron noticias
+  recientes relevantes en los últimos N día(s).").
+- Todo el contenido dinámico (título, fuente, fecha, resumen, url) se
+  escapa con `html.escape` antes de insertarse, mismo criterio ya
+  aplicado en el resto de este generador (los hallazgos y las
+  limitaciones ya vienen de un modelo de lenguaje o de texto libre, y no
+  deben interpretarse como marcado HTML).
+- Los `findings` y la procedencia reutilizan exactamente el mismo
+  formato de marcado (`<p>`, bloque "Generado por: ...") ya usado por
+  las demás secciones.
 
 Orden dentro de la sección, igual que en la versión Markdown: hallazgos
-→ tabla (omitida si ambos mapeos están vacíos) → limitaciones →
-procedencia. El bloque `<h2>Evolución de ingresos y beneficios</h2>` se
-agrega a `render_html` después de `<h2>Valoración</h2>`, con el mismo
-comportamiento de encabezado vacío cuando el motor no completó su
-análisis (ej. el proveedor de datos inyectado no soporta series
-históricas, ver `investmentops.core.orchestrator.investigate`).
+→ lista de noticias relevantes (omitida si está vacía) → limitaciones →
+procedencia. El bloque `<h2>Noticias recientes relevantes</h2>` se
+agrega a `render_html` después de `<h2>Evolución de ingresos y
+beneficios</h2>`, con el mismo comportamiento de encabezado vacío
+cuando el motor no completó su análisis.
 
 ## Guardado del archivo HTML generado (`save_html_report`)
 
@@ -132,8 +164,8 @@ Fuera de alcance de este módulo:
   se invoque automáticamente tras ensamblar el resultado de
   investigación: ya conectado desde Fase 2 (ver
   `investmentops.core.orchestrator.generate_reports`).
-- Gráficos o visualizaciones de la serie: fuera de alcance del MVP (ver
-  `TREND_PRESENTATION.md`).
+- Gráficos o visualizaciones de la serie o de noticias: fuera de alcance
+  del MVP.
 """
 
 from __future__ import annotations
@@ -168,6 +200,15 @@ VALUATION_AGENT_ID = "valuation"
 #: motor para no acoplar este generador a su implementación concreta.
 TREND_ANALYSIS_AGENT_ID = "trend_analysis"
 
+#: Identificador del motor de noticias relevantes, el mismo usado en
+#: `investmentops.analysis_engines.news_relevance.AGENT_ID` (y propagado
+#: tal cual por
+#: `investmentops.core.orchestrator._news_relevance_result_to_analysis_result`
+#: al convertir su resultado a `AnalysisResult`). Mismo criterio que los
+#: identificadores anteriores: no se importa desde el módulo del motor
+#: para no acoplar este generador a su implementación concreta.
+NEWS_RELEVANCE_AGENT_ID = "news_relevance"
+
 #: Bloque `<style>` mínimo embebido, tal como lo fija `HTML_TEMPLATE.md`:
 #: tipografía de sistema, ancho máximo legible, espaciado básico. Sin
 #: hoja de estilos externa ni framework CSS.
@@ -189,7 +230,8 @@ def _find_analysis(
     equivalente en `investmentops.reports.markdown`, duplicada aquí por
     independencia entre generadores (ver docstring del módulo). Funciona
     igual para cualquier `analysis_id` (``"financial_health"``,
-    ``"valuation"``, ``"trend_analysis"``), sin acoplarse a ninguno.
+    ``"valuation"``, ``"trend_analysis"``, ``"news_relevance"``), sin
+    acoplarse a ninguno.
     """
     return next(
         (analysis for analysis in result.analysis_results if analysis.analysis_id == analysis_id),
@@ -205,9 +247,11 @@ def _render_analysis_body_html(analysis: AnalysisResult) -> list[str]:
     métricas de soporte → limitaciones → procedencia de la interpretación
     de IA. Reutilizada tanto para "Salud financiera" como para
     "Valoración" (no depende del `analysis_id` concreto). No se usa para
-    "Evolución de ingresos y beneficios": esa sección reemplaza el
-    volcado plano de `supporting_metrics` por una tabla (ver
-    `_render_trend_analysis_body_html`). Todo el contenido dinámico se
+    "Evolución de ingresos y beneficios" ni "Noticias recientes
+    relevantes": esas secciones reemplazan el volcado plano de
+    `supporting_metrics` por una tabla o una lista (ver
+    `_render_trend_analysis_body_html`,
+    `_render_news_relevance_body_html`). Todo el contenido dinámico se
     escapa con `html.escape` antes de insertarse.
     """
     lines: list[str] = []
@@ -314,26 +358,85 @@ def _render_trend_analysis_body_html(analysis: AnalysisResult) -> list[str]:
     return lines
 
 
+def _render_news_relevance_body_html(analysis: AnalysisResult) -> list[str]:
+    """Construye las líneas HTML de la sección "Noticias recientes relevantes".
+
+    Orden: hallazgos → lista `<ul>` de noticias relevantes (omitida si no
+    hay ninguna) → limitaciones → procedencia de IA (centinela). Mismo
+    criterio que `_render_trend_analysis_body_html`: `supporting_metrics`
+    no se vuelca como lista plana `clave: valor`, ya que la clave
+    `relevant_news` es una lista de dicts (título, resumen, fuente,
+    fecha, URL por noticia), no un escalar ni un mapeo por periodo. Cada
+    noticia relevante se vuelca como un ítem `<li>`, equivalente HTML de
+    la línea Markdown ya implementada en
+    `investmentops.reports.markdown._render_news_relevance_body`. Todo el
+    contenido dinámico (título, fuente, fecha, resumen, url) se escapa
+    con `html.escape` antes de insertarse.
+    """
+    lines: list[str] = []
+
+    for finding in analysis.findings:
+        lines.append(f"<p>{escape(finding)}</p>")
+
+    relevant_news: list[dict[str, Any]] = analysis.supporting_metrics.get(
+        "relevant_news", []
+    )
+
+    if relevant_news:
+        lines.append("<ul>")
+        for item in relevant_news:
+            title = str(item.get("title", ""))
+            source = str(item.get("source", ""))
+            published_at = str(item.get("published_at", ""))
+            summary = str(item.get("summary", ""))
+            url = str(item.get("url", ""))
+            lines.append(
+                f"<li><strong>{escape(title)}</strong> "
+                f"({escape(source)}, {escape(published_at)}): "
+                f"{escape(summary)} "
+                f'(<a href="{escape(url)}">Leer más</a>)</li>'
+            )
+        lines.append("</ul>")
+
+    if analysis.limitations:
+        lines.append("<h3>Limitaciones</h3>")
+        lines.append("<ul>")
+        for limitation in analysis.limitations:
+            lines.append(f"<li>{escape(limitation)}</li>")
+        lines.append("</ul>")
+
+    provenance = analysis.provenance
+    lines.append(
+        "<p><em>Generado por: "
+        f"{escape(provenance.ai_provider)} ({escape(provenance.ai_model)}) "
+        f"el {escape(provenance.generated_at.isoformat())}</em></p>"
+    )
+
+    return lines
+
+
 def render_html(result: ResearchResult) -> str:
     """Renderiza un `ResearchResult` como reporte HTML.
 
     Construye el documento HTML5 completo (según el esqueleto ya fijado
     en `HTML_TEMPLATE.md`): encabezado con identidad de la empresa
     investigada y fecha de ensamblado, más las secciones "Salud
-    financiera", "Valoración" y "Evolución de ingresos y beneficios", en
-    el mismo orden y con el mismo contenido que
-    `investmentops.reports.markdown.render_markdown` (la tercera sección
-    ubicada donde ya la agrega `investmentops.core.orchestrator.investigate`
-    en `ResearchResult.analysis_results`, después de valoración).
+    financiera", "Valoración", "Evolución de ingresos y beneficios" y
+    "Noticias recientes relevantes", en el mismo orden y con el mismo
+    contenido que `investmentops.reports.markdown.render_markdown` (las
+    dos últimas ubicadas donde ya las agrega
+    `investmentops.core.orchestrator.investigate` en
+    `ResearchResult.analysis_results`, después de valoración y de
+    tendencia respectivamente).
 
     "Salud financiera" y "Valoración" vuelcan su contenido completo
     cuando el `AnalysisResult` correspondiente está presente: hallazgos,
     métricas de soporte, limitaciones y procedencia de la interpretación
     de IA (proveedor, modelo, fecha). "Evolución de ingresos y
     beneficios" vuelca hallazgos, una tabla de variación periodo a
-    periodo (en vez de la lista plana, ver
-    `_render_trend_analysis_body_html` y `TREND_PRESENTATION.md`),
-    limitaciones y procedencia (centinela, `ai_provider="none"`). Si el
+    periodo, limitaciones y procedencia (centinela). "Noticias recientes
+    relevantes" vuelca hallazgos, una lista `<ul>` de noticias relevantes
+    (una por ítem), limitaciones y procedencia (centinela). Si el
     agente/motor correspondiente no completó su análisis, la sección
     conserva solo su encabezado (`<h2>`) vacío. Todavía no se incluye la
     sección condicional de "Fallos parciales" (fuera de alcance de esta
@@ -380,6 +483,11 @@ def render_html(result: ResearchResult) -> str:
     trend_analysis_result = _find_analysis(result, TREND_ANALYSIS_AGENT_ID)
     if trend_analysis_result is not None:
         body_lines.extend(_render_trend_analysis_body_html(trend_analysis_result))
+
+    body_lines.append("<h2>Noticias recientes relevantes</h2>")
+    news_relevance_result = _find_analysis(result, NEWS_RELEVANCE_AGENT_ID)
+    if news_relevance_result is not None:
+        body_lines.extend(_render_news_relevance_body_html(news_relevance_result))
 
     body = "\n  ".join(body_lines)
 
