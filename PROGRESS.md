@@ -4,60 +4,57 @@
 
 ## Última tarea completada
 
-Fase 4, "Orquestador" → "Registrar el nuevo motor de análisis sin
-modificar los motores existentes" (TASKS.md).
+Fase 4, "Orquestador" → "Incluir el nuevo resultado en el 'Resultado de
+investigación'" (TASKS.md).
 
 ### Qué se implementó
 
-`run_news_relevance_engine`/`_news_relevance_result_to_analysis_result`
-en `investmentops/core/orchestrator.py`, siguiendo exactamente el mismo
-patrón ya usado por `run_trend_analysis_engine`/
-`_trend_analysis_result_to_analysis_result` (Fase 3) y sobre la misma
-justificación ya documentada en `investmentops/core/TREND_INTEGRATION.md`
-(no hizo falta una nueva decisión de diseño: el problema —un resultado
-de motor sin `AnalysisProvenance`— y su solución —una procedencia
-centinela `ai_provider="none"`/`ai_model="deterministic"`— ya eran
-idénticos):
+`investigate` (`investmentops/core/orchestrator.py`) ahora también invoca
+`run_news_relevance_engine(ticker, config=config, provider=news_provider)`,
+en un `try/except` independiente de los ya existentes para salud
+financiera, valoración y tendencia, capturando
+`DataProviderError`/`NormalizationError` y traduciéndolas a
+`ResearchFailure(stage="data_provider", identifier="news_relevance",
+reason=<mensaje>)`, sin detener el resto del flujo.
 
-- **`_news_relevance_result_to_analysis_result(news_result, ...)`**:
-  convierte un `NewsRelevanceResult`
-  (`investmentops.analysis_engines.news_relevance`, que no lleva
-  `provenance` porque ese motor no invoca ningún proveedor de IA) en un
-  `AnalysisResult` normal, con `AnalysisProvenance(ai_provider="none",
-  ai_model="deterministic", generated_at=...)`.
-- **`run_news_relevance_engine(ticker, ...)`**: encadena
-  `fetch_and_normalize_news(ticker, ...)` (ya implementada) →
-  `assemble_news_relevance_analysis(...)` (ya implementada) → la
-  conversión centinela. Acepta `days`, `now` y `summary_max_length`,
-  propagados tal cual a `assemble_news_relevance_analysis`. No captura
-  `DataProviderError`/`NormalizationError`: las propaga tal cual, mismo
-  criterio ya aplicado por `run_trend_analysis_engine`.
+A diferencia del motor de tendencia (que reutiliza el mismo `provider`
+de datos fundamentales ya recibido por `investigate`, comprobando
+`hasattr(provider, "fetch_historical")`), el motor de noticias
+relevantes necesita un proveedor de un tipo distinto (`FMPNewsProvider`,
+no `FMPFundamentalsProvider`). Por eso `investigate` gana un parámetro
+nuevo y separado, `news_provider: FMPNewsProvider | None = None`,
+independiente de `provider`. El motor se intenta si:
 
-Se agregaron dos constantes nuevas, `NEWS_RELEVANCE_AI_PROVIDER = "none"`
-y `NEWS_RELEVANCE_AI_MODEL = "deterministic"`, junto a las ya existentes
-`TREND_ANALYSIS_AI_PROVIDER`/`TREND_ANALYSIS_AI_MODEL`.
+- `news_provider` se inyecta explícitamente (típicamente en pruebas), o
+- `provider` (datos fundamentales) tampoco se inyectó — uso real, sin
+  proveedores de prueba, en cuyo caso `run_news_relevance_engine`
+  construye su propio `FMPNewsProvider` real por defecto.
 
-No se modificó `run_analysis_engines`, `analyze_financial_health`,
-`analyze_valuation`, `run_trend_analysis_engine` ni `investigate`:
-incorporar el resultado de este motor al `ResearchResult` ensamblado
-(con manejo de fallos parciales, siguiendo el mismo criterio ya usado
-para el motor de tendencias) queda como la tarea siguiente y separada de
-esta misma sección de `TASKS.md`.
+En cualquier otro caso (un `provider` de prueba inyectado sin
+`news_provider`), el motor de noticias no se intenta, sin registrarse
+como fallo — mismo criterio ya usado para el motor de tendencia. Esto
+preserva sin cambios el comportamiento de todas las pruebas de
+`investigate` ya existentes en `test_core_orchestrator.py`.
+
+`investigate_and_generate_reports` también gana y propaga el mismo
+parámetro `news_provider`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_core_orchestrator_news_relevance.py`
+- `investmentops/tests/test_core_orchestrator_news_integration.py`
 
 Modificados:
-- `investmentops/core/orchestrator.py` (agregado `run_news_relevance_engine`,
-  `_news_relevance_result_to_analysis_result`, `NEWS_RELEVANCE_AI_PROVIDER`,
-  `NEWS_RELEVANCE_AI_MODEL`, e imports de `news_relevance`; ninguna
-  función existente cambió su comportamiento)
+- `investmentops/core/orchestrator.py` (`investigate` gana el parámetro
+  `news_provider` e invoca `run_news_relevance_engine`;
+  `investigate_and_generate_reports` gana y propaga el mismo parámetro;
+  docstrings actualizados; ninguna función existente cambió su firma de
+  forma incompatible — `news_provider` es un nuevo parámetro opcional
+  con valor por defecto `None`)
 - `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Orquestador" → "Incluir el nuevo resultado en el 'Resultado de
-investigación'."
+Fase 4, "Reportes" → "Añadir la sección 'Noticias recientes relevantes'
+a la plantilla Markdown."

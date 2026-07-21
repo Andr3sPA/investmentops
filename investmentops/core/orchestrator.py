@@ -7,10 +7,11 @@ generación de reportes (Markdown/HTML) tras ensamblar ese resultado,
 obtención/normalización de la serie histórica de ingresos y beneficios,
 registro de la invocación del motor de evolución de ingresos y beneficios,
 su inclusión en el "Resultado de investigación" ensamblado (Fase 3),
-obtención/normalización de noticias recientes de una empresa, y registro
-de la invocación del motor de noticias relevantes (Fase 4).
+obtención/normalización de noticias recientes de una empresa, registro
+de la invocación del motor de noticias relevantes, y su inclusión en el
+"Resultado de investigación" ensamblado (Fase 4).
 
-Cubre doce tareas:
+Cubre trece tareas:
 
 Fase 1, "Orquestador mínimo" (TASKS.md):
 - "Implementar la función que recibe un ticker y dispara la consulta al
@@ -63,25 +64,35 @@ Fase 4, "Orquestador" (TASKS.md):
   `fetch_and_normalize_news`, ya completada, ver PROGRESS.md).
 - "Registrar el nuevo motor de análisis sin modificar los motores
   existentes." (`run_news_relevance_engine`,
-  `_news_relevance_result_to_analysis_result`, esta tarea). Sigue
-  exactamente el mismo patrón ya usado por `run_trend_analysis_engine`/
-  `_trend_analysis_result_to_analysis_result` (Fase 3):
-  `investmentops.analysis_engines.news_relevance.NewsRelevanceResult`
+  `_news_relevance_result_to_analysis_result`, ya completada, ver
+  PROGRESS.md). Sigue exactamente el mismo patrón ya usado por
+  `run_trend_analysis_engine`/`_trend_analysis_result_to_analysis_result`
+  (Fase 3): `investmentops.analysis_engines.news_relevance.NewsRelevanceResult`
   tampoco lleva `provenance` (este motor no invoca ningún proveedor de
   IA, ver docstring de `news_relevance.py`), por lo que se envuelve en
   un `AnalysisResult` normal con una `AnalysisProvenance` centinela
   (`ai_provider="none"`, `ai_model="deterministic"`) — mismo criterio ya
   documentado y justificado en `investmentops/core/TREND_INTEGRATION.md`
-  para el motor de tendencias, reutilizado aquí sin necesidad de una
+  para el motor de tendencia, reutilizado aquí sin necesidad de una
   nueva decisión de diseño (el problema y su solución ya son idénticos).
   `run_news_relevance_engine` encadena `fetch_and_normalize_news`
   (Fase 4, ya implementada) → `assemble_news_relevance_analysis`
-  (Fase 4, ya implementada) → la conversión centinela. No modifica
-  `run_analysis_engines`, `analyze_financial_health`, `analyze_valuation`
-  ni `run_trend_analysis_engine`, y **todavía no se invoca desde
-  `investigate`**: incorporar su resultado al `ResearchResult` ensamblado
-  (con manejo de fallos parciales) es la tarea siguiente y separada de
-  esta misma sección de `TASKS.md`.
+  (Fase 4, ya implementada) → la conversión centinela.
+- "Incluir el nuevo resultado en el 'Resultado de investigación'."
+  (esta tarea). `investigate` ahora también invoca
+  `run_news_relevance_engine(ticker, config=config,
+  provider=news_provider)` en su propio `try`/`except` independiente,
+  capturando `DataProviderError`/`NormalizationError` y traduciéndolas a
+  `ResearchFailure(stage="data_provider",
+  identifier="news_relevance", ...)`, sin detener el resto del flujo. A
+  diferencia del motor de tendencia (que reutiliza el mismo `provider`
+  de datos fundamentales ya inyectado en `investigate`, verificando
+  `hasattr(provider, "fetch_historical")`), el motor de noticias usa un
+  proveedor de un tipo distinto (`FMPNewsProvider`, no
+  `FMPFundamentalsProvider`), por lo que `investigate` gana un parámetro
+  nuevo y separado, `news_provider`, en vez de reutilizar `provider`. Ver
+  "Inclusión del motor de noticias relevantes en `investigate`" más
+  abajo para el criterio completo.
 
 Las funciones de Fase 1-3 viven en el mismo módulo porque son piezas
 consecutivas del mismo pipeline descrito en ARCHITECTURE.md ("Resumen
@@ -125,7 +136,10 @@ resto (ver ARCHITECTURE.md, "Manejo de errores y limitaciones").
    motor de tendencia" más abajo): se intenta a continuación, también en
    su propio `try/except` independiente, sin afectar a los dos agentes
    anteriores ni ser afectado por sus fallos.
-4. **Ensamblado final**: se llama a `assemble_research_result(ticker,
+4. **Motor de noticias relevantes** (ver "Inclusión del motor de
+   noticias relevantes en `investigate`" más abajo): se intenta a
+   continuación, también en su propio `try/except` independiente.
+5. **Ensamblado final**: se llama a `assemble_research_result(ticker,
    <resultados exitosos>, failures=<fallos capturados>)`, reutilizando
    la función ya existente sin modificarla.
 
@@ -322,7 +336,7 @@ equivalentes de Fase 1 y Fase 3. No se modifica `FMPFundamentalsProvider`
 ni ninguna función ya existente de este módulo: es un cambio puramente
 aditivo.
 
-## Registro de la invocación del motor de noticias relevantes (`run_news_relevance_engine`, esta tarea)
+## Registro de la invocación del motor de noticias relevantes (`run_news_relevance_engine`)
 
 Cubre la tarea "Registrar el nuevo motor de análisis sin modificar los
 motores existentes" (TASKS.md, Fase 4, "Orquestador"). Mismo problema y
@@ -346,14 +360,67 @@ centinela.
 `run_news_relevance_engine` **no captura** ninguna excepción de las
 piezas que invoca (`DataProviderError`, `NormalizationError`): las
 propaga tal cual, mismo criterio ya aplicado por `run_trend_analysis_engine`.
-**Todavía no se invoca desde `investigate`**: incorporar su resultado al
-`ResearchResult` ensamblado, con manejo de fallos parciales, es la tarea
-siguiente y separada de esta misma sección de `TASKS.md` ("Incluir el
-nuevo resultado en el 'Resultado de investigación'").
+Es `investigate` (ver "Inclusión del motor de noticias relevantes en
+`investigate`" más abajo) quien captura esas excepciones para
+reflejarlas como `ResearchFailure` sin detener el resto del flujo.
 
 Esta tarea no modifica `run_analysis_engines`, `analyze_financial_health`,
 `analyze_valuation` ni `run_trend_analysis_engine`: ningún motor
 existente cambia.
+
+## Inclusión del motor de noticias relevantes en `investigate`
+
+Cubre la tarea "Incluir el nuevo resultado en el 'Resultado de
+investigación'" (TASKS.md, Fase 4, "Orquestador"), mismo criterio ya
+aplicado para el motor de tendencia (ver "Inclusión del motor de
+tendencia en `investigate`" arriba): `investigate` invoca también
+`run_news_relevance_engine(ticker, config=config,
+provider=news_provider)`, en un `try`/`except` independiente de los ya
+existentes para salud financiera, valoración y tendencia, capturando
+`DataProviderError`/`NormalizationError` (las mismas excepciones que
+puede levantar `fetch_and_normalize_news`, encadenada dentro de
+`run_news_relevance_engine`) y traduciéndolas a
+`ResearchFailure(stage="data_provider", identifier="news_relevance",
+reason=<mensaje>)`, sin detener el resto del flujo ya ensamblado.
+
+### Por qué esta invocación usa un parámetro separado (`news_provider`)
+
+A diferencia del motor de tendencia, que reutiliza el mismo `provider`
+de datos fundamentales ya recibido por `investigate` (verificando
+`hasattr(provider, "fetch_historical")`, ver "Por qué esta invocación es
+condicional a la capacidad del proveedor" arriba), el motor de noticias
+relevantes necesita un proveedor de un **tipo distinto**:
+`FMPNewsProvider` (`investmentops.data_providers.news`), no
+`FMPFundamentalsProvider`. No tiene sentido verificar `hasattr(provider,
+"fetch")` sobre el `provider` de datos fundamentales para decidir si
+también sirve como proveedor de noticias: ambos implementan `fetch`,
+pero con formas de payload y proveedores externos completamente
+distintos.
+
+Por eso `investigate` gana un parámetro nuevo y opcional,
+`news_provider: FMPNewsProvider | None = None`, independiente de
+`provider`. La invocación al motor de noticias relevantes es
+condicional:
+
+- **`provider is None`**: no se inyectó ningún proveedor de datos
+  fundamentales, es decir, todo el flujo usa los proveedores reales por
+  defecto. En ese caso también se intenta el motor de noticias,
+  dejando que `run_news_relevance_engine` construya su propio
+  `FMPNewsProvider` real por defecto (`provider=news_provider=None`).
+- **`news_provider is not None`**: se inyectó explícitamente un
+  proveedor de noticias (típicamente en pruebas), independientemente de
+  si también se inyectó un `provider` de datos fundamentales.
+
+Si ninguna de las dos condiciones se cumple (se inyectó un `provider` de
+datos fundamentales de prueba, pero no un `news_provider`), `investigate`
+**no intenta** el motor de noticias relevantes, sin registrarlo como
+`ResearchFailure`: es, igual que en el caso del motor de tendencia, una
+limitación de qué proveedores están disponibles para esa investigación
+concreta, no un fallo en tiempo de ejecución de una consulta real. Esto
+preserva sin cambios el comportamiento (y las aserciones sobre
+`analysis_results`/`failures`) de todas las pruebas de `investigate` ya
+existentes que inyectan un `provider` mínimo de datos fundamentales sin
+capacidad de noticias.
 
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
@@ -364,9 +431,6 @@ Fuera de alcance de este módulo (aún):
 - La presentación del resultado de tendencia o de noticias relevantes
   en los reportes Markdown/HTML: tareas separadas y posteriores (ver
   TASKS.md, Fase 3/Fase 4, "Reportes").
-- Incluir el resultado del motor de noticias relevantes en
-  `ResearchResult` (vía `investigate`): tarea separada y siguiente de
-  "Fase 4 > Orquestador" (ver TASKS.md).
 """
 
 from __future__ import annotations
@@ -782,9 +846,8 @@ def fetch_and_normalize_news(
         fecha de publicación no es interpretable (ver
         `investmentops.data_layer.normalization.news_from_raw`). Esta
         función no captura ni traduce esa excepción: el manejo de
-        fallos parciales sin detener el resto del flujo queda para una
-        tarea separada y posterior de esta misma sección (ver TASKS.md,
-        Fase 4, "Orquestador").
+        fallos parciales sin detener el resto del flujo es
+        responsabilidad de `investigate` (ver docstring del módulo).
     ConfigError
         Si `provider` no se indica, `config` tampoco, y no se puede
         cargar `config.local.toml`.
@@ -910,9 +973,8 @@ def run_news_relevance_engine(
     ------
     DataProviderError
         Ver `fetch_and_normalize_news`. Esta función no captura ni
-        traduce esa excepción: el manejo de fallos parciales queda para
-        una tarea separada y posterior de esta misma sección (ver
-        TASKS.md, Fase 4, "Orquestador").
+        traduce esa excepción: el manejo de fallos parciales es
+        responsabilidad de `investigate` (ver docstring del módulo).
     NormalizationError
         Ver `fetch_and_normalize_news`.
     ConfigError
@@ -1114,19 +1176,21 @@ def investigate(
     *,
     config: dict[str, Any] | None = None,
     provider: DataProvider | None = None,
+    news_provider: FMPNewsProvider | None = None,
 ) -> ResearchResult:
     """Ejecuta el flujo completo de investigación para `ticker`, sin que un
     fallo parcial (fuente de datos o proveedor de IA de un agente) detenga
     el resto del flujo.
 
     Ver el docstring del módulo, secciones "Manejo de fallos parciales
-    (`investigate`)" e "Inclusión del motor de tendencia en
+    (`investigate`)", "Inclusión del motor de tendencia en
+    `investigate`" e "Inclusión del motor de noticias relevantes en
     `investigate`", para la explicación completa de las etapas
     (consulta+normalización, agentes por separado, motor de tendencia,
-    ensamblado) y de por qué un fallo en la primera etapa impide
-    continuar (ningún agente tiene datos con los que trabajar) mientras
-    que un fallo en un agente o en el motor de tendencia no impide que
-    los demás se ejecuten.
+    motor de noticias relevantes, ensamblado) y de por qué un fallo en la
+    primera etapa impide continuar (ningún agente tiene datos con los que
+    trabajar) mientras que un fallo en un agente o en cualquiera de los
+    dos motores no impide que los demás se ejecuten.
 
     Parameters
     ----------
@@ -1134,9 +1198,9 @@ def investigate(
         Identificador de la empresa a investigar (ej. ``"AAPL"``).
     config:
         Configuración ya cargada, propagada a `fetch_and_normalize`, a
-        cada agente de análisis y al motor de tendencia. Útil para
-        pruebas, para no depender de un `config.local.toml` real en
-        disco.
+        cada agente de análisis, al motor de tendencia y al motor de
+        noticias relevantes. Útil para pruebas, para no depender de un
+        `config.local.toml` real en disco.
     provider:
         Proveedor de datos ya construido, propagado a
         `fetch_and_normalize`. Si además expone `fetch_historical` (o si
@@ -1145,6 +1209,15 @@ def investigate(
         en `investigate`" en el docstring del módulo); si no la expone,
         el motor de tendencia simplemente no se intenta para esta
         investigación.
+    news_provider:
+        Proveedor de noticias ya construido (ver
+        `investmentops.data_providers.news.FMPNewsProvider`), propagado
+        al motor de noticias relevantes (ver "Inclusión del motor de
+        noticias relevantes en `investigate`" en el docstring del
+        módulo). El motor de noticias relevantes se intenta si
+        `news_provider` no es ``None``, o si `provider` (el de datos
+        fundamentales) tampoco se indicó (uso real, sin proveedores de
+        prueba); en cualquier otro caso, no se intenta.
 
     Returns
     -------
@@ -1155,15 +1228,17 @@ def investigate(
           normalizado>, reason=<mensaje del error>)`.
         - Si la normalización tiene éxito: `analysis_results` contiene
           los resultados de los agentes/motores que sí completaron su
-          análisis (salud financiera, valoración, y evolución de
-          ingresos/beneficios cuando el proveedor lo permite), en ese
-          orden, y `failures` contiene un
-          `ResearchFailure(stage="analysis_engine", identifier=<analysis_id>,
-          ...)` por cada agente que falló (`PromptError`,
-          `AgentProviderSelectionError` o `AIProviderError`), o un
-          `ResearchFailure(stage="data_provider", identifier="trend_analysis",
-          ...)` si el motor de tendencia falló (`DataProviderError` o
-          `NormalizationError` al obtener/normalizar la serie histórica).
+          análisis (salud financiera, valoración, evolución de
+          ingresos/beneficios y noticias relevantes, cuando los
+          proveedores lo permiten), en ese orden, y `failures` contiene
+          un `ResearchFailure(stage="analysis_engine",
+          identifier=<analysis_id>, ...)` por cada agente que falló
+          (`PromptError`, `AgentProviderSelectionError` o
+          `AIProviderError`), o un `ResearchFailure(stage="data_provider",
+          identifier="trend_analysis"|"news_relevance", ...)` si el
+          motor de tendencia o el de noticias relevantes falló
+          (`DataProviderError` o `NormalizationError` al obtener/
+          normalizar la serie histórica o las noticias, respectivamente).
 
     Notes
     -----
@@ -1173,11 +1248,7 @@ def investigate(
     `ResearchFailure`. Otras excepciones (ej. `ConfigError` si no se
     puede cargar `config.local.toml` en absoluto) sí se propagan, ya que
     representan un problema de configuración del entorno, no un fallo
-    parcial de una fuente o un agente concretos. El motor de noticias
-    relevantes (`run_news_relevance_engine`) todavía **no** se invoca
-    desde esta función (ver docstring del módulo, "Registro de la
-    invocación del motor de noticias relevantes"): esa incorporación es
-    una tarea separada y posterior de la misma sección de `TASKS.md`.
+    parcial de una fuente o un agente concretos.
     """
     try:
         company_data = fetch_and_normalize(ticker, config=config, provider=provider)
@@ -1247,6 +1318,35 @@ def investigate(
                 ResearchFailure(
                     stage="data_provider",
                     identifier=TREND_AGENT_ID,
+                    reason=str(exc),
+                )
+            )
+
+    # Motor de noticias relevantes (Fase 4): a diferencia del motor de
+    # tendencia (que reutiliza el mismo `provider` de datos
+    # fundamentales), este motor necesita un proveedor de un tipo
+    # distinto (`FMPNewsProvider`, no `FMPFundamentalsProvider`), por lo
+    # que se controla con su propio parámetro, `news_provider`. Se
+    # intenta si se inyectó explícitamente un `news_provider`, o si no
+    # se inyectó ningún `provider` de datos fundamentales (uso real, sin
+    # proveedores de prueba), en cuyo caso `run_news_relevance_engine`
+    # construye su propio `FMPNewsProvider` real por defecto (ver
+    # "Inclusión del motor de noticias relevantes en investigate" en el
+    # docstring del módulo). Un fallo al obtener o normalizar las
+    # noticias (`DataProviderError`/`NormalizationError`) se captura y
+    # se refleja como `ResearchFailure`, sin detener el resto del flujo.
+    if provider is None or news_provider is not None:
+        try:
+            analysis_results.append(
+                run_news_relevance_engine(
+                    ticker, config=config, provider=news_provider
+                )
+            )
+        except (DataProviderError, NormalizationError) as exc:
+            failures.append(
+                ResearchFailure(
+                    stage="data_provider",
+                    identifier=NEWS_RELEVANCE_AGENT_ID,
                     reason=str(exc),
                 )
             )
@@ -1351,6 +1451,7 @@ def investigate_and_generate_reports(
     *,
     config: dict[str, Any] | None = None,
     provider: DataProvider | None = None,
+    news_provider: FMPNewsProvider | None = None,
     output_dir: str | Path | None = None,
     formats: Sequence[str] | None = None,
 ) -> tuple[ResearchResult, list[Path]]:
@@ -1373,6 +1474,10 @@ def investigate_and_generate_reports(
         como a `generate_reports(...)`.
     provider:
         Proveedor de datos ya construido, propagado a `investigate(...)`.
+    news_provider:
+        Proveedor de noticias ya construido, propagado a
+        `investigate(...)` (ver "Inclusión del motor de noticias
+        relevantes en `investigate`" en el docstring del módulo).
     output_dir:
         Ruta al directorio donde guardar los reportes, propagada a
         `generate_reports(...)`.
@@ -1396,7 +1501,9 @@ def investigate_and_generate_reports(
         `AgentProviderSelectionError` ni `AIProviderError` (ver su propio
         docstring).
     """
-    result = investigate(ticker, config=config, provider=provider)
+    result = investigate(
+        ticker, config=config, provider=provider, news_provider=news_provider
+    )
     report_paths = generate_reports(
         result, output_dir=output_dir, config=config, formats=formats
     )
