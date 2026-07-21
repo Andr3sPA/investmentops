@@ -4,47 +4,57 @@
 
 ## Última tarea completada
 
-Fase 4, "Motor de análisis: noticias relevantes" → "Implementar el
-filtrado de noticias según ese criterio" (TASKS.md).
+Fase 4, "Motor de análisis: noticias relevantes" → "Implementar un
+resumen breve por noticia relevante (o selección del resumen ya
+provisto por la fuente)" (TASKS.md).
 
 ### Qué se implementó
 
-`filter_relevant_news` en `investmentops/analysis_engines/news_relevance.py`
-(nuevo). Implementa el criterio ya fijado en
-`investmentops/analysis_engines/NEWS_RELEVANCE.md`: filtra una lista de
-`News` (`investmentops.data_layer.News`) a las que caen dentro de una
-ventana de tiempo reciente.
+`select_news_summary` en `investmentops/analysis_engines/news_relevance.py`
+(mismo módulo que `filter_relevant_news`, ya implementado en la tarea
+anterior). Selecciona el resumen ya provisto por la fuente
+(`News.summary`), sin generar uno nuevo vía IA:
 
-- **Ventana:** `days` días, parámetro explícito con valor por defecto
-  `DEFAULT_RELEVANCE_WINDOW_DAYS = 7` (no una clave nueva de
-  `config.local.toml`, mismo criterio ya aplicado a `DEFAULT_MAX_AGE` en
-  `investmentops.data_layer.cache`).
-- **Referencia temporal:** el momento del filtrado (`now`, parámetro
-  opcional para pruebas; por defecto `datetime.now()`), no `queried_at`.
-  Se usa un `datetime` *naive* por defecto porque `News.published_at` ya
-  es naive (viene de `datetime.fromisoformat` sobre el formato de FMP
-  `"YYYY-MM-DD HH:MM:SS"`, sin zona horaria).
-- **Límite inclusivo:** una noticia publicada exactamente en el borde de
-  la ventana (`now - timedelta(days=days)`) se considera relevante.
-- **Sin reordenar ni deduplicar:** el resultado conserva el orden
-  relativo de la entrada.
-- **Casos degenerados:** lista de entrada vacía o ninguna noticia dentro
-  de la ventana producen ambos una lista vacía, sin lanzar excepción —
-  declarar esa ausencia como limitación explícita queda para la tarea de
-  ensamblado del motor (todavía pendiente en la misma sección).
+- **Sin truncar si ya cabe:** si `News.summary` ya tiene una longitud
+  menor o igual a `max_length` (por defecto
+  `DEFAULT_SUMMARY_MAX_LENGTH = 280`, parámetro explícito, no una clave
+  nueva de `config.local.toml`, mismo criterio ya aplicado a
+  `DEFAULT_MAX_AGE`/`DEFAULT_RELEVANCE_WINDOW_DAYS`), se devuelve tal
+  cual.
+- **Truncado en límite de palabra:** si excede `max_length`, se recorta
+  en el último espacio antes del límite y se agrega `"..."`, para no
+  cortar una palabra a la mitad.
+- **Truncado duro como respaldo:** si no hay ningún espacio antes del
+  límite (una sola palabra muy larga), se recorta exactamente en
+  `max_length` y se agrega `"..."`.
+- **Resumen vacío:** se devuelve `""` sin modificar ni lanzar excepción.
+
+### Decisión de implementación
+
+El paréntesis de la propia tarea en `TASKS.md` ("o selección del resumen
+ya provisto por la fuente") ya fija el criterio: no se invoca ningún
+proveedor de IA para generar un resumen nuevo. Esto es consistente con
+el motor de tendencias de la Fase 3
+(`investmentops.analysis_engines.trends`), que tampoco usa IA porque
+`TASKS.md` no define para estos motores ninguna tarea explícita de
+"escribir prompt"/"invocar proveedor de IA", a diferencia de salud
+financiera y valoración (Fase 1).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/analysis_engines/news_relevance.py`
-- `investmentops/tests/test_analysis_engines_news_relevance.py`
+- `investmentops/tests/test_analysis_engines_news_summary.py`
 
 Modificados:
-- `TASKS.md` (una línea: tarea de filtrado marcada como completada)
+- `investmentops/analysis_engines/news_relevance.py` (se agregó
+  `select_news_summary`/`DEFAULT_SUMMARY_MAX_LENGTH`, sin modificar
+  `filter_relevant_news`/`DEFAULT_RELEVANCE_WINDOW_DAYS`, ya
+  implementadas)
+- `TASKS.md` (una línea: tarea de resumen breve marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Motor de análisis: noticias relevantes" → "Implementar un
-resumen breve por noticia relevante (o selección del resumen ya provisto
-por la fuente)".
+Fase 4, "Motor de análisis: noticias relevantes" → "Ensamblar el
+resultado estructurado del motor (hallazgos, lista de noticias
+relevantes, advertencias si no hay noticias)".
