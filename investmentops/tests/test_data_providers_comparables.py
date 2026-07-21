@@ -4,11 +4,13 @@
 Cubre la tarea "Implementar la consulta de comparables (lista de
 empresas pares) para un ticker" (TASKS.md, Fase 5, "Fuente de datos de
 comparables"), sobre la decisión ya tomada en
-`investmentops/data_providers/COMPARABLES_PROVIDER.md`. No prueba
-todavía la procedencia por empresa par individual ni la consulta de
-métricas clave por par: esas son tareas separadas y posteriores de la
-misma sección. Como este cliente hace llamadas HTTP reales a la API de
-FMP, todas las pruebas simulan (mockean) `requests.get`.
+`investmentops/data_providers/COMPARABLES_PROVIDER.md`. La procedencia
+por empresa par individual (`"source"`/`"queried_at"` por elemento) se
+prueba en `test_data_providers_comparables_provenance.py`; este archivo
+solo confirma que cada elemento del payload incluye esas claves sin
+verificar su contenido en detalle. Como este cliente hace llamadas HTTP
+reales a la API de FMP, todas las pruebas simulan (mockean)
+`requests.get`.
 """
 
 from unittest.mock import Mock, patch
@@ -56,7 +58,11 @@ def test_fetch_returns_raw_provider_data_with_list_payload(mock_get: Mock) -> No
 
     assert isinstance(result, RawProviderData)
     assert result.ticker == "AAPL"
-    assert result.payload == _sample_peers_payload()
+    assert len(result.payload) == 1
+    entry = result.payload[0]
+    assert entry["symbol"] == "AAPL"
+    assert entry["companyName"] == "Apple Inc."
+    assert entry["peersList"] == ["MSFT", "GOOG", "GOOGL"]
     assert result.metadata.source == "fmp"
     assert result.metadata.reliability == "alta"
     assert mock_get.call_count == 1

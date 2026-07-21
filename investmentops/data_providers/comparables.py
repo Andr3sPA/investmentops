@@ -1,7 +1,8 @@
 """Cliente mínimo de Financial Modeling Prep (FMP) — empresas comparables.
 
-Cubre la tarea "Implementar la consulta de comparables (lista de empresas
-pares) para un ticker" (TASKS.md, Fase 5, "Fuente de datos de
+Cubre las tareas "Implementar la consulta de comparables (lista de
+empresas pares) para un ticker" y "Adjuntar metadatos de procedencia a
+los datos de comparables" (TASKS.md, Fase 5, "Fuente de datos de
 comparables"), sobre la decisión ya tomada en
 `investmentops/data_providers/COMPARABLES_PROVIDER.md`: reutilizar
 **Financial Modeling Prep (FMP)**, el mismo proveedor ya integrado desde
@@ -14,50 +15,59 @@ transformar nada al modelo de dominio interno — esa transformación
 ("Comparables", modelo de dominio normalizado) es una tarea posterior y
 separada (ver TASKS.md, Fase 5, "Normalización").
 
-## Alcance de esta tarea
+## Alcance de la primera tarea (ya cubierta)
 
-Cubre únicamente el **contrato básico**: ticker de entrada, lista cruda
-de empresas pares (`payload`, tal como la entrega FMP, sin transformar)
-de salida, junto con los metadatos de procedencia de la consulta
-completa (`ProviderMetadata`, mismo criterio ya usado por
-`FMPFundamentalsProvider.fetch`/`FMPNewsProvider.fetch`). Incluye manejo
-de error básico (red, autenticación, errores de servidor, JSON
-inválido) porque el contrato `DataProvider` ya exige señalar cualquier
-fallo mediante `DataProviderError`, nunca devolviendo datos inventados o
-parciales — el mismo criterio ya aplicado en
-`FMPFundamentalsProvider.fetch` y `FMPNewsProvider.fetch`, ninguno de los
-cuales pudo entregarse "mínimo" sin ese manejo de error.
+Contrato básico: ticker de entrada, lista cruda de empresas pares
+(`payload`, tal como la entrega FMP) de salida, junto con los metadatos
+de procedencia de la consulta completa (`ProviderMetadata`, mismo
+criterio ya usado por `FMPFundamentalsProvider.fetch`/
+`FMPNewsProvider.fetch`). Incluye manejo de error básico (red,
+autenticación, errores de servidor, JSON inválido) porque el contrato
+`DataProvider` ya exige señalar cualquier fallo mediante
+`DataProviderError`, nunca devolviendo datos inventados o parciales.
 
-Explícitamente fuera de alcance de esta tarea (ver TASKS.md, tareas
-siguientes de esta misma sección):
-- **Procedencia por empresa par individual** (adjuntar `"source"`/
-  `"queried_at"` a cada elemento del payload, mismo patrón ya usado por
-  `_attach_point_provenance`/`_attach_news_provenance`): tarea separada y
-  posterior ("Adjuntar metadatos de procedencia a los datos de
-  comparables").
-- **La consulta de métricas clave para cada empresa par** (reutilizando
-  `FMPFundamentalsProvider.fetch`, `financial_statement_from_raw`,
-  `market_data_from_raw`, ya existentes desde la Fase 1): tarea separada
-  y posterior ("Implementar la consulta de métricas clave... para cada
-  empresa par").
-- **La transformación del payload crudo al modelo de dominio
-  "Comparables"**: corresponde a investmentops.data_layer (ver TASKS.md,
-  Fase 5, "Normalización").
-- **El cacheo de resultados**: tarea separada y posterior de la misma
-  sección de "Normalización".
+## Procedencia por empresa par individual (esta tarea)
+
+Cubre la tarea "Adjuntar metadatos de procedencia a los datos de
+comparables" (TASKS.md, Fase 5, "Fuente de datos de comparables").
+`RawProviderData.metadata` (un único `ProviderMetadata` para toda la
+respuesta) ya identifica de dónde y cuándo se obtuvo la consulta
+completa. Esta tarea hace esa procedencia explícita en cada elemento del
+`payload`, mismo criterio ya aplicado por `_attach_point_provenance`
+(`investmentops/data_providers/fundamentals.py`, serie histórica) y
+`_attach_news_provenance` (`investmentops/data_providers/news.py`,
+noticias):
+
+- **`source`**: el mismo valor que `RawProviderData.metadata.source`
+  (``"fmp"``).
+- **`queried_at`**: el mismo valor que
+  `RawProviderData.metadata.queried_at`, serializado a ISO 8601 (texto).
+
+`_attach_comparables_provenance` construye copias nuevas de cada dict
+del payload (no muta las respuestas originales de `response.json()`),
+igual criterio que `_attach_point_provenance`/`_attach_news_provenance`.
+Como FMP devuelve, para `/stock_peers`, una lista con (a lo sumo) un
+único elemento (ver "Forma del payload crudo" más abajo), esta función
+opera igual sobre esa lista, sin asumir ni depender de una cantidad fija
+de elementos: si en el futuro FMP cambiara esa forma, la función seguiría
+funcionando sin cambios.
+
+No se agrega aquí ninguna validación de que `payload` tenga la forma
+esperada (a diferencia de `FMPNewsProvider.fetch`, que sí valida
+`isinstance(raw_items, list)`): esa validación de "formato inesperado"
+no forma parte de las tareas ya definidas para este proveedor en
+`TASKS.md`, y añadirla ahora sería alcance no pedido por esta tarea.
 
 ## Forma del payload crudo
 
 FMP devuelve, para `/v4/stock_peers?symbol=<ticker>`, una lista con (a lo
 sumo) un único elemento: ``[{"symbol": "AAPL", "companyName": "...",
 "peersList": ["MSFT", "GOOG", ...]}]``. Este módulo no interpreta esa
-forma ni extrae `peersList`: `payload` conserva la respuesta cruda tal
-cual, igual criterio que `FMPNewsProvider.fetch` (el `payload` es la
-lista cruda devuelta por FMP, sin seleccionar ni transformar campos) y
-que `FMPFundamentalsProvider.fetch` (el payload combina las respuestas
-crudas de sus endpoints, sin normalizar). Interpretar `peersList` (y
-manejar el caso de una lista vacía cuando FMP no encuentra pares) es
-responsabilidad de la capa de normalización, tarea posterior.
+forma más allá de adjuntar procedencia a cada elemento: no extrae
+`peersList` ni transforma ningún campo (esa extracción ya vive en
+`investmentops.core.orchestrator.fetch_peer_tickers`, que sigue leyendo
+`payload[0].get("peersList")` sin verse afectado por las claves nuevas
+`"source"`/`"queried_at"` agregadas aquí).
 
 Fuera de alcance de este módulo:
 - Cualquier transformación del payload crudo al modelo de dominio
@@ -87,6 +97,45 @@ DEFAULT_BASE_URL = "https://financialmodelingprep.com/api/v4"
 #: Ruta del endpoint de comparables/pares de FMP (ver
 #: COMPARABLES_PROVIDER.md).
 PEERS_ENDPOINT = "/stock_peers"
+
+
+def _attach_comparables_provenance(
+    items: list[dict[str, Any]], metadata: ProviderMetadata
+) -> list[dict[str, Any]]:
+    """Adjunta procedencia (`source`, `queried_at`) a cada elemento crudo.
+
+    Construye una lista nueva de dicts (no muta `items`), agregando a
+    cada elemento las claves `"source"` (`metadata.source`) y
+    `"queried_at"` (`metadata.queried_at`, en formato ISO 8601), de forma
+    que cada empresa par individual quede trazable hasta su fuente sin
+    depender únicamente del `ProviderMetadata` de nivel superior en
+    `RawProviderData`. Mismo criterio ya aplicado por
+    `_attach_point_provenance` en
+    `investmentops.data_providers.fundamentals` y por
+    `_attach_news_provenance` en `investmentops.data_providers.news`.
+
+    Parameters
+    ----------
+    items:
+        Lista de dicts crudos, tal como los devuelve el endpoint
+        `/stock_peers` de FMP (típicamente un único elemento con
+        `"peersList"`, ver "Forma del payload crudo" en el docstring del
+        módulo). Puede estar vacía (FMP no encontró pares).
+    metadata:
+        La procedencia de la consulta que obtuvo `items` (mismo
+        `ProviderMetadata` que se adjunta a nivel de todo el
+        `RawProviderData`).
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Una copia de `items`, con `"source"`/`"queried_at"` agregados a
+        cada elemento.
+    """
+    return [
+        {**item, "source": metadata.source, "queried_at": metadata.queried_at.isoformat()}
+        for item in items
+    ]
 
 
 class FMPComparablesProvider:
@@ -155,9 +204,10 @@ class FMPComparablesProvider:
         """Obtiene la lista cruda de empresas pares de una empresa desde FMP.
 
         Consulta el endpoint `/stock_peers` de FMP para `ticker`, y
-        devuelve la respuesta cruda tal como la entrega FMP (sin
-        transformar), junto con los metadatos de procedencia de esta
-        consulta (fuente, fecha/hora, confiabilidad).
+        devuelve la respuesta cruda ya con procedencia adjuntada a cada
+        elemento (ver `_attach_comparables_provenance`), junto con los
+        metadatos de procedencia de esta consulta a nivel de toda la
+        respuesta (fuente, fecha/hora, confiabilidad).
 
         Parameters
         ----------
@@ -170,11 +220,13 @@ class FMPComparablesProvider:
         -------
         RawProviderData
             `payload` es la respuesta cruda devuelta por FMP para
-            `/stock_peers` (una lista, típicamente con un único elemento
-            que incluye `"peersList"`), sin modificar. Una lista vacía es
-            una respuesta válida (FMP no encontró pares para el ticker),
-            no un error: interpretar esa ausencia es responsabilidad de
-            la capa de normalización (tarea posterior).
+            `/stock_peers` (típicamente un único elemento con
+            `"peersList"`), con `"source"`/`"queried_at"` agregados a
+            cada elemento, sin modificar sus campos originales. Una
+            lista vacía es una respuesta válida (FMP no encontró pares
+            para el ticker), no un error: interpretar esa ausencia es
+            responsabilidad de la capa de normalización (tarea
+            posterior).
 
         Raises
         ------
@@ -207,7 +259,7 @@ class FMPComparablesProvider:
                 "inválida o sin permisos para este recurso)."
             )
         if response.status_code == 404:
-            payload: Any = []
+            raw_payload: Any = []
         elif response.status_code >= 400:
             raise DataProviderError(
                 f"FMP respondió con un error ({response.status_code}) al "
@@ -215,7 +267,7 @@ class FMPComparablesProvider:
             )
         else:
             try:
-                payload = response.json()
+                raw_payload = response.json()
             except ValueError as exc:
                 raise DataProviderError(
                     "FMP devolvió una respuesta que no se pudo "
@@ -223,13 +275,15 @@ class FMPComparablesProvider:
                     f"para el ticker '{ticker}'."
                 ) from exc
 
-        if payload is None:
-            payload = []
+        if raw_payload is None:
+            raw_payload = []
 
         metadata = ProviderMetadata(
             source="fmp",
             queried_at=datetime.now(timezone.utc),
             reliability="alta",
         )
+
+        payload = _attach_comparables_provenance(raw_payload, metadata)
 
         return RawProviderData(ticker=ticker, payload=payload, metadata=metadata)
