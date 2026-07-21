@@ -1,3 +1,4 @@
+# investmentops/tests/test_reports_markdown_trend.py
 """Pruebas para la sección "Evolución de ingresos y beneficios" del
 generador Markdown (investmentops.reports.markdown.render_markdown).
 
@@ -11,6 +12,13 @@ secciones de salud financiera/valoración (ya cubiertas en
 archivos de prueba) ni su conversión a `AnalysisResult`
 (`investmentops.core.orchestrator._trend_analysis_result_to_analysis_result`,
 ya cubierta en `test_core_orchestrator_trend_analysis.py`).
+
+`test_render_keeps_empty_trend_section_when_agent_absent` se ajustó al
+agregarse la sección "Noticias recientes relevantes" (Fase 4) después de
+"Evolución de ingresos y beneficios": ya no puede tomar todo lo que
+sigue al encabezado hasta el final del documento, ya que ahora hay una
+sección más después (mismo ajuste ya aplicado en su momento a las
+pruebas de "Valoración" cuando se agregó esta sección de tendencia).
 """
 
 from datetime import datetime, timezone
@@ -89,14 +97,20 @@ def test_render_shows_trend_analysis_after_valuation() -> None:
 def test_render_keeps_empty_trend_section_when_agent_absent() -> None:
     """Si el motor de tendencia no está en `analysis_results` (ej. el
     proveedor no soporta series históricas), la sección conserva solo su
-    encabezado vacío."""
+    encabezado vacío.
+
+    Acotada por el encabezado de "Noticias recientes relevantes" (nueva
+    desde Fase 4): "Evolución de ingresos y beneficios" ya no es la
+    última sección del reporte.
+    """
     result = assemble_research_result("AAPL", [])
 
     output = render_markdown(result)
 
     section_start = output.index("## Evolución de ingresos y beneficios")
+    section_end = output.index("## Noticias recientes relevantes")
     section_body = (
-        output[section_start:]
+        output[section_start:section_end]
         .replace("## Evolución de ingresos y beneficios", "")
         .strip()
     )
@@ -129,7 +143,8 @@ def test_render_places_trend_findings_under_its_own_section() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Evolución de ingresos y beneficios")
-    assert "hallazgo de tendencia" in output[section_start:]
+    section_end = output.index("## Noticias recientes relevantes")
+    assert "hallazgo de tendencia" in output[section_start:section_end]
     assert "hallazgo de tendencia" not in output[:section_start]
 
 
@@ -152,7 +167,8 @@ def test_render_trend_section_ignores_other_analysis_results() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Evolución de ingresos y beneficios")
-    assert "hallazgo de salud financiera" not in output[section_start:]
+    section_end = output.index("## Noticias recientes relevantes")
+    assert "hallazgo de salud financiera" not in output[section_start:section_end]
 
 
 # --- Tabla de variación periodo a periodo ------------------------------------
@@ -254,7 +270,8 @@ def test_render_omits_trend_limitations_subsection_when_empty() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Evolución de ingresos y beneficios")
-    assert "**Limitaciones:**" not in output[section_start:]
+    section_end = output.index("## Noticias recientes relevantes")
+    assert "**Limitaciones:**" not in output[section_start:section_end]
 
 
 # --- Procedencia (centinela) ------------------------------------------------------
@@ -282,4 +299,5 @@ def test_render_omits_trend_provenance_when_agent_absent() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Evolución de ingresos y beneficios")
-    assert "**Generado por:**" not in output[section_start:]
+    section_end = output.index("## Noticias recientes relevantes")
+    assert "**Generado por:**" not in output[section_start:section_end]

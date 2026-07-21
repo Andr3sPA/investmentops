@@ -4,57 +4,63 @@
 
 ## Última tarea completada
 
-Fase 4, "Orquestador" → "Incluir el nuevo resultado en el 'Resultado de
-investigación'" (TASKS.md).
+Fase 4, "Reportes" → "Añadir la sección 'Noticias recientes relevantes'
+a la plantilla Markdown" (TASKS.md).
 
 ### Qué se implementó
 
-`investigate` (`investmentops/core/orchestrator.py`) ahora también invoca
-`run_news_relevance_engine(ticker, config=config, provider=news_provider)`,
-en un `try/except` independiente de los ya existentes para salud
-financiera, valoración y tendencia, capturando
-`DataProviderError`/`NormalizationError` y traduciéndolas a
-`ResearchFailure(stage="data_provider", identifier="news_relevance",
-reason=<mensaje>)`, sin detener el resto del flujo.
+`render_markdown` (`investmentops/reports/markdown.py`) ahora agrega el
+bloque `## Noticias recientes relevantes` después de `## Evolución de
+ingresos y beneficios`, buscando el `AnalysisResult` con
+`analysis_id == "news_relevance"` (`NEWS_RELEVANCE_AGENT_ID`) vía
+`_find_analysis` (ya genérica, sin cambios).
 
-A diferencia del motor de tendencia (que reutiliza el mismo `provider`
-de datos fundamentales ya recibido por `investigate`, comprobando
-`hasattr(provider, "fetch_historical")`), el motor de noticias
-relevantes necesita un proveedor de un tipo distinto (`FMPNewsProvider`,
-no `FMPFundamentalsProvider`). Por eso `investigate` gana un parámetro
-nuevo y separado, `news_provider: FMPNewsProvider | None = None`,
-independiente de `provider`. El motor se intenta si:
+`TASKS.md` no desglosaba una tarea de diseño separada para el formato de
+esta sección (a diferencia de la de tendencia, que sí tuvo su propia
+tarea de diseño con `TREND_PRESENTATION.md`); la decisión de formato se
+documentó inline en el docstring de `markdown.py`. Como
+`supporting_metrics["relevant_news"]` es una lista de dicts con varios
+campos de texto libre por noticia (título, resumen, fuente, fecha, URL)
+—no escalares como salud financiera/valoración, ni un mapeo por periodo
+como tendencia—, se descartó tanto la lista plana "clave: valor" ya
+usada por las primeras dos secciones como la tabla ya usada por
+tendencia, y se eligió una **lista Markdown**, un ítem por noticia
+relevante:
+<título> (<fuente>, <fecha ISO 8601>): <resumen> (Leer más)
+`_render_news_relevance_body` (nueva) construye esa sección: hallazgos →
+lista de noticias (omitida por completo si `relevant_news` está vacía,
+igual criterio que la tabla de tendencia cuando ambos mapeos están
+vacíos) → limitaciones → procedencia centinela (`ai_provider="none"`,
+`ai_model="deterministic"`, ya usada por este motor desde su integración
+al orquestador).
 
-- `news_provider` se inyecta explícitamente (típicamente en pruebas), o
-- `provider` (datos fundamentales) tampoco se inyectó — uso real, sin
-  proveedores de prueba, en cuyo caso `run_news_relevance_engine`
-  construye su propio `FMPNewsProvider` real por defecto.
-
-En cualquier otro caso (un `provider` de prueba inyectado sin
-`news_provider`), el motor de noticias no se intenta, sin registrarse
-como fallo — mismo criterio ya usado para el motor de tendencia. Esto
-preserva sin cambios el comportamiento de todas las pruebas de
-`investigate` ya existentes en `test_core_orchestrator.py`.
-
-`investigate_and_generate_reports` también gana y propaga el mismo
-parámetro `news_provider`.
+Como esta sección se agregó *después* de "Evolución de ingresos y
+beneficios", se ajustaron en `test_reports_markdown_trend.py` las
+pruebas que asumían que esa sección era la última del documento
+(`test_render_keeps_empty_trend_section_when_agent_absent`,
+`test_render_places_trend_findings_under_its_own_section`,
+`test_render_trend_section_ignores_other_analysis_results`,
+`test_render_omits_trend_limitations_subsection_when_empty`,
+`test_render_omits_trend_provenance_when_agent_absent`), acotándolas
+ahora entre ambos encabezados — mismo tipo de ajuste ya aplicado en su
+momento a las pruebas de "Valoración" cuando se agregó la sección de
+tendencia (Fase 3).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_core_orchestrator_news_integration.py`
+- `investmentops/tests/test_reports_markdown_news.py`
 
 Modificados:
-- `investmentops/core/orchestrator.py` (`investigate` gana el parámetro
-  `news_provider` e invoca `run_news_relevance_engine`;
-  `investigate_and_generate_reports` gana y propaga el mismo parámetro;
-  docstrings actualizados; ninguna función existente cambió su firma de
-  forma incompatible — `news_provider` es un nuevo parámetro opcional
-  con valor por defecto `None`)
+- `investmentops/reports/markdown.py` (`NEWS_RELEVANCE_AGENT_ID`,
+  `_render_news_relevance_body`, `render_markdown` extendido; docstring
+  del módulo actualizado)
+- `investmentops/tests/test_reports_markdown_trend.py` (pruebas
+  acotadas al nuevo límite de sección, ver arriba)
 - `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Reportes" → "Añadir la sección 'Noticias recientes relevantes'
-a la plantilla Markdown."
+Fase 4, "Reportes" → "Añadir la misma sección [Noticias recientes
+relevantes] a la plantilla HTML."

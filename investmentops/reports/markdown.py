@@ -1,7 +1,8 @@
+# investmentops/reports/markdown.py
 """Generador de reportes en Markdown.
 
-Cubre, hasta ahora, siete tareas de TASKS.md, Fase 2 ("Generador Markdown")
-y Fase 3 ("Reportes"):
+Cubre, hasta ahora, ocho tareas de TASKS.md, Fase 2 ("Generador Markdown"),
+Fase 3 ("Reportes") y Fase 4 ("Reportes"):
 
 - "Implementar la plantilla base de reporte en Markdown (encabezados,
   secciones vacías)." (ya completada, ver PROGRESS.md).
@@ -14,7 +15,10 @@ y Fase 3 ("Reportes"):
 - "Implementar el guardado del archivo Markdown generado en una ruta
   local configurable." (ya completada, ver PROGRESS.md).
 - "Añadir la sección 'Evolución de ingresos y beneficios' a la plantilla
-  Markdown, conforme al formato ya decidido." (esta tarea).
+  Markdown, conforme al formato ya decidido." (ya completada, ver
+  PROGRESS.md).
+- "Añadir la sección 'Noticias recientes relevantes' a la plantilla
+  Markdown." (esta tarea).
 
 ## Dónde vive la procedencia de IA
 
@@ -38,7 +42,7 @@ Si el agente correspondiente no completó su análisis, la sección sigue
 sin ningún contenido (ni hallazgos, ni métricas, ni procedencia): mismo
 comportamiento ya usado en las tareas anteriores.
 
-## Sección "Evolución de ingresos y beneficios" (esta tarea)
+## Sección "Evolución de ingresos y beneficios"
 
 Cubre la tarea "Añadir la sección 'Evolución de ingresos y beneficios' a
 la plantilla Markdown, conforme al formato ya decidido" (TASKS.md, Fase
@@ -62,31 +66,58 @@ sección reemplaza esa lista por una **tabla Markdown** para las dos
 claves que son mapeos por periodo
 (`revenue_growth_by_period`/`net_income_growth_by_period`, ver
 `TREND_PRESENTATION.md`, "Decisión: tabla simple, una fila por
-periodo"):
-
-    | Periodo | Ingresos (var.) | Beneficios (var.) |
-    |---|---|---|
-    | 2025-12-31 | +8.3% | +8.3% |
-
-- Una fila por cada clave presente en `revenue_growth_by_period` (mismo
-  orden en que ya vienen esas claves, del periodo más reciente al más
-  antiguo), combinando el valor equivalente de
-  `net_income_growth_by_period` para la misma fecha.
-- Cada valor se formatea como porcentaje con un decimal y signo explícito
-  (ej. `+8.3%`, `-5.3%`); un valor `None` (periodo base en cero, ver
-  `TREND_METRICS.md`) se muestra como `"—"`.
-- La tabla se omite por completo si ambos mapeos están vacíos (serie de
-  un solo periodo o vacía): en ese caso basta con el hallazgo ya
-  generado por `_describe_trend` ("No hay suficientes datos para
-  determinar una tendencia de ...").
-- Los `findings` (dos oraciones, ya incluyen la tendencia agregada en su
-  propio texto) y la procedencia (línea "Generado por: ...") reutilizan
-  exactamente el mismo formato de texto ya usado por "Salud
-  financiera"/"Valoración", sin cambios.
+periodo").
 
 Orden dentro de la sección (mismo orden fijado en `TREND_PRESENTATION.md`):
 hallazgos → tabla (omitida si ambos mapeos están vacíos) → limitaciones →
 procedencia.
+
+## Sección "Noticias recientes relevantes" (esta tarea)
+
+Cubre la tarea "Añadir la sección 'Noticias recientes relevantes' a la
+plantilla Markdown" (TASKS.md, Fase 4, "Reportes"). A diferencia de la
+sección de tendencia, `TASKS.md` no desglosó una tarea de diseño previa
+y separada para el formato de esta sección (solo existen las dos tareas
+de implementación, Markdown y HTML); la decisión de formato se toma aquí
+mismo, documentada en este docstring.
+
+`NEWS_RELEVANCE_AGENT_ID` (``"news_relevance"``, el mismo identificador
+usado en `investmentops.analysis_engines.news_relevance.AGENT_ID` y
+propagado tal cual por
+`investmentops.core.orchestrator._news_relevance_result_to_analysis_result`
+al convertir su resultado a `AnalysisResult`) se reutiliza junto con
+`_find_analysis` (ya genérica) para localizar el `AnalysisResult`
+correspondiente. Es un `AnalysisResult` normal, con una
+`AnalysisProvenance` centinela (`ai_provider="none"`,
+`ai_model="deterministic"`, mismo criterio ya justificado en
+`TREND_INTEGRATION.md` y reutilizado sin una nueva decisión de diseño
+para este motor).
+
+`supporting_metrics["relevant_news"]` es una lista de dicts (`title`,
+`summary`, `source`, `published_at`, `url`), no un mapeo de escalares
+por periodo (a diferencia de la tabla de tendencia) ni un puñado de
+escalares sueltos (a diferencia de salud financiera/valoración): cada
+noticia trae demasiado texto libre (título + resumen + fuente + fecha +
+URL) para caber legiblemente en una fila de tabla. Por eso esta sección
+usa una **lista Markdown**, un ítem por noticia relevante:
+
+    - **<título>** (<fuente>, <fecha ISO 8601>): <resumen> ([Leer más](<url>))
+
+- Un ítem por elemento de `relevant_news`, en el mismo orden en que ya
+  vienen (preservado desde `filter_relevant_news`, ver
+  `investmentops.analysis_engines.news_relevance`).
+- La lista se omite por completo si `relevant_news` está vacía (ninguna
+  noticia relevante, o ninguna noticia en absoluto): en ese caso basta
+  con el hallazgo ya generado por `_describe_relevant_news_count`
+  ("No se encontraron noticias recientes relevantes en los últimos N
+  día(s).").
+- Los `findings` (un único hallazgo con la cantidad de noticias
+  encontradas) y la procedencia (línea "Generado por: ...") reutilizan
+  exactamente el mismo formato de texto ya usado por las demás
+  secciones.
+
+Orden dentro de la sección: hallazgos → lista de noticias relevantes
+(omitida si está vacía) → limitaciones → procedencia.
 
 ## Guardado del archivo Markdown generado (`save_markdown_report`)
 
@@ -127,13 +158,12 @@ criterio ya aplicado por `CacheError` en
 
 Fuera de alcance de este módulo:
 - El generador HTML: sección separada de `TASKS.md` (incluida su propia
-  tarea, todavía pendiente, de añadir esta misma sección de tendencia).
+  tarea, todavía pendiente, de añadir esta misma sección de noticias).
 - Conectar `save_markdown_report` con el orquestador o con la CLI para
   que se invoque automáticamente tras ensamblar el resultado de
   investigación: ya conectado desde Fase 2 (ver
   `investmentops.core.orchestrator.generate_reports`).
-- Gráficos o visualizaciones de la serie: fuera de alcance del MVP (ver
-  `TREND_PRESENTATION.md`).
+- Gráficos o visualizaciones: fuera de alcance del MVP.
 """
 
 from __future__ import annotations
@@ -167,6 +197,15 @@ VALUATION_AGENT_ID = "valuation"
 #: motor para no acoplar este generador a su implementación concreta.
 TREND_ANALYSIS_AGENT_ID = "trend_analysis"
 
+#: Identificador del motor de noticias relevantes, el mismo usado en
+#: `investmentops.analysis_engines.news_relevance.AGENT_ID` (y propagado
+#: tal cual por
+#: `investmentops.core.orchestrator._news_relevance_result_to_analysis_result`
+#: al convertir su resultado a `AnalysisResult`). Mismo criterio que los
+#: identificadores anteriores: no se importa desde el módulo del motor
+#: para no acoplar este generador a su implementación concreta.
+NEWS_RELEVANCE_AGENT_ID = "news_relevance"
+
 #: Valor por defecto si no se indica una ruta de salida explícita ni se
 #: puede leer `[output].output_dir` desde `config.local.toml` (mismo
 #: valor documentado como ejemplo en `config.example.toml`, sección
@@ -194,7 +233,8 @@ def _find_analysis(
     en la lista), en cuyo caso la sección correspondiente del reporte
     conserva solo su encabezado vacío. Funciona igual para cualquier
     `analysis_id` (``"financial_health"``, ``"valuation"``,
-    ``"trend_analysis"``): no está acoplada a ningún agente concreto.
+    ``"trend_analysis"``, ``"news_relevance"``): no está acoplada a
+    ningún agente concreto.
     """
     return next(
         (analysis for analysis in result.analysis_results if analysis.analysis_id == analysis_id),
@@ -211,8 +251,10 @@ def _render_analysis_body(analysis: AnalysisResult) -> list[str]:
     (proveedor, modelo y fecha de generación). Reutilizada tanto para
     "Salud financiera" como para "Valoración" (no depende del
     `analysis_id` concreto). No se usa para "Evolución de ingresos y
-    beneficios": esa sección reemplaza el volcado plano de
-    `supporting_metrics` por una tabla (ver `_render_trend_analysis_body`).
+    beneficios" ni "Noticias recientes relevantes": esas secciones
+    reemplazan el volcado plano de `supporting_metrics` por una tabla o
+    una lista (ver `_render_trend_analysis_body`,
+    `_render_news_relevance_body`).
     """
     lines: list[str] = []
 
@@ -313,25 +355,78 @@ def _render_trend_analysis_body(analysis: AnalysisResult) -> list[str]:
     return lines
 
 
+def _render_news_relevance_body(analysis: AnalysisResult) -> list[str]:
+    """Construye las líneas de la sección "Noticias recientes relevantes".
+
+    Orden: hallazgos → lista de noticias relevantes (omitida si no hay
+    ninguna) → limitaciones → procedencia de IA (centinela). A diferencia
+    de `_render_analysis_body`, `supporting_metrics` no se vuelca como
+    lista plana: la clave `relevant_news` (una lista de dicts, no un
+    escalar ni un mapeo por periodo) se vuelca como una lista Markdown,
+    un ítem por noticia, ver "Sección 'Noticias recientes relevantes'"
+    en el docstring del módulo.
+    """
+    lines: list[str] = []
+
+    for finding in analysis.findings:
+        lines.append(finding)
+    lines.append("")
+
+    relevant_news: list[dict[str, Any]] = analysis.supporting_metrics.get(
+        "relevant_news", []
+    )
+
+    if relevant_news:
+        for item in relevant_news:
+            title = item.get("title", "")
+            source = item.get("source", "")
+            published_at = item.get("published_at", "")
+            summary = item.get("summary", "")
+            url = item.get("url", "")
+            lines.append(
+                f"- **{title}** ({source}, {published_at}): {summary} "
+                f"([Leer más]({url}))"
+            )
+        lines.append("")
+
+    if analysis.limitations:
+        lines.append("**Limitaciones:**")
+        lines.append("")
+        for limitation in analysis.limitations:
+            lines.append(f"- {limitation}")
+        lines.append("")
+
+    provenance = analysis.provenance
+    lines.append(
+        f"**Generado por:** {provenance.ai_provider} ({provenance.ai_model}) "
+        f"el {provenance.generated_at.isoformat()}"
+    )
+    lines.append("")
+
+    return lines
+
+
 def render_markdown(result: ResearchResult) -> str:
     """Renderiza un `ResearchResult` como reporte Markdown.
 
     Construye el encabezado (identidad de la empresa investigada y fecha
-    de ensamblado) y las secciones "Salud financiera", "Valoración" y
-    "Evolución de ingresos y beneficios", conforme al orden fijado en
+    de ensamblado) y las secciones "Salud financiera", "Valoración",
+    "Evolución de ingresos y beneficios" y "Noticias recientes
+    relevantes", conforme al orden fijado en
     `investmentops/reports/REPORT_SECTIONS.md` (las dos primeras) y a la
     ubicación ya usada por `investmentops.core.orchestrator.investigate`
-    para el resultado del motor de tendencia (agregado después de
-    valoración en `ResearchResult.analysis_results`).
+    para los resultados de los motores de tendencia y noticias
+    relevantes (agregados después de valoración, en ese orden, en
+    `ResearchResult.analysis_results`).
 
-    Las tres secciones ya vuelcan su contenido completo cuando el
+    Las cuatro secciones ya vuelcan su contenido completo cuando el
     `AnalysisResult` correspondiente está presente. "Salud financiera" y
     "Valoración" vuelcan hallazgos, métricas de soporte (lista plana),
     limitaciones y procedencia de la interpretación de IA. "Evolución de
     ingresos y beneficios" vuelca hallazgos, una tabla de variación
-    periodo a periodo (en vez de la lista plana, ver
-    `_render_trend_analysis_body` y `TREND_PRESENTATION.md`),
-    limitaciones y procedencia (centinela, `ai_provider="none"`).
+    periodo a periodo, limitaciones y procedencia (centinela). "Noticias
+    recientes relevantes" vuelca hallazgos, una lista de noticias
+    relevantes (una por ítem), limitaciones y procedencia (centinela).
     Todavía no se incluye la sección condicional de "Fallos parciales"
     (tarea separada, fuera del alcance definido para "Generador
     Markdown" en `TASKS.md`; ya cubierta en texto plano de consola por
@@ -383,6 +478,12 @@ def render_markdown(result: ResearchResult) -> str:
     trend_analysis_result = _find_analysis(result, TREND_ANALYSIS_AGENT_ID)
     if trend_analysis_result is not None:
         lines.extend(_render_trend_analysis_body(trend_analysis_result))
+
+    lines.append("## Noticias recientes relevantes")
+    lines.append("")
+    news_relevance_result = _find_analysis(result, NEWS_RELEVANCE_AGENT_ID)
+    if news_relevance_result is not None:
+        lines.extend(_render_news_relevance_body(news_relevance_result))
 
     return "\n".join(lines).rstrip("\n") + "\n"
 
