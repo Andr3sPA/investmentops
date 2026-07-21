@@ -4,53 +4,56 @@
 
 ## Última tarea completada
 
-Fase 4, "Motor de análisis: noticias relevantes" → "Implementar un
-resumen breve por noticia relevante (o selección del resumen ya
-provisto por la fuente)" (TASKS.md).
+Fase 2, "Modelo de reporte" → "(Opcional) Escribir el archivo de prompt
+del agente de reporte y definir su alcance: solo redacción a partir de
+los resultados ya existentes, sin nuevos hallazgos ni veredictos"
+(TASKS.md).
 
 ### Qué se implementó
 
-`select_news_summary` en `investmentops/analysis_engines/news_relevance.py`
-(mismo módulo que `filter_relevant_news`, ya implementado en la tarea
-anterior). Selecciona el resumen ya provisto por la fuente
-(`News.summary`), sin generar uno nuevo vía IA:
+`prompts/report.md` (nuevo), siguiendo la misma convención ya usada por
+`prompts/financial_health.md` y `prompts/valuation.md` (ver
+`prompts/README.md`): un archivo de prompt en Markdown, fuera del código
+Python, con instrucciones para un futuro agente de reporte cuya única
+función es **redactar** (no analizar) a partir del `ResearchResult` ya
+ensamblado.
 
-- **Sin truncar si ya cabe:** si `News.summary` ya tiene una longitud
-  menor o igual a `max_length` (por defecto
-  `DEFAULT_SUMMARY_MAX_LENGTH = 280`, parámetro explícito, no una clave
-  nueva de `config.local.toml`, mismo criterio ya aplicado a
-  `DEFAULT_MAX_AGE`/`DEFAULT_RELEVANCE_WINDOW_DAYS`), se devuelve tal
-  cual.
-- **Truncado en límite de palabra:** si excede `max_length`, se recorta
-  en el último espacio antes del límite y se agrega `"..."`, para no
-  cortar una palabra a la mitad.
-- **Truncado duro como respaldo:** si no hay ningún espacio antes del
-  límite (una sola palabra muy larga), se recorta exactamente en
-  `max_length` y se agrega `"..."`.
-- **Resumen vacío:** se devuelve `""` sin modificar ni lanzar excepción.
+El prompt fija el alcance decidido en `ARCHITECTURE.md` (componente 6,
+"agente de reporte... compone el texto final a partir de los resultados
+estructurados ya producidos... no introduce hallazgos nuevos ni resume
+los resultados en un veredicto de compra/venta"):
+
+- Recibe el `ResearchResult` ya ensamblado (identidad de la empresa,
+  `AnalysisResult` por cada análisis completado — hallazgos, métricas de
+  soporte, limitaciones, procedencia — y cualquier `ResearchFailure`
+  parcial).
+- Redacta un texto continuo, integrando hallazgos y limitaciones ya
+  declaradas, sin agregar cifras ni interpretaciones nuevas.
+- Prohíbe explícitamente fusionar los distintos análisis en una única
+  conclusión/puntuación agregada (mismo principio de `GOALS.md`:
+  presentar lecturas como opiniones contrastables, no como una única
+  verdad) y cualquier recomendación de compra/venta o veredicto de
+  inversión.
 
 ### Decisión de implementación
 
-El paréntesis de la propia tarea en `TASKS.md` ("o selección del resumen
-ya provisto por la fuente") ya fija el criterio: no se invoca ningún
-proveedor de IA para generar un resumen nuevo. Esto es consistente con
-el motor de tendencias de la Fase 3
-(`investmentops.analysis_engines.trends`), que tampoco usa IA porque
-`TASKS.md` no define para estos motores ninguna tarea explícita de
-"escribir prompt"/"invocar proveedor de IA", a diferencia de salud
-financiera y valoración (Fase 1).
+Esta tarea es explícitamente opcional y de alcance limitado a "escribir
+el archivo de prompt... y definir su alcance": no se implementó ningún
+código que invoque este prompt (ni una función `invoke_report_agent`, ni
+su parseo a un resultado estructurado, ni su conexión con
+`generate_reports`/`render_markdown`/`render_html`). Esa implementación,
+si se decide hacer en el futuro, sería una tarea nueva y explícita, no
+anticipada aquí (mismo criterio de "no sobre-diseñar antes de tener el
+caso de uso real" ya aplicado en el resto del proyecto).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_analysis_engines_news_summary.py`
+- `prompts/report.md`
 
 Modificados:
-- `investmentops/analysis_engines/news_relevance.py` (se agregó
-  `select_news_summary`/`DEFAULT_SUMMARY_MAX_LENGTH`, sin modificar
-  `filter_relevant_news`/`DEFAULT_RELEVANCE_WINDOW_DAYS`, ya
-  implementadas)
-- `TASKS.md` (una línea: tarea de resumen breve marcada como completada)
+- `TASKS.md` (una línea: tarea de prompt del agente de reporte marcada
+  como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
