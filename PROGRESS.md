@@ -4,69 +4,54 @@
 
 ## Última tarea completada
 
-Fase 3, "Reportes" → "Añadir la misma sección [Evolución de ingresos y
-beneficios] a la plantilla HTML, conforme al formato ya decidido."
-(TASKS.md).
+Fase 4, "Fuente de datos de noticias" → "Elegir el proveedor de noticias
+a usar para el MVP." (TASKS.md).
 
 ### Qué se implementó
 
-Modificado `investmentops/reports/html.py`:
+Tarea de decisión/documentación, no de código (mismo tipo de tarea ya
+resuelta en `HISTORICAL_DATA.md`, Fase 3, y en la elección de FMP como
+proveedor fundamental en Fase 1).
 
-- `TREND_ANALYSIS_AGENT_ID = "trend_analysis"`: nuevo identificador,
-  mismo criterio ya usado por `FINANCIAL_HEALTH_AGENT_ID`/
-  `VALUATION_AGENT_ID` en este módulo (no se importa desde
-  `investmentops.analysis_engines.trends`, consistente con la
-  independencia entre generadores ya documentada).
-- `_find_analysis` (ya genérica) se reutiliza sin cambios para localizar
-  `analysis_id="trend_analysis"`.
-- `_format_growth_percentage_html`: equivalente HTML de
-  `_format_growth_percentage` (Markdown), misma lógica de formateo con
-  signo y `"—"` para `None`.
-- `_render_trend_analysis_body_html` (nueva, separada de
-  `_render_analysis_body_html` por la misma razón que en Markdown):
-  vuelca hallazgos → tabla `<table>` (combinando
-  `revenue_growth_by_period`/`net_income_growth_by_period`, omitida si
-  ambos mapeos están vacíos) → limitaciones → procedencia. No repite
-  `revenue_trend`/`net_income_trend` como lista `<ul>`.
-- `render_html`: agrega `<h2>Evolución de ingresos y beneficios</h2>`
-  después de `<h2>Valoración</h2>`, mismo comportamiento de encabezado
-  vacío cuando el motor no completó su análisis.
+Nuevo archivo `investmentops/data_providers/NEWS_PROVIDER.md`:
 
-### Ajuste a una prueba ya existente
+- Evalúa cinco opciones: FMP (`/v3/stock_news`), NewsAPI.org, Finnhub
+  (`/company-news`), Alpha Vantage (`NEWS_SENTIMENT`) y Marketaux.
+- **Decisión: reutilizar FMP**, el proveedor ya integrado desde la Fase
+  1 (`FMPFundamentalsProvider`), vía su endpoint `/v3/stock_news`. Se
+  descarta sumar un proveedor externo nuevo por: (1) ya está integrado y
+  ya tiene credenciales gestionadas vía `config.local.toml`; (2) el
+  endpoint ya devuelve los campos que exige el modelo "Noticias" de
+  `ARCHITECTURE.md` (fecha, fuente, resumen) sin inventar datos; (3) no
+  suma ninguna dependencia nueva (mismo cliente `requests` ya usado);
+  (4) a diferencia de Alpha Vantage, no impone un análisis de sentimiento
+  ya calculado por un tercero, dejando la interpretación a los propios
+  motores de análisis del sistema.
+- Deja documentado que la implementación siguiente deberá usar una
+  sección de configuración **nueva y separada**,
+  `[data_providers.news]`, sin acoplarla a
+  `[data_providers.fundamentals]` aunque ambas apunten hoy al mismo
+  proveedor externo.
 
-`test_reports_html.py`,
-`test_render_keeps_empty_valuation_section_when_agent_absent` asumía que
-"Valoración" era la última sección del reporte (tomaba todo el texto
-restante hasta `</body>`). Se acotó entre `"<h2>Valoración</h2>"` y
-`"<h2>Evolución de ingresos y beneficios</h2>"`, mismo ajuste ya aplicado
-a `test_reports_markdown.py` en la tarea anterior.
-
-### Pruebas nuevas
-
-`investmentops/tests/test_reports_html_trend.py` (nuevo): mismo conjunto
-de casos ya cubierto en `test_reports_markdown_trend.py`, adaptado al
-marcado HTML (encabezado vacío, ubicación después de "Valoración",
-hallazgos, tabla `<table>` con filas/porcentajes con signo, celda `"—"`,
-omisión completa de la tabla, no duplicación de tendencia agregada como
-lista, limitaciones, procedencia centinela).
+No se tocó ningún código (`investmentops/data_providers/fundamentals.py`
+no se modificó): esta tarea es puramente de decisión, la implementación
+del cliente concreto es la tarea siguiente de la misma sección.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_reports_html_trend.py`
+- `investmentops/data_providers/NEWS_PROVIDER.md`
 
 Modificados:
-- `investmentops/reports/html.py`
-- `investmentops/tests/test_reports_html.py`
 - `TASKS.md` (tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
-No modificados: `investmentops/reports/markdown.py`, ningún motor de
-análisis ni el orquestador.
+No modificados: ningún archivo de código Python.
 
 ## Próxima tarea recomendada
 
-Fase 4 — "Analizar noticias recientes" → "Fuente de datos de noticias" →
-"Elegir el proveedor de noticias a usar para el MVP" (primera tarea
-pendiente de la siguiente fase, ya que la Fase 3 queda completa con esta
-tarea).
+Fase 4, "Fuente de datos de noticias" → "Implementar el contrato de
+'data provider' para noticias (ticker/nombre de empresa in, lista de
+eventos crudos out)", sobre la decisión ya tomada en
+`investmentops/data_providers/NEWS_PROVIDER.md` (FMP, endpoint
+`/v3/stock_news`).

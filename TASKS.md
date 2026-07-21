@@ -165,7 +165,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 4 — Analizar noticias recientes
 
 ### Fuente de datos de noticias
-- [ ] Elegir el proveedor de noticias a usar para el MVP.
+- [x] Elegir el proveedor de noticias a usar para el MVP. — `investmentops/data_providers/NEWS_PROVIDER.md` (nuevo, ver PROGRESS.md). Decisión: reutilizar **Financial Modeling Prep (FMP)**, el mismo proveedor ya integrado desde la Fase 1, vía su endpoint `/v3/stock_news` (símbolo, fecha de publicación, título, texto, fuente y URL), en vez de sumar un proveedor externo nuevo (NewsAPI.org, Finnhub, Alpha Vantage, Marketaux, evaluados y descartados). Se decide usar una sección de configuración nueva y separada, `[data_providers.news]`, sin acoplarla a `[data_providers.fundamentals]` aunque hoy compartan el mismo proveedor externo.
 - [ ] Implementar el contrato de "data provider" para noticias (ticker/nombre de empresa in, lista de eventos crudos out).
 - [ ] Adjuntar metadatos de procedencia (fuente, fecha de publicación, fecha de consulta) a cada noticia cruda.
 - [ ] Implementar manejo de error si el proveedor de noticias falla o no devuelve resultados.
