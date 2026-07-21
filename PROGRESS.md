@@ -4,71 +4,64 @@
 
 ## Última tarea completada
 
-Fase 4, "Normalización" → "Implementar el guardado de noticias
-normalizadas en la caché local tras cada consulta" (TASKS.md).
+Fase 4, "Motor de análisis: noticias relevantes" → "Definir el criterio
+básico de relevancia/filtrado de noticias para el MVP (ej. ventana de
+tiempo reciente)" (TASKS.md).
 
-### Qué se implementó
+### Nota previa: tarea de caché ya satisfecha, sin código nuevo
 
-`save_news`/`load_news` en `investmentops/data_layer/cache.py` (mismo
-módulo que ya aloja el guardado/lectura de `financial_statement`,
-`market_data` y `financial_statement_series`).
+Antes de esta tarea, se verificó "Implementar la lectura de noticias
+normalizadas desde caché..." (Fase 4, "Normalización"): ya estaba
+satisfecha por `load_news` (`investmentops/data_layer/cache.py`),
+implementada en la tarea anterior junto con `save_news`, mismo criterio
+ya aplicado en Fase 3 a la serie histórica (`save_financial_statement_series`/
+`load_financial_statement_series`, también implementadas en conjunto).
+Se marcó como completada en `TASKS.md` sin duplicar código.
 
-Siguen exactamente el mismo patrón ya usado por
-`save_financial_statement_series`/`load_financial_statement_series`
-(Fase 3), aplicado a `News` en vez de a la serie de estados financieros:
+### Qué se implementó (esta tarea)
 
-- **Sección nueva:** `"news"`, en el mismo archivo `<TICKER>.json`, junto
-  a las tres secciones ya existentes. Guardar/leer noticias no toca
-  ninguna otra sección (misma fusión ya usada en el resto del módulo).
-- **Forma de la sección:** `{"items": [...], "cached_at": ...}`, donde
-  cada elemento de `"items"` serializa los cinco campos de `News`
-  (`title`, `summary`, `source`, `published_at` en ISO 8601, `url`).
-  No se reutiliza `_save_section`/`dataclasses.asdict` directamente por
-  la misma razón que la serie histórica: `News.published_at` es un
-  `datetime`, y `News` se guarda como una lista, no como un único
-  dataclass plano.
-- **Lista vacía como valor válido:** una empresa sin noticias recientes
-  (`payload == []`, ver `investmentops.data_providers.news`, "'No
-  devuelve resultados' NO es un error") se guarda y se lee tal cual
-  (`[]`), distinguiéndose explícitamente de `None` (nada cacheado, o
-  cacheado pero vencido) — quien invoque `load_news` no debe confundir
-  "ya sé que no hay noticias" con "todavía no sé si hay noticias".
-- **Manejo de fallos:** mismo criterio que las demás secciones
-  (`CacheError` ante ticker vacío, fallos de E/S, sección corrupta o
-  incompleta — un elemento de `"items"` sin algún campo imprescindible,
-  o con `published_at` no interpretable).
+`investmentops/analysis_engines/NEWS_RELEVANCE.md` (nuevo). Tarea de
+diseño/documentación, sin código: decide qué hace que una noticia se
+considere "relevante" para el MVP, a partir de los campos disponibles en
+`News` (`investmentops/data_layer/news.py`): `title`, `summary`,
+`source`, `published_at`, `url`.
 
-Reutiliza sin duplicar `_resolve_cache_dir`, `_ticker_file`,
-`_read_existing` y `_load_section`, ya existentes en el módulo.
+Decisión: **ventana de tiempo reciente**, sin filtrado temático,
+de sentimiento ni deduplicación:
 
-Nuevo archivo de pruebas
-`investmentops/tests/test_data_layer_cache_news.py`, siguiendo el mismo
-patrón de `test_data_layer_cache_series.py`, incluyendo pruebas de
-no-ruptura del roundtrip ya existente de `financial_statement`.
+- Una noticia es relevante si `published_at` cae dentro de los últimos
+  **N días** (por defecto 7) respecto al momento del filtrado (no
+  respecto a `queried_at`, para que una noticia cacheada y reutilizada
+  días después se evalúe contra el momento real del análisis).
+- `N` es un parámetro configurable de la función que implemente el
+  filtrado (tarea siguiente), no un valor fijo en `config.local.toml`,
+  mismo criterio de no sobre-diseñar ya aplicado a `DEFAULT_MAX_AGE` en
+  `investmentops/data_layer/cache.py`.
+- Se descarta explícitamente cualquier filtrado por contenido,
+  sentimiento o fuente: el modelo de dominio `News` no expone ninguna
+  señal de ese tipo, y `NEWS_PROVIDER.md` ya decidió no depender de
+  interpretación de terceros (ver "Sin análisis de sentimiento de
+  terceros"). Aproximar esa señal con heurísticas no validadas violaría
+  el principio ya aplicado en el resto del proyecto (`FINANCIAL_HEALTH_METRICS.md`,
+  `VALUATION_METRICS.md`: no inventar datos que no existen).
+- Documenta el manejo de casos degenerados: ninguna noticia dentro de la
+  ventana (limitación explícita, no error) y lista de entrada vacía
+  (mismo resultado, ya no es un error desde `investmentops/data_providers/news.py`).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_layer_cache_news.py`
+- `investmentops/analysis_engines/NEWS_RELEVANCE.md`
 
 Modificados:
-- `investmentops/data_layer/cache.py` (nuevas funciones `save_news`/
-  `load_news`, nueva constante `_NEWS_SECTION`, import de `News`,
-  ampliación del docstring del módulo; sin cambios en las funciones ya
-  existentes)
-- `TASKS.md` (tarea marcada como completada)
+- `TASKS.md` (dos líneas: la tarea de lectura desde caché marcada como
+  ya satisfecha, y esta tarea de criterio de relevancia marcada como
+  completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 4, "Normalización" → "Implementar la lectura de noticias
-normalizadas desde caché para evitar una nueva llamada al proveedor si
-el dato ya existe y es reciente" — nota: `load_news` ya quedó
-implementada en esta misma tarea (junto con `save_news`, siguiendo el
-mismo criterio ya aplicado en Fase 3 a
-`save_financial_statement_series`/`load_financial_statement_series`, que
-también se implementaron en conjunto). La próxima conversación debería
-verificar esto primero y, si se confirma que ya está satisfecha, marcarla
-como completada sin duplicar código, dejando como siguiente tarea real
-"Definir el criterio básico de relevancia/filtrado de noticias para el
-MVP" (Fase 4, "Motor de análisis: noticias relevantes").
+Fase 4, "Motor de análisis: noticias relevantes" → "Implementar el
+filtrado de noticias según ese criterio" (aplicar la ventana de N días ya
+decidida en `NEWS_RELEVANCE.md` sobre una lista de `News`, devolviendo
+las que caen dentro de la ventana).
