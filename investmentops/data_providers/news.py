@@ -1,8 +1,10 @@
 """Cliente mínimo de Financial Modeling Prep (FMP) — datos de noticias.
 
-Cubre la tarea "Implementar el contrato de 'data provider' para noticias
-(ticker/nombre de empresa in, lista de eventos crudos out)" (TASKS.md,
-Fase 4, "Fuente de datos de noticias"), sobre la decisión ya tomada en
+Cubre las tareas "Implementar el contrato de 'data provider' para noticias
+(ticker/nombre de empresa in, lista de eventos crudos out)" y "Adjuntar
+metadatos de procedencia (fuente, fecha de publicación, fecha de consulta)
+a cada noticia cruda" (TASKS.md, Fase 4, "Fuente de datos de noticias"),
+sobre la decisión ya tomada en
 `investmentops/data_providers/NEWS_PROVIDER.md`: reutilizar **FMP**, el
 mismo proveedor externo ya integrado desde la Fase 1
 (`investmentops/data_providers/fundamentals.py`), vía su endpoint
@@ -17,49 +19,47 @@ separada (ver TASKS.md, Fase 4, "Normalización").
 
 ## Alcance de esta tarea
 
-Cubre únicamente el **contrato**: ticker/nombre de empresa como entrada,
-lista de eventos crudos (tal como los devuelve FMP, sin modificar) como
-salida, con los metadatos de procedencia ya exigidos por
-`RawProviderData` (fuente, fecha/hora de consulta, confiabilidad) a nivel
-de toda la respuesta. Dos piezas quedan explícitamente para tareas
-separadas y posteriores de la misma sección de `TASKS.md`:
+Cubre el **contrato** (ticker/nombre de empresa como entrada, lista de
+eventos crudos como salida, con metadatos de procedencia a nivel de toda
+la respuesta) y, desde esta tarea, la **procedencia por cada noticia
+individual**.
 
-- **Metadatos de procedencia por cada noticia cruda** (fecha de
-  publicación, además de fuente/fecha de consulta ya presentes a nivel
-  de respuesta): tarea siguiente ("Adjuntar metadatos de procedencia...
-  a cada noticia cruda"), análoga a `_attach_point_provenance` en
-  `fundamentals.py` para la serie histórica.
-- **Manejo de error si el proveedor no devuelve resultados** (ej. una
-  empresa sin noticias recientes): tarea siguiente y separada
-  ("Implementar manejo de error si el proveedor de noticias falla o no
-  devuelve resultados"). Por ahora, una lista vacía es una respuesta
-  válida (una empresa puede legítimamente no tener noticias recientes),
-  no un error — a diferencia de `FMPFundamentalsProvider.fetch`, donde
-  una respuesta vacía en todos los endpoints sí distingue "ticker no
-  existe". Esta tarea sí traduce fallos de red, autenticación, HTTP y
-  formato a `DataProviderError`, porque eso es lo mínimo exigido por el
-  contrato `DataProvider` para no dejar escapar excepciones específicas
-  de `requests` sin traducir (ver `investmentops/data_providers/contracts.py`).
+### Procedencia por noticia (esta tarea)
 
-## Configuración
+`RawProviderData.metadata` (un único `ProviderMetadata` para toda la
+respuesta) ya identifica de dónde y cuándo se obtuvo la consulta
+completa. Esta tarea hace esa procedencia explícita en cada elemento del
+`payload`, mismo criterio ya aplicado por `_attach_point_provenance` en
+`investmentops/data_providers/fundamentals.py` para la serie histórica
+de estados financieros:
 
-Lee sus credenciales desde una sección **nueva y separada**,
-`[data_providers.news]` (ver `NEWS_PROVIDER.md`, "Configuración"), no
-desde `[data_providers.fundamentals]`, aunque ambas secciones apunten
-hoy al mismo proveedor externo (FMP). `ProviderMetadata.source` se
-identifica igualmente como ``"fmp"`` (el proveedor externo real, mismo
-identificador ya usado por `FMPFundamentalsProvider`): lo que cambia
-entre ambos clientes es la sección de configuración que cada uno lee,
-no el nombre de la fuente.
+- **`source`**: el mismo valor que `RawProviderData.metadata.source`
+  (``"fmp"``).
+- **`queried_at`**: el mismo valor que
+  `RawProviderData.metadata.queried_at`, serializado a ISO 8601 (texto),
+  consistente con el resto del proyecto.
+- **Fecha de publicación**: ya viene incluida en cada noticia cruda
+  como ``"publishedDate"``, tal como la entrega FMP — no hay que
+  agregarla, solo conservarla (no se modifica ese campo).
+
+`_attach_news_provenance` construye copias nuevas de cada dict (no muta
+las respuestas originales de `response.json()`), igual criterio que
+`_attach_point_provenance`.
+
+## Qué queda fuera de alcance (tarea siguiente y separada)
+
+- **Manejo de error si el proveedor no devuelve resultados**: una lista
+  vacía sigue siendo una respuesta válida (una empresa puede
+  legítimamente no tener noticias recientes), no un error — eso es la
+  tarea siguiente de esta misma sección ("Implementar manejo de error si
+  el proveedor de noticias falla o no devuelve resultados").
 
 Fuera de alcance de este módulo:
-- La transformación del payload crudo (lista de dicts de FMP) al modelo
-  de dominio "Noticias" normalizado: tarea separada y posterior (ver
-  TASKS.md, Fase 4, "Normalización").
+- La transformación del payload crudo (lista de dicts de FMP, ya con
+  procedencia por punto) al modelo de dominio "Noticias" normalizado:
+  tarea separada y posterior (ver TASKS.md, Fase 4, "Normalización").
 - El cacheo de resultados: tarea separada y posterior de la misma
   sección ("Normalización").
-- Adjuntar procedencia por cada noticia individual y decidir cómo tratar
-  una lista de resultados vacía: ver "Alcance de esta tarea" arriba.
 """
 
 from __future__ import annotations
@@ -86,6 +86,47 @@ NEWS_ENDPOINT = "/stock_news"
 #: endpoint (mismo patrón ya usado para `period`/`limit` en
 #: `FMPFundamentalsProvider.fetch_historical`).
 DEFAULT_LIMIT = 50
+
+
+def _attach_news_provenance(
+    items: list[dict[str, Any]], metadata: ProviderMetadata
+) -> list[dict[str, Any]]:
+    """Adjunta procedencia (`source`, `queried_at`) a cada noticia cruda.
+
+    Construye una lista nueva de dicts (no muta `items`), agregando a
+    cada elemento las claves `"source"` (`metadata.source`) y
+    `"queried_at"` (`metadata.queried_at`, en formato ISO 8601), de forma
+    que cada noticia individual quede trazable hasta su fuente sin
+    depender únicamente del `ProviderMetadata` de nivel superior en
+    `RawProviderData`. Mismo criterio ya aplicado por
+    `_attach_point_provenance` en
+    `investmentops.data_providers.fundamentals` para la serie histórica
+    de estados financieros.
+
+    La fecha de publicación de cada noticia (``"publishedDate"``, tal
+    como la entrega FMP) no se toca: ya viene incluida en cada elemento
+    original.
+
+    Parameters
+    ----------
+    items:
+        Lista de dicts crudos (una noticia por elemento), tal como los
+        devuelve el endpoint `/stock_news` de FMP.
+    metadata:
+        La procedencia de la consulta que obtuvo `items` (mismo
+        `ProviderMetadata` que se adjunta a nivel de todo el
+        `RawProviderData`).
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Una copia de `items`, con `"source"`/`"queried_at"` agregados a
+        cada elemento.
+    """
+    return [
+        {**item, "source": metadata.source, "queried_at": metadata.queried_at.isoformat()}
+        for item in items
+    ]
 
 
 class FMPNewsProvider:
@@ -156,8 +197,10 @@ class FMPNewsProvider:
 
         Consulta el endpoint `/stock_news` de FMP filtrando por `ticker`,
         y devuelve la lista de eventos crudos tal como la entrega FMP
-        (sin transformar ni seleccionar campos), junto con los metadatos
-        de procedencia de esta consulta.
+        (sin transformar ni seleccionar campos), con `"source"` y
+        `"queried_at"` adjuntados a cada elemento (ver
+        `_attach_news_provenance`), junto con los metadatos de
+        procedencia de esta consulta a nivel de toda la respuesta.
 
         Parameters
         ----------
@@ -171,10 +214,12 @@ class FMPNewsProvider:
         RawProviderData
             `payload` es la lista cruda de noticias devuelta por FMP (uno
             o más dicts con campos como ``symbol``, ``publishedDate``,
-            ``title``, ``text``, ``site``, ``url``), sin modificar. Una
-            lista vacía es una respuesta válida (la empresa no tiene
-            noticias recientes según FMP), no un error — ver "Alcance de
-            esta tarea" en el docstring del módulo.
+            ``title``, ``text``, ``site``, ``url``, más ``"source"`` y
+            ``"queried_at"`` adjuntados por esta tarea), sin modificar
+            los campos originales. Una lista vacía es una respuesta
+            válida (la empresa no tiene noticias recientes según FMP), no
+            un error — ver "Qué queda fuera de alcance" en el docstring
+            del módulo.
 
         Raises
         ------
@@ -211,7 +256,7 @@ class FMPNewsProvider:
                 "sin permisos para este recurso)."
             )
         if response.status_code == 404:
-            payload: Any = []
+            raw_items: list[dict[str, Any]] = []
         elif response.status_code >= 400:
             raise DataProviderError(
                 f"FMP respondió con un error ({response.status_code}) al "
@@ -219,7 +264,7 @@ class FMPNewsProvider:
             )
         else:
             try:
-                payload = response.json()
+                raw_items = response.json()
             except ValueError as exc:
                 raise DataProviderError(
                     "FMP devolvió una respuesta que no se pudo interpretar "
@@ -232,5 +277,7 @@ class FMPNewsProvider:
             queried_at=datetime.now(timezone.utc),
             reliability="alta",
         )
+
+        payload = _attach_news_provenance(raw_items or [], metadata)
 
         return RawProviderData(ticker=ticker, payload=payload, metadata=metadata)
