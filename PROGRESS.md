@@ -4,53 +4,60 @@
 
 ## Última tarea completada
 
-Fase 5, "Normalización" → "Definir el modelo de dominio 'Comparables'
-(conjunto de empresas pares y sus métricas equivalentes)" (TASKS.md).
+Fase 5, "Normalización" → "Implementar la transformación de los datos
+crudos de comparables al modelo normalizado" (TASKS.md).
 
 ### Qué se implementó
 
-`Comparables`/`PeerComparable` en `investmentops/data_layer/comparables.py`
-(nuevo). Tarea de definición de estructura, siguiendo el mismo patrón ya
-usado por `FinancialStatementSeries` (Fase 3) y `News` (Fase 4): un
-archivo `.py` con el/los `dataclass(frozen=True)` correspondientes y un
-docstring extenso documentando la decisión, en vez de solo un `.md` de
-diseño.
+`comparables_from_raw` en `investmentops/data_layer/normalization.py`
+(nueva función, mismo módulo ya usado por
+`financial_statement_from_raw`/`market_data_from_raw`/
+`financial_statement_series_from_raw`/`news_from_raw`).
 
-Decisión de diseño: en vez de introducir campos nuevos, `Comparables`
-reutiliza `FinancialStatement`/`MarketData` (ya normalizados desde la
-Fase 1) como las cifras de cada empresa par, agrupadas en un tipo
-intermedio `PeerComparable` (`ticker`, `financial_statement`,
-`market_data`). `Comparables` es el contenedor simple `{ticker, peers:
-Sequence[PeerComparable]}`, donde `ticker` identifica a la empresa
-investigada y `peers` preserva el orden en que el proveedor de
-comparables entregó los pares (sin reordenar ni filtrar, mismo criterio
-ya fijado en `investmentops/data_providers/COMPARABLES_PROVIDER.md`).
-Una lista de pares vacía es un caso válido (empresa sin comparables según
-el proveedor).
+A diferencia de las demás transformaciones de este módulo, el payload
+crudo que entrega `FMPComparablesProvider.fetch` solo trae los tickers
+de las empresas pares (`payload[0]["peersList"]`), no sus cifras
+financieras. Esas cifras ya se obtienen y normalizan reutilizando
+`fetch_and_normalize` por cada par (ver
+`investmentops.core.orchestrator.fetch_peer_key_metrics`, tarea anterior
+de esta misma fase). Por eso `comparables_from_raw` recibe, además del
+`RawProviderData` de comparables, un segundo parámetro `peer_data`: un
+mapeo `{ticker: (FinancialStatement, MarketData)}` con las cifras ya
+normalizadas de cada par, que aporta quien invoque esta función.
 
-Se documentó explícitamente la relación con
-`investmentops.core.orchestrator.PeerMetrics` (ya existente desde la
-tarea anterior de esta misma fase, "Implementar la consulta de métricas
-clave... para cada empresa par"): tiene la misma forma que
-`PeerComparable`, pero vive en una capa distinta (composición *on-the-fly*
-del orquestador, no modelo de dominio de `data_layer`). Esta tarea no
-modificó `investmentops/core/orchestrator.py` ni `PeerMetrics`: decidir
-si `fetch_peer_key_metrics` pasa a construir/devolver este nuevo modelo
-de dominio es una decisión de la tarea siguiente ("Implementar la
-transformación de los datos crudos de comparables al modelo
-normalizado"), no de esta.
+Decisión clave: la función **no** importa nada de
+`investmentops.core` (en particular, no depende de
+`investmentops.core.orchestrator.PeerMetrics`), para no invertir la
+regla de dependencia de `ARCHITECTURE.md` (`core` depende de
+`data_layer`, no al revés). `peer_data` se tipa únicamente con los
+modelos de dominio ya existentes (`FinancialStatement`, `MarketData`).
 
-No se propaga `queried_at` por par (metadato de la consulta, no del
-dato), mismo criterio ya aplicado por `FinancialStatementSeries`/`News`.
+Comportamiento:
+- Los tickers pares se extraen de `raw.payload[0]["peersList"]`,
+  preservando su orden (mismo criterio ya usado por
+  `fetch_peer_tickers`).
+- Por cada ticker par, se busca su entrada en `peer_data`; si falta, se
+  señala `NormalizationError` identificando el ticker afectado, en vez
+  de omitirlo en silencio o inventar cifras.
+- Un payload vacío o sin `"peersList"` produce un `Comparables` con
+  `peers=[]`, sin error (empresa sin pares según el proveedor, caso ya
+  válido en `FMPComparablesProvider.fetch`).
+- Entradas de `peer_data` que no correspondan a un ticker en
+  `"peersList"` se ignoran.
+
+No se modificó `investmentops/core/orchestrator.py`,
+`fetch_peer_key_metrics` ni `PeerMetrics`: decidir si el orquestador pasa
+a construir/usar `Comparables` (en vez de, o además de, `PeerMetrics`)
+es una decisión de una tarea posterior.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/data_layer/comparables.py`
-- `investmentops/tests/test_data_layer_comparables.py`
+- `investmentops/tests/test_data_layer_normalization_comparables.py`
 
 Modificados:
-- `investmentops/data_layer/__init__.py` (re-exporta `Comparables`,
+- `investmentops/data_layer/normalization.py` (nueva función
+  `comparables_from_raw`, nuevos imports: `Mapping`, `Comparables`,
   `PeerComparable`)
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
   la implementación)
@@ -59,13 +66,11 @@ Modificados:
 ## Próxima tarea recomendada
 
 Fase 5, "Normalización":
-- "Implementar la transformación de los datos crudos de comparables al
-  modelo normalizado." Traduciría el `RawProviderData` que entrega
-  `FMPComparablesProvider.fetch` (o, alternativamente, la composición ya
-  existente vía `fetch_peer_tickers`/`fetch_and_normalize` en el
-  orquestador) al nuevo `Comparables`/`PeerComparable` ya definido en
-  esta tarea, decidiendo en concreto dónde vive esa función
-  (`investmentops.data_layer.normalization`, siguiendo el patrón ya
-  usado por `financial_statement_series_from_raw`/`news_from_raw`) y si
-  reutiliza o reemplaza la composición ya existente en
-  `investmentops.core.orchestrator.fetch_peer_key_metrics`.
+- "Implementar el guardado de comparables normalizados en la caché
+  local tras cada consulta." Seguiría el mismo patrón ya usado por
+  `save_financial_statement_series`/`save_news`
+  (`investmentops/data_layer/cache.py`): una nueva sección
+  `"comparables"` en el mismo archivo `<TICKER>.json`, serializando cada
+  `PeerComparable` de `Comparables.peers` explícitamente (no vía
+  `dataclasses.asdict`, por las mismas razones ya documentadas para la
+  serie histórica y las noticias).

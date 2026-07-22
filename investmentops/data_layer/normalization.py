@@ -1,16 +1,19 @@
 """Transformación de datos crudos de un proveedor a los modelos de dominio
 "Estados financieros normalizados" (FinancialStatement), "Datos de
 mercado" (MarketData), "Serie de estados financieros normalizados"
-(FinancialStatementSeries) y, desde esta tarea, "Noticias" (News).
+(FinancialStatementSeries), "Noticias" (News) y, desde esta tarea,
+"Comparables" (Comparables/PeerComparable).
 
 Cubre las tareas "Implementar la transformación de datos crudos del
 proveedor al modelo 'Estados financieros normalizados'" e "Implementar la
 transformación de datos crudos al modelo 'Datos de mercado'" (TASKS.md,
 Fase 1, "Normalización y almacenamiento"), "Implementar la
 transformación de la respuesta cruda histórica al modelo de series
-temporales" (TASKS.md, Fase 3, "Normalización"), y "Implementar la
+temporales" (TASKS.md, Fase 3, "Normalización"), "Implementar la
 transformación de noticias crudas al modelo normalizado" (TASKS.md, Fase
-4, "Normalización"). Todas viven en el mismo módulo, siguiendo la
+4, "Normalización"), y "Implementar la transformación de los datos
+crudos de comparables al modelo normalizado" (TASKS.md, Fase 5,
+"Normalización"). Todas viven en el mismo módulo, siguiendo la
 recomendación dejada en PROGRESS.md tras implementar la primera: son
 responsabilidades del mismo tipo (traducir el `RawProviderData` que
 entregan los proveedores concretos de `investmentops.data_providers` a un
@@ -62,7 +65,7 @@ ver su propio docstring): esta función no reordena ni valida huecos o
 continuidad entre periodos (alcance explícito de
 `financial_statement_series.py`, no de esta transformación).
 
-## Transformación de noticias crudas (`news_from_raw`, esta tarea)
+## Transformación de noticias crudas (`news_from_raw`)
 
 Traduce el `RawProviderData` que entrega
 `investmentops.data_providers.news.FMPNewsProvider.fetch` (una lista
@@ -106,16 +109,59 @@ identificando en el mensaje qué noticia (por posición) falló, mismo
 criterio ya aplicado por `financial_statement_series_from_raw` para
 identificar qué periodo concreto falla en una serie.
 
+## Transformación de comparables (`comparables_from_raw`, esta tarea)
+
+Traduce el `RawProviderData` que entrega
+`investmentops.data_providers.comparables.FMPComparablesProvider.fetch`
+(una lista con, a lo sumo, un único elemento con `"peersList"`, ver
+`investmentops/data_providers/comparables.py`, "Forma del payload
+crudo") a un `Comparables` (`investmentops.data_layer.comparables`).
+
+A diferencia de las demás transformaciones de este módulo, el payload
+crudo de comparables **no** trae las cifras financieras de cada empresa
+par (`FinancialStatement`/`MarketData`): solo trae sus tickers. Esas
+cifras ya se obtienen y normalizan reutilizando `fetch_and_normalize`
+para cada par (ver `investmentops.core.orchestrator.fetch_peer_key_metrics`,
+Fase 5, tarea anterior de esta misma sección). Por eso
+`comparables_from_raw` recibe, además de `raw`, un segundo parámetro
+`peer_data`: un mapeo `{ticker: (FinancialStatement, MarketData)}` con
+las cifras ya normalizadas de cada par, obtenidas por quien invoque esta
+función (típicamente el orquestador).
+
+Esta función **no** importa nada de `investmentops.core` (en particular,
+no depende de `investmentops.core.orchestrator.PeerMetrics`): hacerlo
+invertiría la regla de dependencia de `ARCHITECTURE.md` (`core` depende
+de `data_layer`, no al revés). `peer_data` se tipa con los mismos
+modelos de dominio ya existentes (`FinancialStatement`, `MarketData`),
+sin acoplarse a ningún tipo de una capa superior.
+
+Mapeo:
+
+- Los tickers pares se extraen de `raw.payload[0]["peersList"]` (misma
+  forma ya conocida y ya usada por
+  `investmentops.core.orchestrator.fetch_peer_tickers`), preservando su
+  orden. `raw.payload` vacío (FMP no encontró pares) produce un
+  `Comparables` con `peers=[]`, sin error — caso válido, mismo criterio
+  ya aplicado por `news_from_raw` para "sin noticias".
+- Por cada ticker par, se busca su entrada en `peer_data`. Si falta (el
+  llamador no obtuvo/normalizó las cifras de ese par), se señala
+  `NormalizationError` identificando el ticker par afectado, en vez de
+  omitirlo en silencio o inventar cifras — mismo criterio ya aplicado en
+  todo este módulo.
+- `Comparables.ticker` se toma de `raw.ticker` (la empresa investigada,
+  no un par), mismo campo que ya expone `RawProviderData`.
+
 Fuera de alcance de este módulo:
 - El cálculo de múltiplos de valoración (P/E, P/B, etc.): responsabilidad
   del agente de análisis de valoración (ver TASKS.md, "Agente de
   análisis: valoración"), no de esta capa. `market_data_from_raw` deja
   `MarketData.multiples` vacío por esta razón.
-- El cacheo/persistencia de los datos normalizados (corte único, serie o
-  noticias): tareas separadas ("Normalización y almacenamiento" en Fase
-  1, "Extender la caché local para persistir series históricas" en Fase
-  3, y "Implementar el guardado de noticias normalizadas en la caché
-  local..." en Fase 4).
+- El cacheo/persistencia de los datos normalizados (corte único, serie,
+  noticias o comparables): tareas separadas ("Normalización y
+  almacenamiento" en Fase 1, "Extender la caché local para persistir
+  series históricas" en Fase 3, "Implementar el guardado de noticias
+  normalizadas..." en Fase 4, y "Implementar el guardado de comparables
+  normalizados..." en Fase 5).
 - Series históricas de `MarketData`: `ARCHITECTURE.md`/`ROADMAP.md`
   centran la Fase 3 explícitamente en ingresos y beneficios, no en
   precio de mercado (ver también
@@ -123,19 +169,26 @@ Fuera de alcance de este módulo:
 - Cualquier filtrado o interpretación de relevancia de las noticias
   normalizadas: responsabilidad del futuro motor de análisis de noticias
   (ver TASKS.md, Fase 4, "Motor de análisis: noticias relevantes").
+- Decidir si `investmentops.core.orchestrator.fetch_peer_key_metrics`
+  pasa a construir/usar `Comparables` (en vez de, o además de,
+  `PeerMetrics`): decisión de una tarea posterior, no de esta.
 - Cualquier proveedor distinto de FMP: este módulo asume la forma
   concreta del `payload` que entregan `FMPFundamentalsProvider.fetch`,
-  `.fetch_historical` y `FMPNewsProvider.fetch` (ver
-  investmentops/data_providers/fundamentals.py y
-  investmentops/data_providers/news.py). Si en el futuro se agrega otro
-  proveedor de datos, su propia transformación es una tarea aparte, sin
-  modificar esta.
+  `.fetch_historical`, `FMPNewsProvider.fetch` y
+  `FMPComparablesProvider.fetch` (ver
+  investmentops/data_providers/fundamentals.py,
+  investmentops/data_providers/news.py y
+  investmentops/data_providers/comparables.py). Si en el futuro se
+  agrega otro proveedor de datos, su propia transformación es una tarea
+  aparte, sin modificar esta.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from typing import Mapping
 
+from investmentops.data_layer.comparables import Comparables, PeerComparable
 from investmentops.data_layer.financial_statement_series import (
     FinancialStatementSeries,
 )
@@ -151,12 +204,13 @@ class NormalizationError(RuntimeError):
     Cubre el caso en que el `payload` crudo no trae los campos
     imprescindibles para construir el modelo normalizado correspondiente
     (ej. falta el estado de resultados, falta la cotización, no incluye
-    la fecha de corte, a una noticia le falta el título, o la
-    fecha/timestamp no tiene un formato reconocible). Se distingue de
-    `DataProviderError` (investmentops.data_providers.contracts) porque
-    el fallo no ocurre al consultar al proveedor -esa consulta ya tuvo
-    éxito, `RawProviderData` ya existe-, sino al traducir su respuesta al
-    modelo de dominio interno.
+    la fecha de corte, a una noticia le falta el título, la fecha/
+    timestamp no tiene un formato reconocible, o faltan las cifras
+    normalizadas de una empresa par al construir `Comparables`). Se
+    distingue de `DataProviderError` (investmentops.data_providers.contracts)
+    porque el fallo no ocurre al consultar al proveedor -esa consulta ya
+    tuvo éxito, `RawProviderData` ya existe-, sino al traducir su
+    respuesta al modelo de dominio interno.
     """
 
 
@@ -535,3 +589,88 @@ def news_from_raw(raw: RawProviderData) -> list[News]:
         )
 
     return news_list
+
+
+def comparables_from_raw(
+    raw: RawProviderData,
+    peer_data: Mapping[str, tuple[FinancialStatement, MarketData]],
+) -> Comparables:
+    """Construye un `Comparables` a partir de datos crudos de comparables de FMP.
+
+    Traduce el `RawProviderData` que entrega
+    `investmentops.data_providers.comparables.FMPComparablesProvider.fetch(ticker)`
+    (`raw.payload` es una lista con, a lo sumo, un único elemento con
+    `"peersList"`) a un `Comparables`/`PeerComparable` (ver
+    `investmentops.data_layer.comparables`).
+
+    A diferencia de las demás funciones de este módulo, el payload crudo
+    de comparables no trae las cifras financieras de cada empresa par:
+    solo trae sus tickers. `peer_data` provee esas cifras, ya obtenidas y
+    normalizadas por quien invoque esta función (típicamente
+    reutilizando `investmentops.core.orchestrator.fetch_and_normalize`
+    para cada ticker par, ver
+    `investmentops.core.orchestrator.fetch_peer_key_metrics`). Esta
+    función no depende de ningún tipo de `investmentops.core` (mantiene
+    la regla de dependencia de `ARCHITECTURE.md`: `data_layer` no conoce
+    `core`).
+
+    Parameters
+    ----------
+    raw:
+        Datos crudos ya obtenidos del proveedor de comparables (ver
+        `investmentops.data_providers.contracts.RawProviderData`),
+        típicamente el resultado de
+        `FMPComparablesProvider.fetch(ticker)`.
+    peer_data:
+        Mapeo `{ticker_par: (FinancialStatement, MarketData)}` con las
+        cifras ya normalizadas de cada empresa par mencionada en
+        `raw.payload[0]["peersList"]`. Solo se consultan los tickers
+        presentes en la lista de pares; entradas adicionales en
+        `peer_data` que no aparezcan ahí se ignoran.
+
+    Returns
+    -------
+    Comparables
+        `ticker=raw.ticker` (la empresa investigada) y `peers` con un
+        `PeerComparable` por cada ticker par, en el mismo orden en que
+        aparecen en `"peersList"`. `peers` es una lista vacía si
+        `raw.payload` está vacío o no trae `"peersList"` (la empresa no
+        tiene pares según el proveedor, ver `FMPComparablesProvider.fetch`,
+        "Una lista vacía es una respuesta válida"), sin lanzar ninguna
+        excepción.
+
+    Raises
+    ------
+    NormalizationError
+        Si algún ticker par de `"peersList"` no tiene una entrada
+        correspondiente en `peer_data` (faltan sus cifras normalizadas),
+        identificando explícitamente qué ticker par falló, en vez de
+        omitirlo en silencio o inventar cifras.
+    """
+    payload = raw.payload or []
+    if not payload:
+        peer_tickers: list[str] = []
+    else:
+        peer_tickers = [str(peer_ticker) for peer_ticker in (payload[0].get("peersList") or [])]
+
+    peers: list[PeerComparable] = []
+
+    for peer_ticker in peer_tickers:
+        data = peer_data.get(peer_ticker)
+        if data is None:
+            raise NormalizationError(
+                "No se puede construir 'Comparables' para "
+                f"'{raw.ticker}': faltan las cifras normalizadas de la "
+                f"empresa par '{peer_ticker}'."
+            )
+
+        peer_financial_statement, peer_market_data = data
+        peers.append(
+            PeerComparable(
+                ticker=peer_ticker,
+                financial_statement=peer_financial_statement,
+                market_data=peer_market_data,
+            )
+        )
+
+    return Comparables(ticker=raw.ticker, peers=peers)
