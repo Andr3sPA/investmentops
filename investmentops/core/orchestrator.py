@@ -436,6 +436,18 @@ Fuera de alcance de este módulo (aún):
 from __future__ import annotations
 # --- Import nuevo, junto a los demás imports de data_providers ---
 
+# --- Import nuevo, junto a los demás imports de data_layer ---
+# --- normalization import block: se agrega comparables_from_raw ---
+
+from investmentops.data_layer.normalization import (
+    NormalizationError,
+    comparables_from_raw,
+    financial_statement_from_raw,
+    financial_statement_series_from_raw,
+    market_data_from_raw,
+    news_from_raw,
+)
+from investmentops.data_layer.comparables import Comparables
 from investmentops.data_providers.comparables import FMPComparablesProvider
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1043,6 +1055,153 @@ def fetch_peer_key_metrics(
         )
 
     return peer_metrics
+
+# --- Nuevo bloque, insertado inmediatamente después de fetch_peer_key_metrics
+#     y antes de _news_relevance_result_to_analysis_result ---
+
+
+def fetch_raw_comparables_data(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPComparablesProvider | None = None,
+) -> RawProviderData:
+    """Consulta al proveedor de comparables (Fase 5) para `ticker`.
+
+    Análoga a `fetch_raw_data` (Fase 1), `fetch_raw_historical_data`
+    (Fase 3) y `fetch_raw_news_data` (Fase 4), aplicada al proveedor de
+    comparables registrado en esta tarea (TASKS.md, Fase 5, "Orquestador
+    y CLI" > "Registrar el nuevo proveedor de comparables sin modificar
+    los proveedores existentes"): el orquestador aprende a invocar
+    `FMPComparablesProvider.fetch(ticker)` sin tocar
+    `FMPFundamentalsProvider`, `FMPNewsProvider` ni ninguna de las
+    funciones ya existentes de este módulo, un cambio puramente aditivo
+    (ver ARCHITECTURE.md, "Extensibilidad sin reescritura").
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a consultar (ej. ``"AAPL"``). Se pasa
+        tal cual al proveedor, que es quien valida/normaliza su formato
+        (ver `FMPComparablesProvider.fetch`).
+    config:
+        Configuración ya cargada, usada para construir el proveedor por
+        defecto si no se indica `provider` explícitamente. Útil para
+        pruebas, para no depender de un `config.local.toml` real en
+        disco. Se ignora si `provider` ya se indica.
+    provider:
+        Proveedor de comparables ya construido a usar en vez del
+        proveedor por defecto. Si no se indica, se construye un
+        `FMPComparablesProvider` (el proveedor ya elegido para
+        comparables, ver `COMPARABLES_PROVIDER.md`).
+
+    Returns
+    -------
+    RawProviderData
+        Los datos crudos de comparables obtenidos (típicamente un único
+        elemento con `"peersList"`, cada uno ya con su propia
+        procedencia), junto con los metadatos de procedencia de la
+        consulta completa.
+
+    Raises
+    ------
+    DataProviderError
+        Si el proveedor no responde, el ticker está vacío, o la
+        respuesta no se puede interpretar (ver
+        `FMPComparablesProvider.fetch`). Esta función no captura ni
+        traduce esa excepción.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    data_provider = provider if provider is not None else FMPComparablesProvider(config=config)
+    return data_provider.fetch(ticker)
+
+
+def fetch_and_normalize_comparables(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    comparables_provider: FMPComparablesProvider | None = None,
+    fundamentals_provider: DataProvider | None = None,
+) -> Comparables:
+    """Consulta al proveedor de comparables y normaliza el resultado para `ticker`.
+
+    Encadena `fetch_raw_comparables_data(ticker, ...)` con
+    `investmentops.data_layer.normalization.comparables_from_raw`, mismo
+    patrón de dos capas ya usado por `fetch_and_normalize`/
+    `fetch_and_normalize_historical`/`fetch_and_normalize_news`.
+
+    A diferencia de esas funciones, `comparables_from_raw` necesita,
+    además de los datos crudos, las cifras ya normalizadas de cada
+    empresa par (`peer_data`, ver ese docstring): esta función las
+    obtiene reutilizando, sin modificarlas, `fetch_peer_tickers`/
+    `fetch_peer_key_metrics` (ya implementadas en la tarea "Fuente de
+    datos de comparables" de esta misma fase), en vez de duplicar la
+    lógica de extracción de tickers pares o de composición de métricas
+    ya existente en ese par de funciones.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a consultar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada tanto a
+        `fetch_raw_comparables_data` como a `fetch_peer_key_metrics`.
+        Útil para pruebas, para no depender de un `config.local.toml`
+        real en disco.
+    comparables_provider:
+        Proveedor de comparables ya construido, propagado a
+        `fetch_raw_comparables_data` y a `fetch_peer_key_metrics`.
+        Pensado sobre todo para pruebas.
+    fundamentals_provider:
+        Proveedor de datos fundamentales ya construido, propagado a
+        `fetch_peer_key_metrics` para consultar las cifras de cada
+        empresa par. Si no se indica, cada consulta de par construye su
+        propio `FMPFundamentalsProvider` por defecto.
+
+    Returns
+    -------
+    Comparables
+        El modelo de dominio normalizado (ver
+        `investmentops.data_layer.Comparables`), con `ticker=ticker` (tal
+        como lo devuelve el proveedor) y un `PeerComparable` por cada
+        empresa par, en el mismo orden en que aparecen en `"peersList"`.
+        `peers` es una lista vacía si la empresa no tiene pares según el
+        proveedor (caso válido, no un error).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_raw_comparables_data` y `fetch_peer_key_metrics`. Esta
+        función no captura ni traduce esa excepción: el manejo de fallos
+        parciales sin detener el resto del flujo es responsabilidad de
+        `investigate` (mismo criterio ya aplicado por
+        `fetch_and_normalize_news`/`run_news_relevance_engine`, ver
+        docstring del módulo).
+    NormalizationError
+        Si algún ticker par de `"peersList"` no tiene una entrada
+        correspondiente entre las métricas obtenidas (ver
+        `comparables_from_raw`), señalando explícitamente qué ticker par
+        falló, en vez de omitirlo en silencio.
+    ConfigError
+        Si algún proveedor no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    raw = fetch_raw_comparables_data(ticker, config=config, provider=comparables_provider)
+
+    peer_metrics = fetch_peer_key_metrics(
+        ticker,
+        config=config,
+        comparables_provider=comparables_provider,
+        fundamentals_provider=fundamentals_provider,
+    )
+    peer_data = {
+        peer.ticker: (peer.financial_statement, peer.market_data) for peer in peer_metrics
+    }
+
+    return comparables_from_raw(raw, peer_data)
+
 def _news_relevance_result_to_analysis_result(
     news_result: NewsRelevanceResult,
     *,

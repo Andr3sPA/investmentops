@@ -220,7 +220,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 
 > Nota (regranulado): "Registrar el nuevo proveedor y el nuevo motor" se dividió en dos tareas (una por componente), siguiendo el mismo patrón ya usado en las Fases 3 y 4. "Conectar el comando de comparación con el orquestador" se dividió en la implementación de la función de orquestación (ejecutar la investigación de varias empresas y ensamblar el resultado comparativo) y la conexión de esa función con la CLI, ya que combinaban dos responsabilidades distintas en una sola tarea.
 
-- [ ] Registrar el nuevo proveedor de comparables sin modificar los proveedores existentes.
+- [x] Registrar el nuevo proveedor de comparables sin modificar los proveedores existentes. — `fetch_raw_comparables_data`/`fetch_and_normalize_comparables` en `investmentops/core/orchestrator.py` (ver PROGRESS.md). Sigue exactamente el mismo patrón de dos capas ya usado por `fetch_raw_news_data`/`fetch_and_normalize_news` (Fase 4): `fetch_raw_comparables_data` invoca `FMPComparablesProvider.fetch(ticker)`; `fetch_and_normalize_comparables` encadena ese resultado con `comparables_from_raw`, reutilizando sin modificarlas `fetch_peer_tickers`/`fetch_peer_key_metrics` (ya existentes) para obtener las cifras normalizadas de cada par. Ninguna de las dos captura `DataProviderError`/`NormalizationError`. No se modificó `FMPComparablesProvider` ni ninguna función ya existente del orquestador: cambio puramente aditivo.
 - [ ] Registrar el nuevo motor de posicionamiento relativo sin modificar los motores existentes.
 - [ ] Diseñar la sintaxis del nuevo comando CLI para comparar dos o más empresas directamente.
 - [ ] Implementar el parseo de argumentos del comando de comparación (lista de tickers).
