@@ -4,54 +4,54 @@
 
 ## Última tarea completada
 
-Fase 5, "Fuente de datos de comparables" → "Adjuntar metadatos de
-procedencia a los datos de comparables" (TASKS.md).
+Fase 5, "Normalización" → "Definir el modelo de dominio 'Comparables'
+(conjunto de empresas pares y sus métricas equivalentes)" (TASKS.md).
 
 ### Qué se implementó
 
-`_attach_comparables_provenance` en
-`investmentops/data_providers/comparables.py` (nuevo), aplicada dentro
-de `FMPComparablesProvider.fetch` justo antes de construir el
-`RawProviderData` devuelto.
+`Comparables`/`PeerComparable` en `investmentops/data_layer/comparables.py`
+(nuevo). Tarea de definición de estructura, siguiendo el mismo patrón ya
+usado por `FinancialStatementSeries` (Fase 3) y `News` (Fase 4): un
+archivo `.py` con el/los `dataclass(frozen=True)` correspondientes y un
+docstring extenso documentando la decisión, en vez de solo un `.md` de
+diseño.
 
-Mismo patrón ya usado por `_attach_point_provenance`
-(`investmentops/data_providers/fundamentals.py`, serie histórica) y
-`_attach_news_provenance` (`investmentops/data_providers/news.py`,
-noticias): cada elemento del payload crudo (típicamente un único
-elemento con `"peersList"`, ver `COMPARABLES_PROVIDER.md`) recibe dos
-claves nuevas, `"source"` y `"queried_at"`, con el mismo valor que el
-`ProviderMetadata` de nivel superior (`RawProviderData.metadata`), sin
-mutar los dicts originales devueltos por `response.json()` (se
-construyen copias nuevas vía `{**item, ...}`).
+Decisión de diseño: en vez de introducir campos nuevos, `Comparables`
+reutiliza `FinancialStatement`/`MarketData` (ya normalizados desde la
+Fase 1) como las cifras de cada empresa par, agrupadas en un tipo
+intermedio `PeerComparable` (`ticker`, `financial_statement`,
+`market_data`). `Comparables` es el contenedor simple `{ticker, peers:
+Sequence[PeerComparable]}`, donde `ticker` identifica a la empresa
+investigada y `peers` preserva el orden en que el proveedor de
+comparables entregó los pares (sin reordenar ni filtrar, mismo criterio
+ya fijado en `investmentops/data_providers/COMPARABLES_PROVIDER.md`).
+Una lista de pares vacía es un caso válido (empresa sin comparables según
+el proveedor).
 
-`fetch()` conserva su comportamiento existente: valida ticker vacío,
-traduce errores de red/autenticación/servidor/JSON inválido a
-`DataProviderError`, y trata una lista vacía como respuesta válida (sin
-pares encontrados). Lo único que cambia es que `payload` ahora lleva
-`"source"`/`"queried_at"` por elemento antes de devolverse.
-`investmentops.core.orchestrator.fetch_peer_tickers` no requirió ningún
-cambio: sigue leyendo `payload[0].get("peersList")` sin verse afectado
-por las claves nuevas.
+Se documentó explícitamente la relación con
+`investmentops.core.orchestrator.PeerMetrics` (ya existente desde la
+tarea anterior de esta misma fase, "Implementar la consulta de métricas
+clave... para cada empresa par"): tiene la misma forma que
+`PeerComparable`, pero vive en una capa distinta (composición *on-the-fly*
+del orquestador, no modelo de dominio de `data_layer`). Esta tarea no
+modificó `investmentops/core/orchestrator.py` ni `PeerMetrics`: decidir
+si `fetch_peer_key_metrics` pasa a construir/devolver este nuevo modelo
+de dominio es una decisión de la tarea siguiente ("Implementar la
+transformación de los datos crudos de comparables al modelo
+normalizado"), no de esta.
 
-Se actualizó `test_data_providers_comparables.py`
-(`test_fetch_returns_raw_provider_data_with_list_payload`, que antes
-comparaba `result.payload` por igualdad exacta contra el payload de
-ejemplo) para reflejar que el payload devuelto ahora incluye
-`"source"`/`"queried_at"` por elemento, verificando en su lugar los
-campos originales uno por uno — mismo criterio ya aplicado por las
-pruebas equivalentes de `fundamentals`/`news` tras sus propias tareas de
-procedencia por punto.
+No se propaga `queried_at` por par (metadato de la consulta, no del
+dato), mismo criterio ya aplicado por `FinancialStatementSeries`/`News`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_providers_comparables_provenance.py`
+- `investmentops/data_layer/comparables.py`
+- `investmentops/tests/test_data_layer_comparables.py`
 
 Modificados:
-- `investmentops/data_providers/comparables.py` (`_attach_comparables_provenance`
-  nueva; `fetch()` la aplica al payload antes de devolverlo)
-- `investmentops/tests/test_data_providers_comparables.py`
-  (`test_fetch_returns_raw_provider_data_with_list_payload` actualizada)
+- `investmentops/data_layer/__init__.py` (re-exporta `Comparables`,
+  `PeerComparable`)
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
   la implementación)
 - `PROGRESS.md` (este archivo)
@@ -59,12 +59,13 @@ Modificados:
 ## Próxima tarea recomendada
 
 Fase 5, "Normalización":
-- "Definir el modelo de dominio 'Comparables' (conjunto de empresas
-  pares y sus métricas equivalentes)." Tarea de diseño/documentación,
-  siguiendo el mismo patrón ya usado para "Noticias"
-  (`investmentops/data_layer/news.py`) y `FinancialStatementSeries`: a
-  partir de lo que ya expone `PeerMetrics`
-  (`investmentops/core/orchestrator.py`: `ticker`, `financial_statement`,
-  `market_data`), decidir si el modelo de dominio "Comparables" es un
-  contenedor `{ticker, peers: Sequence[PeerMetrics|...]}` o requiere una
-  estructura distinta, antes de implementar su transformación.
+- "Implementar la transformación de los datos crudos de comparables al
+  modelo normalizado." Traduciría el `RawProviderData` que entrega
+  `FMPComparablesProvider.fetch` (o, alternativamente, la composición ya
+  existente vía `fetch_peer_tickers`/`fetch_and_normalize` en el
+  orquestador) al nuevo `Comparables`/`PeerComparable` ya definido en
+  esta tarea, decidiendo en concreto dónde vive esa función
+  (`investmentops.data_layer.normalization`, siguiendo el patrón ya
+  usado por `financial_statement_series_from_raw`/`news_from_raw`) y si
+  reutiliza o reemplaza la composición ya existente en
+  `investmentops.core.orchestrator.fetch_peer_key_metrics`.

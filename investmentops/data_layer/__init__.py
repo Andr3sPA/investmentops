@@ -36,17 +36,21 @@ aquí para que el resto del sistema los importe directamente desde
   múltiplos, con fuente y fecha de corte).
 - `News` (en `investmentops.data_layer.news`): evento noticioso
   normalizado relacionado con una empresa (titular, resumen, fuente,
-  fecha de publicación, enlace), ver TASKS.md, Fase 4, "Normalización" >
-  "Definir el modelo de dominio 'Noticias' (fecha, fuente, resumen)". Aún
-  sin un consumidor real: la transformación desde la respuesta cruda de
-  `FMPNewsProvider.fetch` es una tarea separada y posterior de la misma
-  sección.
+  fecha de publicación, enlace).
+- `Comparables`/`PeerComparable` (en `investmentops.data_layer.comparables`):
+  conjunto de empresas pares de una empresa investigada y sus cifras
+  normalizadas equivalentes (`FinancialStatement`/`MarketData` por par),
+  ver TASKS.md, Fase 5, "Normalización" > "Definir el modelo de dominio
+  'Comparables'". Aún sin un consumidor real: la transformación desde la
+  respuesta cruda de `FMPComparablesProvider.fetch` es una tarea separada
+  y posterior de la misma sección.
 
 Aún sin implementación (ver TASKS.md, sección "Normalización y
-almacenamiento" de la Fase 1, "Normalización" de la Fase 3, y
-"Normalización" de la Fase 4).
+almacenamiento" de la Fase 1, "Normalización" de la Fase 3, "Normalización"
+de la Fase 4, y "Normalización" de la Fase 5).
 """
 
+from investmentops.data_layer.comparables import Comparables, PeerComparable
 from investmentops.data_layer.domain import Company
 from investmentops.data_layer.financial_statement_series import (
     FinancialStatementSeries,
@@ -56,9 +60,11 @@ from investmentops.data_layer.market_data import MarketData
 from investmentops.data_layer.news import News
 
 __all__ = [
+    "Comparables",
     "Company",
     "FinancialStatement",
     "FinancialStatementSeries",
     "MarketData",
     "News",
+    "PeerComparable",
 ]
