@@ -4,45 +4,42 @@
 
 ## Última tarea completada
 
-Fase 5, "Motor de análisis: posicionamiento relativo" → "Definir qué
-métricas clave se comparan lado a lado (ej. valoración, márgenes,
-crecimiento)." (TASKS.md).
+Fase 5, "Motor de análisis: posicionamiento relativo" → "Implementar el
+cálculo de la posición relativa de la empresa frente a sus pares en cada
+métrica." (TASKS.md).
 
 ### Qué se implementó
 
-`investmentops/analysis_engines/COMPARABLES_METRICS.md` (nuevo),
-siguiendo el mismo patrón ya usado por `FINANCIAL_HEALTH_METRICS.md`/
-`VALUATION_METRICS.md`/`TREND_METRICS.md`/`NEWS_RELEVANCE.md`: una tarea
-de diseño/documentación, sin código.
+`investmentops/analysis_engines/comparables.py` (nuevo), sobre la
+decisión ya tomada en `COMPARABLES_METRICS.md`:
 
-Decisión: el motor de posicionamiento relativo comparará cuatro métricas
-ya definidas y calculadas en Fase 1, reutilizadas sin duplicar código:
+- `calculate_entity_metrics(ticker, financial_statement, market_data)`:
+  calcula las cuatro métricas ya decididas (`net_margin`,
+  `debt_to_revenue`, `price_to_earnings`, `price_to_sales`) para una
+  empresa (investigada o par), reutilizando sin duplicarlas
+  `calculate_financial_health_metrics`/`calculate_valuation_metrics`
+  (Fase 1), y agrega las advertencias de ambos cálculos.
+- `compare_metric(company_value, peer_value)`: compara el valor de una
+  métrica de la empresa investigada contra un par
+  (`"por_encima"`/`"por_debajo"`/`"igual"`), devolviendo `None` sin
+  inventar una posición si alguno de los dos valores no fue calculable.
+- `calculate_relative_positioning(company_ticker, company_financial_statement,
+  company_market_data, comparables)`: calcula las métricas de la empresa
+  investigada y de cada `PeerComparable` de un `Comparables` ya
+  normalizado, y produce, por cada una de las cuatro métricas, una
+  comparación contra cada par, en el mismo orden en que ya vienen los
+  pares (sin reordenar). Maneja sin error el caso de una empresa sin
+  pares (`Comparables.peers == []`).
 
-- `net_margin` y `debt_to_revenue`, vía `calculate_financial_health_metrics`
-  (`investmentops/analysis_engines/financial_health.py`).
-- `price_to_earnings` y `price_to_sales`, vía `calculate_valuation_metrics`
-  (`investmentops/analysis_engines/valuation.py`).
-
-Ambas funciones ya existentes se aplicarán tanto a la empresa investigada
-como a cada `PeerComparable` (que expone los mismos `FinancialStatement`/
-`MarketData` ya normalizados que la propia empresa), sin necesidad de
-ninguna función de cálculo nueva.
-
-"Crecimiento" (mencionado como ejemplo en `TASKS.md`) se descarta
-explícitamente para el MVP: requeriría una serie histórica por empresa
-par, que `Comparables`/`PeerComparable` no expone (solo un único corte
-por diseño, ver `investmentops/data_layer/comparables.py`), y no existe
-hoy ninguna fuente de datos que obtenga series históricas para empresas
-pares (`fetch_historical` solo se invoca para la empresa investigada).
-Se documenta como limitación explícita a declarar por el futuro motor,
-en vez de aproximarla con datos que no le corresponden — mismo criterio
-ya aplicado repetidamente en el proyecto (liquidez en Fase 1, P/B y
-EV/EBITDA en Fase 1, entre otros).
+Ninguna de las funciones invoca ningún proveedor de IA: es un cálculo
+puramente determinístico, consistente con el principio ya aplicado por
+los motores de tendencia y noticias relevantes.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/analysis_engines/COMPARABLES_METRICS.md`
+- `investmentops/analysis_engines/comparables.py`
+- `investmentops/tests/test_analysis_engines_comparables.py`
 
 Modificados:
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
@@ -52,11 +49,16 @@ Modificados:
 ## Próxima tarea recomendada
 
 Fase 5, "Motor de análisis: posicionamiento relativo":
-- "Implementar el cálculo de la posición relativa de la empresa frente a
-  sus pares en cada métrica." Implementación de código: calcular, para
-  la empresa investigada y para cada par, las cuatro métricas ya
-  decididas en `COMPARABLES_METRICS.md` (reutilizando
-  `calculate_financial_health_metrics`/`calculate_valuation_metrics` sin
-  duplicarlas), y determinar la posición relativa de la empresa
-  investigada frente a cada par en cada métrica (ej. por encima/por
-  debajo, o el valor numérico de cada uno lado a lado).
+- "Ensamblar el resultado estructurado del motor (hallazgos, tabla
+  comparativa, advertencias si faltan datos de algún par)." Implementación
+  de código: encadenar `calculate_relative_positioning` (ya implementada)
+  en un resultado estructurado (hallazgos en lenguaje natural generados
+  por plantilla determinista, tabla comparativa a partir de
+  `RelativePositioning.comparisons`, y advertencias — incluyendo la
+  limitación explícita de "crecimiento" ya documentada en
+  `COMPARABLES_METRICS.md` y cualquier advertencia por métrica no
+  calculable de algún par), siguiendo el mismo patrón ya usado por
+  `assemble_trend_analysis`/`TrendAnalysisResult` (Fase 3) y
+  `assemble_news_relevance_analysis`/`NewsRelevanceResult` (Fase 4): este
+  motor tampoco invoca IA, por lo que no usará `AnalysisResult`/
+  `AnalysisProvenance` directamente.
