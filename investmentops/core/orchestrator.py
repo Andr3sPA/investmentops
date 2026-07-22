@@ -436,6 +436,12 @@ Fuera de alcance de este módulo (aún):
 from __future__ import annotations
 # --- Import nuevo, junto a los demás imports de data_providers ---
 
+from investmentops.analysis_engines.comparables import (
+    AGENT_ID as COMPARABLES_AGENT_ID,
+    ComparablesAnalysisResult,
+    assemble_comparables_analysis,
+    calculate_relative_positioning,
+)
 # --- Import nuevo, junto a los demás imports de data_layer ---
 # --- normalization import block: se agrega comparables_from_raw ---
 
@@ -532,6 +538,15 @@ TREND_ANALYSIS_AI_MODEL = "deterministic"
 NEWS_RELEVANCE_AI_PROVIDER = "none"
 NEWS_RELEVANCE_AI_MODEL = "deterministic"
 
+
+#: Procedencia centinela usada para el `AnalysisResult` que envuelve el
+#: resultado del motor de posicionamiento relativo (Fase 5). Mismos
+#: valores y misma justificación que `TREND_ANALYSIS_AI_PROVIDER`/
+#: `NEWS_RELEVANCE_AI_PROVIDER`: este motor tampoco invoca ningún
+#: proveedor de IA (ver `investmentops.analysis_engines.comparables`,
+#: "Por qué no se usa AnalysisResult/AnalysisProvenance").
+COMPARABLES_AI_PROVIDER = "none"
+COMPARABLES_AI_MODEL = "deterministic"
 
 def fetch_raw_data(
     ticker: str,
@@ -1201,6 +1216,152 @@ def fetch_and_normalize_comparables(
     }
 
     return comparables_from_raw(raw, peer_data)
+def _comparables_analysis_result_to_analysis_result(
+    comparables_result: ComparablesAnalysisResult,
+    *,
+    generated_at: datetime | None = None,
+) -> AnalysisResult:
+    """Convierte un `ComparablesAnalysisResult` en un `AnalysisResult` normal.
+
+    Mismo adaptador ya usado por `_trend_analysis_result_to_analysis_result`
+    (Fase 3) y `_news_relevance_result_to_analysis_result` (Fase 4): el
+    motor de posicionamiento relativo
+    (`investmentops.analysis_engines.comparables`) tampoco invoca ningún
+    proveedor de IA, por lo que su resultado (`ComparablesAnalysisResult`)
+    no lleva `provenance`. Esta función lo envuelve en un `AnalysisResult`
+    con una `AnalysisProvenance` **centinela** (`ai_provider="none"`,
+    `ai_model="deterministic"`), misma justificación completa ya
+    documentada en `investmentops/core/TREND_INTEGRATION.md`.
+
+    No modifica `ComparablesAnalysisResult` ni `AnalysisResult`/
+    `AnalysisProvenance`: es puramente un adaptador entre ambos tipos ya
+    existentes.
+
+    Parameters
+    ----------
+    comparables_result:
+        El `ComparablesAnalysisResult` ya producido por
+        `investmentops.analysis_engines.comparables.assemble_comparables_analysis`.
+    generated_at:
+        Momento en que se generó esta interpretación. Si no se indica,
+        se usa el momento de la llamada (mismo criterio ya usado por
+        `_trend_analysis_result_to_analysis_result`/
+        `_news_relevance_result_to_analysis_result`).
+
+    Returns
+    -------
+    AnalysisResult
+        - `analysis_id`: `comparables_result.analysis_id` (siempre
+          `COMPARABLES_AGENT_ID`, ``"comparables"``).
+        - `findings`, `supporting_metrics`, `limitations`: tomados
+          directamente de `comparables_result`, sin transformarlos.
+        - `provenance`: `AnalysisProvenance(ai_provider="none",
+          ai_model="deterministic", generated_at=...)`.
+    """
+    provenance = AnalysisProvenance(
+        ai_provider=COMPARABLES_AI_PROVIDER,
+        ai_model=COMPARABLES_AI_MODEL,
+        generated_at=generated_at if generated_at is not None else datetime.now(timezone.utc),
+    )
+
+    return AnalysisResult(
+        analysis_id=comparables_result.analysis_id,
+        findings=list(comparables_result.findings),
+        supporting_metrics=comparables_result.supporting_metrics,
+        limitations=list(comparables_result.limitations),
+        provenance=provenance,
+    )
+
+
+def run_comparables_engine(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: DataProvider | None = None,
+    comparables_provider: FMPComparablesProvider | None = None,
+) -> AnalysisResult:
+    """Registra la invocación del motor de posicionamiento relativo.
+
+    Encadena, para `ticker`:
+
+    1. `fetch_and_normalize(ticker, ...)`: obtiene y normaliza los datos
+       fundamentales de la empresa investigada (mismo modelo ya usado por
+       los agentes de salud financiera y valoración, Fase 1).
+    2. `fetch_and_normalize_comparables(ticker, ...)`: obtiene y normaliza
+       el conjunto de empresas pares y sus cifras equivalentes (ya
+       implementada en la tarea anterior de esta misma sección, Fase 5).
+    3. `investmentops.analysis_engines.comparables.calculate_relative_positioning(...)`:
+       calcula, de forma determinística, las cuatro métricas clave (ver
+       `COMPARABLES_METRICS.md`) para la empresa investigada y cada par,
+       y las compara entre sí.
+    4. `investmentops.analysis_engines.comparables.assemble_comparables_analysis(...)`:
+       ensambla el resultado del motor (hallazgos, tabla comparativa,
+       advertencias).
+    5. `_comparables_analysis_result_to_analysis_result(...)`: envuelve
+       ese resultado en un `AnalysisResult` con procedencia centinela.
+
+    No modifica `run_analysis_engines`, `run_trend_analysis_engine` ni
+    `run_news_relevance_engine`: ningún motor existente cambia. Todavía
+    no se invoca desde `investigate`: incorporar el posicionamiento
+    relativo al flujo de investigación de una sola empresa (o al futuro
+    comando de comparación) es una decisión de las tareas siguientes de
+    esta misma sección de `TASKS.md` ("Orquestador y CLI"), no de esta.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a analizar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a `fetch_and_normalize` y a
+        `fetch_and_normalize_comparables`. Útil para pruebas, para no
+        depender de un `config.local.toml` real en disco.
+    provider:
+        Proveedor de datos fundamentales ya construido, propagado tanto a
+        `fetch_and_normalize` (para la empresa investigada) como a
+        `fetch_and_normalize_comparables` (para las cifras de cada
+        empresa par, vía su parámetro `fundamentals_provider`). Pensado
+        sobre todo para pruebas.
+    comparables_provider:
+        Proveedor de comparables ya construido, propagado a
+        `fetch_and_normalize_comparables`. Pensado sobre todo para
+        pruebas.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado del motor de posicionamiento relativo, ya envuelto
+        en el contrato común (ver
+        `_comparables_analysis_result_to_analysis_result`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_and_normalize`/`fetch_and_normalize_comparables`. Esta
+        función no captura ni traduce esa excepción: el manejo de fallos
+        parciales, si aplica, es responsabilidad de quien la invoque
+        (mismo criterio ya usado por `run_trend_analysis_engine`/
+        `run_news_relevance_engine` respecto a `investigate`).
+    NormalizationError
+        Ver `fetch_and_normalize`/`fetch_and_normalize_comparables`.
+    ConfigError
+        Si algún proveedor no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    company_data = fetch_and_normalize(ticker, config=config, provider=provider)
+    comparables = fetch_and_normalize_comparables(
+        ticker,
+        config=config,
+        comparables_provider=comparables_provider,
+        fundamentals_provider=provider,
+    )
+    positioning = calculate_relative_positioning(
+        ticker,
+        company_data.financial_statement,
+        company_data.market_data,
+        comparables,
+    )
+    comparables_result = assemble_comparables_analysis(positioning)
+    return _comparables_analysis_result_to_analysis_result(comparables_result)
 
 def _news_relevance_result_to_analysis_result(
     news_result: NewsRelevanceResult,
