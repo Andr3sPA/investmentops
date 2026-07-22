@@ -1,9 +1,19 @@
 """Motor de análisis: posicionamiento relativo — cálculo de las métricas
-clave lado a lado (empresa investigada vs. cada empresa par).
+clave lado a lado (empresa investigada vs. cada empresa par), y ensamblado
+del resultado estructurado del motor.
 
-Cubre la tarea "Implementar el cálculo de la posición relativa de la
-empresa frente a sus pares en cada métrica" (TASKS.md, Fase 5, "Motor de
-análisis: posicionamiento relativo"), sobre las métricas ya decididas en
+Cubre dos tareas de TASKS.md, Fase 5, "Motor de análisis: posicionamiento
+relativo":
+
+- "Implementar el cálculo de la posición relativa de la empresa frente a
+  sus pares en cada métrica." (`calculate_entity_metrics`, `compare_metric`,
+  `calculate_relative_positioning`, ya completada, ver PROGRESS.md).
+- "Ensamblar el resultado estructurado del motor (hallazgos, tabla
+  comparativa, advertencias si faltan datos de algún par)."
+  (`assemble_comparables_analysis`, `ComparablesAnalysisResult`, esta
+  tarea).
+
+Sobre las métricas ya decididas en
 `investmentops/analysis_engines/COMPARABLES_METRICS.md`: `net_margin`,
 `debt_to_revenue` (vía `calculate_financial_health_metrics`, Fase 1) y
 `price_to_earnings`, `price_to_sales` (vía `calculate_valuation_metrics`,
@@ -38,42 +48,82 @@ empresa investigada contra el del par:
 - `"por_debajo"` si es menor.
 - `"igual"` si son exactamente iguales.
 - `None` si alguno de los dos valores (empresa o par) no fue calculable
-  para esa métrica — nunca se inventa una posición cuando falta un dato,
-  mismo principio ya aplicado en todo el proyecto.
+  para esa métrica — nunca se inventa una posición cuando falta un dato.
 
 `calculate_relative_positioning` encadena `calculate_entity_metrics` para
 la empresa investigada y para cada `PeerComparable` de un `Comparables`
 ya normalizado (ver `investmentops.data_layer.comparables`), y construye,
 para cada una de las cuatro métricas, una comparación contra cada par
 (`MetricComparison`), en el mismo orden en que los pares ya vienen en
-`Comparables.peers` (sin reordenar, mismo criterio ya aplicado por
-`Comparables` desde su propia definición).
+`Comparables.peers` (sin reordenar).
 
-Esta función es puramente determinística (sin IA), conforme al mismo
-principio ya aplicado por los motores de salud financiera/valoración
-("La IA es un mecanismo central, no un accesorio... El cálculo
-determinístico de métricas es una entrada, no un sustituto de la
-interpretación").
+Ambas funciones son puramente determinísticas (sin IA), conforme al mismo
+principio ya aplicado por los motores de salud financiera/valoración.
+
+## Ensamblado del resultado estructurado del motor (`assemble_comparables_analysis`, esta tarea)
+
+Cubre la tarea "Ensamblar el resultado estructurado del motor (hallazgos,
+tabla comparativa, advertencias si faltan datos de algún par)" (TASKS.md,
+Fase 5). Dado un `RelativePositioning` ya calculado (por
+`calculate_relative_positioning`), esta función produce un
+`ComparablesAnalysisResult`:
+
+- **`findings`**: un hallazgo por métrica (`METRIC_NAMES`), generado por
+  plantilla determinista (no vía IA, mismo criterio ya aplicado por
+  `_describe_trend` en `investmentops.analysis_engines.trends` y por
+  `_describe_relevant_news_count` en
+  `investmentops.analysis_engines.news_relevance`), indicando cuántos
+  pares quedan por encima/por debajo/igual, y cuántos no se pudieron
+  comparar por falta de datos (`MetricComparison.position is None`). Si
+  la empresa no tiene pares (`RelativePositioning.peers == []`), se
+  produce un único hallazgo explícito señalando esa ausencia, en vez de
+  un hallazgo vacío o por métrica sin contenido.
+- **`supporting_metrics`**: las cuatro métricas ya calculadas de la
+  empresa investigada (`"company"`) y la tabla comparativa completa
+  (`"comparisons"`), un mapeo por métrica con una entrada
+  `{peer_ticker, company_value, peer_value, position}` por cada par, en
+  el mismo orden que `RelativePositioning.peers` — mismo criterio de
+  serialización explícita ya usado por `revenue_growth_by_period` en
+  `assemble_trend_analysis` y por `relevant_news` en
+  `assemble_news_relevance_analysis`.
+- **`limitations`**: siempre incluye `GROWTH_LIMITATION` (la limitación
+  explícita de "crecimiento" ya documentada en `COMPARABLES_METRICS.md`:
+  el modelo de dominio de comparables no expone series históricas por
+  par), más `NO_PEERS_LIMITATION` si la empresa no tiene pares, más
+  cualquier advertencia de `calculate_entity_metrics` — tanto de la
+  empresa investigada como de cada par (identificando el ticker del par
+  afectado en el propio texto de la advertencia, para que sea trazable a
+  qué comparación concreta corresponde).
+
+### Por qué no se usa `AnalysisResult`/`AnalysisProvenance`
+
+Mismo criterio ya aplicado por `TrendAnalysisResult`
+(`investmentops.analysis_engines.trends`) y `NewsRelevanceResult`
+(`investmentops.analysis_engines.news_relevance`): este motor no invoca
+ningún proveedor de IA en las tareas ya definidas para él en `TASKS.md`
+— sus hallazgos se generan por plantilla determinista a partir de
+comparaciones ya calculadas, no por interpretación de un modelo de
+lenguaje. Forzar el contrato `AnalysisResult` (que exige una
+`AnalysisProvenance` real) implicaría fabricar una procedencia de IA
+inexistente. `ComparablesAnalysisResult` define, en su lugar,
+exactamente los campos que pide la tarea (`findings`,
+`supporting_metrics`, `limitations`) más un `analysis_id` para
+identificar este motor, sin `provenance`. Cómo este resultado se
+incorpora al `ResearchResult` común es una decisión que corresponde a
+una futura tarea de "Orquestador y CLI" (TASKS.md, Fase 5), no a esta.
 
 Fuera de alcance de este módulo:
-- El ensamblado del resultado estructurado del motor (hallazgos, tabla
-  comparativa, advertencias si faltan datos de algún par, incluyendo la
-  limitación explícita de "crecimiento" ya documentada en
-  `COMPARABLES_METRICS.md`): tarea separada y siguiente en la misma
-  sección de `TASKS.md`.
-- Cualquier interpretación en lenguaje natural de estas comparaciones: no
-  hay hoy una tarea que defina un prompt para este motor (mismo criterio
-  ya aplicado por los motores de tendencia y noticias relevantes, que no
-  invocan IA).
 - Registrar este motor en el orquestador o incorporar su resultado al
   `ResearchResult`: tareas separadas y posteriores de "Orquestador y
   CLI".
+- La presentación de este resultado en los reportes Markdown/HTML: tareas
+  separadas y posteriores de la misma fase.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from investmentops.analysis_engines.financial_health import (
     calculate_financial_health_metrics,
@@ -82,6 +132,13 @@ from investmentops.analysis_engines.valuation import calculate_valuation_metrics
 from investmentops.data_layer.comparables import Comparables
 from investmentops.data_layer.financial_statements import FinancialStatement
 from investmentops.data_layer.market_data import MarketData
+
+#: Identificador de este motor de análisis, usado como
+#: `ComparablesAnalysisResult.analysis_id`. No se usa para localizar un
+#: archivo de prompt (este motor no invoca ningún proveedor de IA, ver
+#: "Por qué no se usa AnalysisResult/AnalysisProvenance" en el docstring
+#: del módulo).
+AGENT_ID = "comparables"
 
 #: Nombres de las cuatro métricas ya decididas en `COMPARABLES_METRICS.md`,
 #: en el orden en que se calculan y se comparan. Usado tanto para
@@ -92,6 +149,37 @@ METRIC_NAMES: tuple[str, ...] = (
     "debt_to_revenue",
     "price_to_earnings",
     "price_to_sales",
+)
+
+#: Etiquetas legibles en español de cada métrica, usadas por
+#: `_describe_metric_positioning` para construir los hallazgos.
+_METRIC_LABELS: Mapping[str, str] = {
+    "net_margin": "margen neto",
+    "debt_to_revenue": "deuda sobre ingresos",
+    "price_to_earnings": "P/E",
+    "price_to_sales": "P/S",
+}
+
+#: Limitación explícita de "crecimiento", conforme a
+#: `COMPARABLES_METRICS.md`: el modelo de dominio de comparables no
+#: expone series históricas por empresa par, por lo que este motor nunca
+#: calcula ni aproxima una comparación de crecimiento. Se declara siempre
+#: en `ComparablesAnalysisResult.limitations`, en vez de omitir el tema
+#: en silencio.
+GROWTH_LIMITATION = (
+    "No se compara el crecimiento (variación periodo a periodo) frente a "
+    "los pares: el modelo de dominio de comparables no expone series "
+    "históricas por empresa par."
+)
+
+#: Advertencia usada cuando la empresa investigada no tiene ninguna
+#: empresa par según el proveedor de comparables
+#: (`Comparables.peers == []`, caso válido, ver
+#: `investmentops.data_layer.comparables.Comparables`).
+NO_PEERS_LIMITATION = (
+    "No se encontraron empresas pares (comparables) para esta empresa "
+    "según el proveedor de datos; no es posible calcular su "
+    "posicionamiento relativo."
 )
 
 
@@ -180,6 +268,47 @@ class RelativePositioning:
     company: EntityMetrics
     peers: Sequence[EntityMetrics]
     comparisons: Mapping[str, Sequence[MetricComparison]]
+
+
+@dataclass(frozen=True)
+class ComparablesAnalysisResult:
+    """Resultado estructurado del motor de análisis de posicionamiento
+    relativo (ver "Ensamblado del resultado estructurado del motor" en el
+    docstring del módulo).
+
+    A diferencia de `investmentops.analysis_engines.contracts.AnalysisResult`
+    (usado por los motores de salud financiera y valoración, Fase 1), este
+    tipo no lleva `provenance`: este motor no invoca ningún proveedor de
+    IA (ver "Por qué no se usa AnalysisResult/AnalysisProvenance" en el
+    docstring del módulo). Mismo patrón ya usado por
+    `investmentops.analysis_engines.trends.TrendAnalysisResult` y
+    `investmentops.analysis_engines.news_relevance.NewsRelevanceResult`.
+
+    Attributes
+    ----------
+    analysis_id:
+        Identificador de este motor de análisis (siempre `AGENT_ID`,
+        ``"comparables"``).
+    findings:
+        Hallazgos en lenguaje natural, generados por plantilla
+        determinista (no por un modelo de lenguaje) a partir del
+        posicionamiento relativo ya calculado, uno por métrica (o un
+        único hallazgo si la empresa no tiene pares).
+    supporting_metrics:
+        Métricas de soporte: las cuatro métricas de la empresa
+        investigada y la tabla comparativa completa por par (ver
+        `assemble_comparables_analysis`).
+    limitations:
+        Advertencias explícitas: la limitación de crecimiento (siempre
+        presente), la ausencia de pares (si aplica), y cualquier
+        advertencia de métrica no calculable, tanto de la empresa
+        investigada como de cada par.
+    """
+
+    analysis_id: str
+    findings: Sequence[str]
+    supporting_metrics: Mapping[str, Any]
+    limitations: Sequence[str]
 
 
 def calculate_entity_metrics(
@@ -320,4 +449,126 @@ def calculate_relative_positioning(
         company=company_metrics,
         peers=peer_metrics,
         comparisons=comparisons,
+    )
+
+
+def _describe_metric_positioning(
+    metric_name: str, comparisons: Sequence[MetricComparison]
+) -> str:
+    """Genera un hallazgo en lenguaje natural para una métrica concreta.
+
+    Plantilla determinista, no generada por un modelo de lenguaje (ver
+    "Ensamblado del resultado estructurado del motor" en el docstring del
+    módulo). Cuenta cuántos pares quedan por encima/por debajo/igual, y
+    cuántas comparaciones no fueron posibles por falta de datos
+    (`position is None`).
+    """
+    label = _METRIC_LABELS[metric_name]
+    total = len(comparisons)
+    above = sum(1 for c in comparisons if c.position == "por_encima")
+    below = sum(1 for c in comparisons if c.position == "por_debajo")
+    equal = sum(1 for c in comparisons if c.position == "igual")
+    missing = total - above - below - equal
+
+    text = (
+        f"En {label}, la empresa está por encima de {above}, por debajo de "
+        f"{below}, e igual a {equal} de {total} par(es) comparable(s)."
+    )
+    if missing:
+        text += (
+            f" No se pudo comparar con {missing} par(es) por falta de datos."
+        )
+    return text
+
+
+def assemble_comparables_analysis(
+    positioning: RelativePositioning,
+) -> ComparablesAnalysisResult:
+    """Ensambla el resultado estructurado del motor de posicionamiento
+    relativo a partir de un `RelativePositioning` ya calculado.
+
+    Encadena la lectura de `positioning` (ya producido por
+    `calculate_relative_positioning`) y produce un
+    `ComparablesAnalysisResult` (ver "Ensamblado del resultado
+    estructurado del motor" en el docstring del módulo).
+
+    Parameters
+    ----------
+    positioning:
+        El `RelativePositioning` ya calculado por
+        `calculate_relative_positioning` para una empresa y su conjunto
+        de comparables.
+
+    Returns
+    -------
+    ComparablesAnalysisResult
+        - `analysis_id`: siempre `AGENT_ID` (``"comparables"``).
+        - `findings`: un hallazgo por métrica (`METRIC_NAMES`), o un
+          único hallazgo explícito si la empresa no tiene pares.
+        - `supporting_metrics`: `{"company": {...}, "comparisons": {...}}`,
+          con las cuatro métricas de la empresa investigada y la tabla
+          comparativa completa por par y por métrica.
+        - `limitations`: siempre incluye `GROWTH_LIMITATION`;
+          `NO_PEERS_LIMITATION` si `positioning.peers` está vacío; más
+          cualquier advertencia de `calculate_entity_metrics` (empresa
+          investigada y cada par, identificando el ticker del par
+          afectado).
+    """
+    total_peers = len(positioning.peers)
+
+    if total_peers == 0:
+        return ComparablesAnalysisResult(
+            analysis_id=AGENT_ID,
+            findings=[
+                "No hay empresas pares disponibles para calcular el "
+                "posicionamiento relativo."
+            ],
+            supporting_metrics={
+                "company": {
+                    "ticker": positioning.company.ticker,
+                    **{
+                        name: getattr(positioning.company, name)
+                        for name in METRIC_NAMES
+                    },
+                },
+                "comparisons": {name: [] for name in METRIC_NAMES},
+            },
+            limitations=[GROWTH_LIMITATION, NO_PEERS_LIMITATION, *positioning.company.warnings],
+        )
+
+    findings = [
+        _describe_metric_positioning(name, positioning.comparisons[name])
+        for name in METRIC_NAMES
+    ]
+
+    supporting_metrics: dict[str, Any] = {
+        "company": {
+            "ticker": positioning.company.ticker,
+            **{name: getattr(positioning.company, name) for name in METRIC_NAMES},
+        },
+        "comparisons": {
+            name: [
+                {
+                    "peer_ticker": comparison.peer_ticker,
+                    "company_value": comparison.company_value,
+                    "peer_value": comparison.peer_value,
+                    "position": comparison.position,
+                }
+                for comparison in positioning.comparisons[name]
+            ]
+            for name in METRIC_NAMES
+        },
+    }
+
+    limitations: list[str] = [GROWTH_LIMITATION]
+    limitations.extend(positioning.company.warnings)
+    for peer in positioning.peers:
+        for warning in peer.warnings:
+            limitations.append(f"{peer.ticker}: {warning}")
+
+    return ComparablesAnalysisResult(
+        analysis_id=AGENT_ID,
+        findings=findings,
+        supporting_metrics=supporting_metrics,
+        limitations=limitations,
     )
