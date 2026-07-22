@@ -13,19 +13,24 @@ TASKS.md, Fase 3, "Normalización":
 - "Extender la caché local para persistir series históricas sin romper
   los datos ya guardados de Fase 1."
 
-Y, desde esta tarea, TASKS.md, Fase 4, "Normalización":
+TASKS.md, Fase 4, "Normalización":
 
 - "Implementar el guardado de noticias normalizadas en la caché local
   tras cada consulta."
+
+Y, desde esta tarea, TASKS.md, Fase 5, "Normalización":
+
+- "Implementar el guardado de comparables normalizados en la caché
+  local tras cada consulta."
 
 Implementa el mecanismo ya decidido y documentado en
 `investmentops/data_layer/CACHE.md`: un archivo JSON por ticker, bajo la
 ruta configurada en `config.local.toml` ([cache].path, ver
 CONFIGURATION.md), con una clave por modelo de dominio cacheado
 (``"financial_statement"``, ``"market_data"``,
-``"financial_statement_series"``, y ahora ``"news"``) y un campo
-``cached_at`` propio de la caché (no del modelo de dominio) que registra
-cuándo se escribió esa sección.
+``"financial_statement_series"``, ``"news"``, y ahora
+``"comparables"``) y un campo ``cached_at`` propio de la caché (no del
+modelo de dominio) que registra cuándo se escribió esa sección.
 
 Guardar una sección nunca sobrescribe las demás secciones ya cacheadas
 para el mismo ticker (ver CACHE.md, "Estructura del archivo"): el
@@ -49,11 +54,12 @@ ausencia del dato sino la caché en un estado inconsistente que no debe
 usarse en silencio.
 
 `DEFAULT_MAX_AGE` (24 horas) es el umbral de frescura elegido para el
-MVP, reutilizado tal cual por la serie histórica y por las noticias: no
-hay hoy evidencia de que estos datos deban considerarse "viejos" con un
-umbral distinto al de un corte único, y agregar un umbral separado antes
-de tener ese caso de uso real iría contra el criterio de no
-sobre-diseñar ya aplicado en el resto de este módulo.
+MVP, reutilizado tal cual por la serie histórica, por las noticias y
+ahora por los comparables: no hay hoy evidencia de que estos datos deban
+considerarse "viejos" con un umbral distinto al de un corte único, y
+agregar un umbral separado antes de tener ese caso de uso real iría
+contra el criterio de no sobre-diseñar ya aplicado en el resto de este
+módulo.
 
 ## Caché de series históricas (`save_financial_statement_series`/`load_financial_statement_series`)
 
@@ -91,7 +97,7 @@ de la misma clave... sin romper este formato de archivo por ticker"*.
   corrupta/incompleta — por ejemplo, un elemento de `"statements"` sin
   alguno de sus campos imprescindibles, o con una fecha no interpretable).
 
-## Caché de noticias normalizadas (`save_news`/`load_news`, esta tarea)
+## Caché de noticias normalizadas (`save_news`/`load_news`)
 
 Cubre la tarea "Implementar el guardado de noticias normalizadas en la
 caché local tras cada consulta" (TASKS.md, Fase 4, "Normalización"),
@@ -126,16 +132,56 @@ transformación ya implementada (`news_from_raw`, ver
   corrupta/incompleta — a algún elemento de `"items"` le falta un campo
   imprescindible, o `published_at` no tiene un formato interpretable).
 
+## Caché de comparables normalizados (`save_comparables`, esta tarea)
+
+Cubre la tarea "Implementar el guardado de comparables normalizados en
+la caché local tras cada consulta" (TASKS.md, Fase 5, "Normalización"),
+sobre el modelo `Comparables`/`PeerComparable`
+(`investmentops.data_layer.comparables`) y su transformación ya
+implementada (`comparables_from_raw`, ver
+`investmentops/data_layer/normalization.py`).
+
+- **Clave nueva:** `"comparables"`, junto a `"financial_statement"`,
+  `"market_data"`, `"financial_statement_series"` y `"news"` ya
+  existentes, en el mismo archivo `<TICKER>.json`. Guardar comparables
+  no toca ni sobrescribe las demás secciones (misma fusión ya usada por
+  el resto de funciones `save_*` de este módulo).
+- **Forma de la sección:** un objeto con `"peers"` (la lista de empresas
+  pares, en el mismo orden recibido en `Comparables.peers`) más
+  `"cached_at"`. Cada elemento de `"peers"` serializa explícitamente un
+  `PeerComparable`: `"ticker"`, `"financial_statement"` (mismos campos
+  que la sección `"financial_statement"` ya existente: `revenue`,
+  `net_income`, `debt`, `source`, `period_end` en ISO 8601) y
+  `"market_data"` (mismos campos que la sección `"market_data"` ya
+  existente: `price`, `market_cap`, `multiples`, `source`, `as_of` en
+  ISO 8601). El campo `ticker` de `Comparables` (la empresa investigada,
+  no un par) no se serializa dentro de la sección: el propio nombre del
+  archivo (`<TICKER>.json`) ya lo identifica, mismo criterio ya aplicado
+  por `"financial_statement_series"`. Una lista de pares vacía (empresa
+  sin comparables según el proveedor, ver `FMPComparablesProvider.fetch`,
+  "Una lista vacía es una respuesta válida") es una sección válida y
+  cacheable, mismo criterio ya aplicado a `save_news` con `items=[]`.
+- **No se reutiliza `_save_section`**, por la misma razón que la serie
+  histórica y las noticias: `Comparables` es una lista de dataclasses
+  anidados (`PeerComparable`, que a su vez anida `FinancialStatement`/
+  `MarketData`, ambos con campos `date`), que `dataclasses.asdict` no
+  serializa a texto por sí solo. Se construye la lista serializada
+  explícitamente, reutilizando `_resolve_cache_dir`, `_ticker_file` y
+  `_read_existing` sin duplicar esa infraestructura, mismo criterio que
+  `save_financial_statement_series`/`save_news`.
+- **Manejo de fallos:** mismo criterio que las demás secciones
+  (`CacheError` ante ticker vacío o fallos de E/S).
+- **Lectura (`load_comparables`):** fuera de alcance de esta tarea; es
+  la tarea siguiente y separada en la misma sección de `TASKS.md`
+  ("Implementar la lectura de comparables normalizados desde caché...").
+
 Fuera de alcance de este módulo:
-- La lectura de noticias desde caché (`load_news`, ya implementada aquí
-  junto con `save_news` por ser la misma pieza natural de
-  infraestructura, mismo criterio ya aplicado a
-  `save_financial_statement_series`/`load_financial_statement_series` en
-  la Fase 3, que también se implementaron juntas).
+- La lectura de comparables desde caché (`load_comparables`): tarea
+  separada y siguiente (ver arriba).
 - Decidir qué hace el orquestador/proveedor cuando `load_*` devuelve
   ``None`` (es decir, disparar la llamada real al proveedor de datos):
-  eso es responsabilidad de quien invoque estas funciones (ver TASKS.md,
-  futuro consumidor de noticias en la Fase 4), no de este módulo.
+  eso es responsabilidad de quien invoque estas funciones, no de este
+  módulo.
 """
 
 from __future__ import annotations
@@ -147,6 +193,7 @@ from pathlib import Path
 from typing import Any
 
 from investmentops.config import load_config
+from investmentops.data_layer.comparables import Comparables, PeerComparable
 from investmentops.data_layer.financial_statement_series import (
     FinancialStatementSeries,
 )
@@ -163,8 +210,8 @@ DEFAULT_CACHE_PATH = ".investmentops_cache/"
 #: sección cacheada se considera "reciente" si su `cached_at` tiene menos
 #: de este tiempo transcurrido (ver CACHE.md, "Qué determina 'reciente'",
 #: decisión tomada como parte de esta tarea). Reutilizado tal cual por la
-#: caché de series históricas y por la caché de noticias (ver docstring
-#: del módulo).
+#: caché de series históricas, de noticias y de comparables (ver
+#: docstring del módulo).
 DEFAULT_MAX_AGE = timedelta(hours=24)
 
 #: Nombre de la sección usada para la serie histórica de estados
@@ -175,6 +222,10 @@ _FINANCIAL_STATEMENT_SERIES_SECTION = "financial_statement_series"
 #: Nombre de la sección usada para las noticias normalizadas dentro de
 #: `<TICKER>.json`, junto a las tres secciones ya existentes.
 _NEWS_SECTION = "news"
+
+#: Nombre de la sección usada para los comparables normalizados dentro
+#: de `<TICKER>.json`, junto a las cuatro secciones ya existentes.
+_COMPARABLES_SECTION = "comparables"
 
 
 class CacheError(RuntimeError):
@@ -688,6 +739,105 @@ def load_news(
         ) from exc
 
     return news_list
+
+
+def save_comparables(
+    ticker: str,
+    comparables: Comparables,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+) -> Path:
+    """Persiste un `Comparables` en la caché local del ticker.
+
+    Escribe la sección ``"comparables"`` de `<cache_path>/<TICKER>.json`
+    (ver "Caché de comparables normalizados" en el docstring del
+    módulo), sin afectar las demás secciones (`"financial_statement"`,
+    `"market_data"`, `"financial_statement_series"`, `"news"`) ya
+    cacheadas para el mismo ticker (mismo criterio de fusión ya usado
+    por las demás funciones `save_*` de este módulo).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa investigada (ej. ``"AAPL"``). Se
+        normaliza a mayúsculas para el nombre del archivo, mismo
+        criterio que las demás funciones `save_*` de este módulo.
+    comparables:
+        El `Comparables` ya normalizado a persistir (ver
+        `investmentops.data_layer.normalization.comparables_from_raw`).
+        El orden de `comparables.peers` se conserva tal cual al guardar.
+        Una lista de pares vacía (empresa sin comparables según el
+        proveedor) es un valor válido y se guarda igual que cualquier
+        otro, para no volver a consultar al proveedor únicamente por no
+        haber pares.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas sin depender de un
+        `config.local.toml` real en disco.
+
+    Returns
+    -------
+    Path
+        La ruta del archivo `<TICKER>.json` escrito.
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío o si ocurre un fallo de E/S al escribir.
+    """
+    if not ticker or not ticker.strip():
+        raise CacheError("El ticker no puede estar vacío.")
+
+    cache_dir = _resolve_cache_dir(cache_path, config)
+
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise CacheError(
+            f"No se pudo crear el directorio de caché '{cache_dir}': {exc}"
+        ) from exc
+
+    file_path = _ticker_file(cache_dir, ticker)
+    existing = _read_existing(file_path)
+
+    peers_data = [
+        {
+            "ticker": peer.ticker,
+            "financial_statement": {
+                "revenue": peer.financial_statement.revenue,
+                "net_income": peer.financial_statement.net_income,
+                "debt": peer.financial_statement.debt,
+                "source": peer.financial_statement.source,
+                "period_end": peer.financial_statement.period_end.isoformat(),
+            },
+            "market_data": {
+                "price": peer.market_data.price,
+                "market_cap": peer.market_data.market_cap,
+                "multiples": dict(peer.market_data.multiples),
+                "source": peer.market_data.source,
+                "as_of": peer.market_data.as_of.isoformat(),
+            },
+        }
+        for peer in comparables.peers
+    ]
+    section_data = {
+        "peers": peers_data,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+    }
+    existing[_COMPARABLES_SECTION] = section_data
+
+    try:
+        with file_path.open("w", encoding="utf-8") as cache_file:
+            json.dump(existing, cache_file, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        raise CacheError(
+            f"No se pudo escribir el archivo de caché '{file_path}': {exc}"
+        ) from exc
+
+    return file_path
 
 
 def _save_section(

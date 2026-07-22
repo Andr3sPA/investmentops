@@ -4,60 +4,44 @@
 
 ## Última tarea completada
 
-Fase 5, "Normalización" → "Implementar la transformación de los datos
-crudos de comparables al modelo normalizado" (TASKS.md).
+Fase 5, "Normalización" → "Implementar el guardado de comparables
+normalizados en la caché local tras cada consulta" (TASKS.md).
 
 ### Qué se implementó
 
-`comparables_from_raw` en `investmentops/data_layer/normalization.py`
-(nueva función, mismo módulo ya usado por
-`financial_statement_from_raw`/`market_data_from_raw`/
-`financial_statement_series_from_raw`/`news_from_raw`).
+`save_comparables` en `investmentops/data_layer/cache.py`, siguiendo
+exactamente el mismo patrón ya usado por `save_financial_statement_series`
+(Fase 3) y `save_news` (Fase 4): agrega una nueva sección `"comparables"`
+al mismo archivo `<TICKER>.json` ya usado por las cuatro secciones
+existentes (`financial_statement`, `market_data`,
+`financial_statement_series`, `news`), sin sobrescribirlas.
 
-A diferencia de las demás transformaciones de este módulo, el payload
-crudo que entrega `FMPComparablesProvider.fetch` solo trae los tickers
-de las empresas pares (`payload[0]["peersList"]`), no sus cifras
-financieras. Esas cifras ya se obtienen y normalizan reutilizando
-`fetch_and_normalize` por cada par (ver
-`investmentops.core.orchestrator.fetch_peer_key_metrics`, tarea anterior
-de esta misma fase). Por eso `comparables_from_raw` recibe, además del
-`RawProviderData` de comparables, un segundo parámetro `peer_data`: un
-mapeo `{ticker: (FinancialStatement, MarketData)}` con las cifras ya
-normalizadas de cada par, que aporta quien invoque esta función.
+La sección serializa `{"peers": [...], "cached_at": ...}`, donde cada
+elemento de `"peers"` serializa explícitamente un `PeerComparable`
+(`ticker`, `financial_statement` con los mismos campos ya usados por la
+sección `"financial_statement"`, `market_data` con los mismos campos ya
+usados por la sección `"market_data"`). No se reutiliza `_save_section`
+(que usa `dataclasses.asdict` sobre un único dataclass plano), por la
+misma razón ya documentada para `save_financial_statement_series`/
+`save_news`: `Comparables` es una lista de dataclasses anidados con
+campos `date`. Sí se reutilizan `_resolve_cache_dir`, `_ticker_file` y
+`_read_existing`, sin duplicar esa infraestructura.
 
-Decisión clave: la función **no** importa nada de
-`investmentops.core` (en particular, no depende de
-`investmentops.core.orchestrator.PeerMetrics`), para no invertir la
-regla de dependencia de `ARCHITECTURE.md` (`core` depende de
-`data_layer`, no al revés). `peer_data` se tipa únicamente con los
-modelos de dominio ya existentes (`FinancialStatement`, `MarketData`).
+Una lista de pares vacía (empresa sin comparables según el proveedor) es
+un valor válido y se guarda igual que cualquier otro, mismo criterio ya
+aplicado por `save_news` con `items=[]`.
 
-Comportamiento:
-- Los tickers pares se extraen de `raw.payload[0]["peersList"]`,
-  preservando su orden (mismo criterio ya usado por
-  `fetch_peer_tickers`).
-- Por cada ticker par, se busca su entrada en `peer_data`; si falta, se
-  señala `NormalizationError` identificando el ticker afectado, en vez
-  de omitirlo en silencio o inventar cifras.
-- Un payload vacío o sin `"peersList"` produce un `Comparables` con
-  `peers=[]`, sin error (empresa sin pares según el proveedor, caso ya
-  válido en `FMPComparablesProvider.fetch`).
-- Entradas de `peer_data` que no correspondan a un ticker en
-  `"peersList"` se ignoran.
-
-No se modificó `investmentops/core/orchestrator.py`,
-`fetch_peer_key_metrics` ni `PeerMetrics`: decidir si el orquestador pasa
-a construir/usar `Comparables` (en vez de, o además de, `PeerMetrics`)
-es una decisión de una tarea posterior.
+No se implementó `load_comparables`: es la tarea siguiente y separada en
+la misma sección de `TASKS.md`.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_data_layer_normalization_comparables.py`
+- `investmentops/tests/test_data_layer_cache_comparables.py`
 
 Modificados:
-- `investmentops/data_layer/normalization.py` (nueva función
-  `comparables_from_raw`, nuevos imports: `Mapping`, `Comparables`,
+- `investmentops/data_layer/cache.py` (nueva función `save_comparables`,
+  nueva constante `_COMPARABLES_SECTION`, nuevos imports: `Comparables`,
   `PeerComparable`)
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
   la implementación)
@@ -66,11 +50,11 @@ Modificados:
 ## Próxima tarea recomendada
 
 Fase 5, "Normalización":
-- "Implementar el guardado de comparables normalizados en la caché
-  local tras cada consulta." Seguiría el mismo patrón ya usado por
-  `save_financial_statement_series`/`save_news`
-  (`investmentops/data_layer/cache.py`): una nueva sección
-  `"comparables"` en el mismo archivo `<TICKER>.json`, serializando cada
-  `PeerComparable` de `Comparables.peers` explícitamente (no vía
-  `dataclasses.asdict`, por las mismas razones ya documentadas para la
-  serie histórica y las noticias).
+- "Implementar la lectura de comparables normalizados desde caché para
+  evitar una nueva llamada al proveedor si el dato ya existe y es
+  reciente." Seguiría el mismo patrón ya usado por
+  `load_financial_statement_series`/`load_news`: `load_comparables`
+  reconstruye `Comparables`/`PeerComparable` a partir de la sección
+  `"comparables"` ya escrita por `save_comparables`, devolviendo `None`
+  si no hay nada cacheado o si venció, y `CacheError` ante una sección
+  corrupta/incompleta.
