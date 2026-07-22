@@ -21,16 +21,19 @@ TASKS.md, Fase 4, "Normalización":
 Y, desde esta tarea, TASKS.md, Fase 5, "Normalización":
 
 - "Implementar el guardado de comparables normalizados en la caché
-  local tras cada consulta."
+  local tras cada consulta." (ya completada, ver PROGRESS.md).
+- "Implementar la lectura de comparables normalizados desde caché para
+  evitar una nueva llamada al proveedor si el dato ya existe y es
+  reciente." (esta tarea).
 
 Implementa el mecanismo ya decidido y documentado en
 `investmentops/data_layer/CACHE.md`: un archivo JSON por ticker, bajo la
 ruta configurada en `config.local.toml` ([cache].path, ver
 CONFIGURATION.md), con una clave por modelo de dominio cacheado
 (``"financial_statement"``, ``"market_data"``,
-``"financial_statement_series"``, ``"news"``, y ahora
-``"comparables"``) y un campo ``cached_at`` propio de la caché (no del
-modelo de dominio) que registra cuándo se escribió esa sección.
+``"financial_statement_series"``, ``"news"``, y ``"comparables"``) y un
+campo ``cached_at`` propio de la caché (no del modelo de dominio) que
+registra cuándo se escribió esa sección.
 
 Guardar una sección nunca sobrescribe las demás secciones ya cacheadas
 para el mismo ticker (ver CACHE.md, "Estructura del archivo"): el
@@ -40,22 +43,22 @@ sección antes de volver a escribirlo.
 ## Lectura y frescura
 
 `load_financial_statement`/`load_market_data`/`load_financial_statement_series`/
-`load_news` leen la sección correspondiente de
+`load_news`/`load_comparables` leen la sección correspondiente de
 `<cache_path>/<TICKER>.json`, reconstruyen el modelo de dominio (inverso
 de la serialización de `_save_section`/`save_financial_statement_series`/
-`save_news`) y lo devuelven solo si su `cached_at` sigue siendo
-"reciente" según `max_age`. Si la sección no existe, o existe pero está
-vencida, devuelven ``None`` — quien las invoca (el futuro orquestador/
-proveedor de datos) interpreta un ``None`` como "hay que consultar al
-proveedor de nuevo", nunca como un error. Un archivo o sección corrupta
-(`cached_at` no interpretable, campos imprescindibles ausentes) sí se
-señala mediante `CacheError`, porque en ese caso el problema no es la
-ausencia del dato sino la caché en un estado inconsistente que no debe
-usarse en silencio.
+`save_news`/`save_comparables`) y lo devuelven solo si su `cached_at`
+sigue siendo "reciente" según `max_age`. Si la sección no existe, o
+existe pero está vencida, devuelven ``None`` — quien las invoca (el
+futuro orquestador/proveedor de datos) interpreta un ``None`` como "hay
+que consultar al proveedor de nuevo", nunca como un error. Un archivo o
+sección corrupta (`cached_at` no interpretable, campos imprescindibles
+ausentes) sí se señala mediante `CacheError`, porque en ese caso el
+problema no es la ausencia del dato sino la caché en un estado
+inconsistente que no debe usarse en silencio.
 
 `DEFAULT_MAX_AGE` (24 horas) es el umbral de frescura elegido para el
-MVP, reutilizado tal cual por la serie histórica, por las noticias y
-ahora por los comparables: no hay hoy evidencia de que estos datos deban
+MVP, reutilizado tal cual por la serie histórica, por las noticias y por
+los comparables: no hay hoy evidencia de que estos datos deban
 considerarse "viejos" con un umbral distinto al de un corte único, y
 agregar un umbral separado antes de tener ese caso de uso real iría
 contra el criterio de no sobre-diseñar ya aplicado en el resto de este
@@ -132,20 +135,20 @@ transformación ya implementada (`news_from_raw`, ver
   corrupta/incompleta — a algún elemento de `"items"` le falta un campo
   imprescindible, o `published_at` no tiene un formato interpretable).
 
-## Caché de comparables normalizados (`save_comparables`, esta tarea)
+## Caché de comparables normalizados (`save_comparables`/`load_comparables`)
 
-Cubre la tarea "Implementar el guardado de comparables normalizados en
-la caché local tras cada consulta" (TASKS.md, Fase 5, "Normalización"),
-sobre el modelo `Comparables`/`PeerComparable`
-(`investmentops.data_layer.comparables`) y su transformación ya
-implementada (`comparables_from_raw`, ver
+Cubre las tareas "Implementar el guardado de comparables normalizados en
+la caché local tras cada consulta" (ya completada) e "Implementar la
+lectura de comparables normalizados desde caché para evitar una nueva
+llamada al proveedor si el dato ya existe y es reciente" (esta tarea),
+ambas de TASKS.md, Fase 5, "Normalización", sobre el modelo
+`Comparables`/`PeerComparable` (`investmentops.data_layer.comparables`) y
+su transformación ya implementada (`comparables_from_raw`, ver
 `investmentops/data_layer/normalization.py`).
 
-- **Clave nueva:** `"comparables"`, junto a `"financial_statement"`,
+- **Clave:** `"comparables"`, junto a `"financial_statement"`,
   `"market_data"`, `"financial_statement_series"` y `"news"` ya
-  existentes, en el mismo archivo `<TICKER>.json`. Guardar comparables
-  no toca ni sobrescribe las demás secciones (misma fusión ya usada por
-  el resto de funciones `save_*` de este módulo).
+  existentes, en el mismo archivo `<TICKER>.json`.
 - **Forma de la sección:** un objeto con `"peers"` (la lista de empresas
   pares, en el mismo orden recibido en `Comparables.peers`) más
   `"cached_at"`. Cada elemento de `"peers"` serializa explícitamente un
@@ -161,23 +164,32 @@ implementada (`comparables_from_raw`, ver
   sin comparables según el proveedor, ver `FMPComparablesProvider.fetch`,
   "Una lista vacía es una respuesta válida") es una sección válida y
   cacheable, mismo criterio ya aplicado a `save_news` con `items=[]`.
-- **No se reutiliza `_save_section`**, por la misma razón que la serie
-  histórica y las noticias: `Comparables` es una lista de dataclasses
-  anidados (`PeerComparable`, que a su vez anida `FinancialStatement`/
-  `MarketData`, ambos con campos `date`), que `dataclasses.asdict` no
-  serializa a texto por sí solo. Se construye la lista serializada
-  explícitamente, reutilizando `_resolve_cache_dir`, `_ticker_file` y
-  `_read_existing` sin duplicar esa infraestructura, mismo criterio que
+- **`load_comparables` (esta tarea):** reconstruye `Comparables`
+  (`ticker` normalizado a mayúsculas, mismo criterio que
+  `load_financial_statement_series`) y un `PeerComparable` por cada
+  elemento de `"peers"`, con su propio `FinancialStatement`/`MarketData`
+  reconstruidos igual que las secciones `"financial_statement"`/
+  `"market_data"` ya existentes. Devuelve ``None`` si no hay nada
+  cacheado o si venció según `max_age`; levanta `CacheError` si falta
+  `cached_at`, si no es interpretable, o si algún par tiene campos
+  faltantes o fechas no interpretables — mismo criterio que las demás
+  secciones. Una lista de pares vacía cacheada se reconstruye como
+  `Comparables(peers=[])`, no como ``None`` (mismo criterio que
+  `load_news` con `items=[]`: "se consultó y no había pares" es distinto
+  de "no hay nada cacheado").
+- **No se reutiliza `_save_section`/una reconstrucción genérica**, misma
+  razón ya documentada para la serie histórica y las noticias:
+  `Comparables` es una lista de dataclasses anidados
+  (`PeerComparable`, que a su vez anida `FinancialStatement`/
+  `MarketData`, ambos con campos `date`). Se reutilizan
+  `_resolve_cache_dir`, `_ticker_file`, `_read_existing` y `_load_section`
+  sin duplicar esa infraestructura, mismo criterio que
   `save_financial_statement_series`/`save_news`.
 - **Manejo de fallos:** mismo criterio que las demás secciones
-  (`CacheError` ante ticker vacío o fallos de E/S).
-- **Lectura (`load_comparables`):** fuera de alcance de esta tarea; es
-  la tarea siguiente y separada en la misma sección de `TASKS.md`
-  ("Implementar la lectura de comparables normalizados desde caché...").
+  (`CacheError` ante ticker vacío, fallos de E/S, o una sección cacheada
+  corrupta/incompleta).
 
 Fuera de alcance de este módulo:
-- La lectura de comparables desde caché (`load_comparables`): tarea
-  separada y siguiente (ver arriba).
 - Decidir qué hace el orquestador/proveedor cuando `load_*` devuelve
   ``None`` (es decir, disparar la llamada real al proveedor de datos):
   eso es responsabilidad de quien invoque estas funciones, no de este
@@ -838,6 +850,98 @@ def save_comparables(
         ) from exc
 
     return file_path
+
+
+def load_comparables(
+    ticker: str,
+    *,
+    cache_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+    max_age: timedelta = DEFAULT_MAX_AGE,
+) -> Comparables | None:
+    """Lee un `Comparables` desde la caché local, si existe y es reciente.
+
+    Misma semántica de frescura/ausencia que las demás funciones
+    `load_*` de este módulo: devuelve ``None`` si no hay nada cacheado
+    para este ticker o si la sección cacheada ya superó `max_age`, y
+    levanta `CacheError` solo ante una sección corrupta o un fallo de
+    E/S. Una lista de pares vacía cacheada (empresa sin comparables) se
+    devuelve tal cual (`Comparables(peers=[])`), no como ``None``: son
+    dos cosas distintas, mismo criterio ya aplicado por `load_news` con
+    `items=[]`.
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a buscar en caché (ej. ``"AAPL"``).
+        Se normaliza a mayúsculas, igual criterio que las demás
+        funciones `load_*`.
+    cache_path:
+        Ruta al directorio de caché. Si no se indica, se resuelve desde
+        `config.local.toml` (sección `[cache]`, ver CONFIGURATION.md).
+    config:
+        Configuración ya cargada, útil para pruebas.
+    max_age:
+        Antigüedad máxima aceptada desde `cached_at` para considerar los
+        comparables "recientes". Por defecto, `DEFAULT_MAX_AGE` (24 horas).
+
+    Returns
+    -------
+    Comparables | None
+        El `Comparables` reconstruido (con `ticker` normalizado a
+        mayúsculas y `peers` en el mismo orden en que se guardaron) si
+        hay una sección cacheada y no ha vencido según `max_age`;
+        ``None`` en caso contrario.
+
+    Raises
+    ------
+    CacheError
+        Si el ticker está vacío, si ocurre un fallo de E/S al leer el
+        archivo, o si la sección cacheada existe pero está corrupta o
+        incompleta (falta `cached_at`, algún elemento de `"peers"` no
+        tiene un campo imprescindible, o alguna fecha no tiene un
+        formato reconocible).
+    """
+    section = _load_section(
+        ticker,
+        _COMPARABLES_SECTION,
+        cache_path=cache_path,
+        config=config,
+        max_age=max_age,
+    )
+    if section is None:
+        return None
+
+    try:
+        peers = [
+            PeerComparable(
+                ticker=peer["ticker"],
+                financial_statement=FinancialStatement(
+                    revenue=float(peer["financial_statement"]["revenue"]),
+                    net_income=float(peer["financial_statement"]["net_income"]),
+                    debt=float(peer["financial_statement"]["debt"]),
+                    source=peer["financial_statement"]["source"],
+                    period_end=date.fromisoformat(
+                        peer["financial_statement"]["period_end"]
+                    ),
+                ),
+                market_data=MarketData(
+                    price=float(peer["market_data"]["price"]),
+                    market_cap=float(peer["market_data"]["market_cap"]),
+                    multiples=dict(peer["market_data"].get("multiples") or {}),
+                    source=peer["market_data"]["source"],
+                    as_of=date.fromisoformat(peer["market_data"]["as_of"]),
+                ),
+            )
+            for peer in section["peers"]
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CacheError(
+            f"La sección '{_COMPARABLES_SECTION}' cacheada para '{ticker}' "
+            f"está corrupta o incompleta: {exc}"
+        ) from exc
+
+    return Comparables(ticker=ticker.strip().upper(), peers=peers)
 
 
 def _save_section(

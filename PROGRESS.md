@@ -4,57 +4,61 @@
 
 ## Última tarea completada
 
-Fase 5, "Normalización" → "Implementar el guardado de comparables
-normalizados en la caché local tras cada consulta" (TASKS.md).
+Fase 5, "Normalización" → "Implementar la lectura de comparables
+normalizados desde caché para evitar una nueva llamada al proveedor si
+el dato ya existe y es reciente." (TASKS.md).
 
 ### Qué se implementó
 
-`save_comparables` en `investmentops/data_layer/cache.py`, siguiendo
-exactamente el mismo patrón ya usado por `save_financial_statement_series`
-(Fase 3) y `save_news` (Fase 4): agrega una nueva sección `"comparables"`
-al mismo archivo `<TICKER>.json` ya usado por las cuatro secciones
-existentes (`financial_statement`, `market_data`,
-`financial_statement_series`, `news`), sin sobrescribirlas.
+`load_comparables` en `investmentops/data_layer/cache.py`, siguiendo
+exactamente el mismo patrón ya usado por
+`load_financial_statement_series` (Fase 3) y `load_news` (Fase 4): lee
+la sección `"comparables"` de `<cache_path>/<TICKER>.json` (ya escrita
+por `save_comparables`), reconstruye un `Comparables` con un
+`PeerComparable` por cada elemento de `"peers"` (cada uno con su propio
+`FinancialStatement`/`MarketData` reconstruidos igual que las secciones
+`"financial_statement"`/`"market_data"` ya existentes), y devuelve el
+resultado solo si `cached_at` sigue siendo "reciente" según `max_age`
+(`DEFAULT_MAX_AGE`, 24 horas).
 
-La sección serializa `{"peers": [...], "cached_at": ...}`, donde cada
-elemento de `"peers"` serializa explícitamente un `PeerComparable`
-(`ticker`, `financial_statement` con los mismos campos ya usados por la
-sección `"financial_statement"`, `market_data` con los mismos campos ya
-usados por la sección `"market_data"`). No se reutiliza `_save_section`
-(que usa `dataclasses.asdict` sobre un único dataclass plano), por la
-misma razón ya documentada para `save_financial_statement_series`/
-`save_news`: `Comparables` es una lista de dataclasses anidados con
-campos `date`. Sí se reutilizan `_resolve_cache_dir`, `_ticker_file` y
-`_read_existing`, sin duplicar esa infraestructura.
+Devuelve `None` si no hay nada cacheado para el ticker o si la sección
+venció (mismo criterio que las demás funciones `load_*`). Una lista de
+pares vacía cacheada se reconstruye como `Comparables(peers=[])`, no
+como `None`: son dos cosas distintas ("se consultó y no había pares" vs.
+"no hay nada cacheado"), mismo criterio ya aplicado por `load_news` con
+`items=[]`.
 
-Una lista de pares vacía (empresa sin comparables según el proveedor) es
-un valor válido y se guarda igual que cualquier otro, mismo criterio ya
-aplicado por `save_news` con `items=[]`.
+Levanta `CacheError` si falta `cached_at`, si no tiene un formato
+interpretable, o si algún par de `"peers"` tiene campos faltantes o
+fechas no interpretables — mismo criterio que las demás secciones. No
+reutiliza una reconstrucción genérica (`_load_section` sí se reutiliza
+para leer la sección y comprobar frescura): `Comparables` es una lista
+de dataclasses anidados (`PeerComparable`, que a su vez anida
+`FinancialStatement`/`MarketData`), mismo motivo ya documentado para
+`load_financial_statement_series`/`load_news`.
 
-No se implementó `load_comparables`: es la tarea siguiente y separada en
-la misma sección de `TASKS.md`.
+Con esta tarea completa, la sección "Fuente de datos de comparables" y
+"Normalización" de la Fase 5 quedan íntegramente implementadas; sigue
+pendiente el "Motor de análisis: posicionamiento relativo".
 
 ## Archivos creados o modificados
 
-Creados:
-- `investmentops/tests/test_data_layer_cache_comparables.py`
-
 Modificados:
-- `investmentops/data_layer/cache.py` (nueva función `save_comparables`,
-  nueva constante `_COMPARABLES_SECTION`, nuevos imports: `Comparables`,
-  `PeerComparable`)
+- `investmentops/data_layer/cache.py` (nueva función `load_comparables`)
+- `investmentops/tests/test_data_layer_cache_comparables.py` (nuevas
+  pruebas de `load_comparables`, agregadas al archivo ya existente de
+  pruebas de `save_comparables`)
 - `TASKS.md` (una línea: tarea marcada como completada, con referencia a
   la implementación)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 5, "Normalización":
-- "Implementar la lectura de comparables normalizados desde caché para
-  evitar una nueva llamada al proveedor si el dato ya existe y es
-  reciente." Seguiría el mismo patrón ya usado por
-  `load_financial_statement_series`/`load_news`: `load_comparables`
-  reconstruye `Comparables`/`PeerComparable` a partir de la sección
-  `"comparables"` ya escrita por `save_comparables`, devolviendo `None`
-  si no hay nada cacheado o si venció, y `CacheError` ante una sección
-  corrupta/incompleta.
+Fase 5, "Motor de análisis: posicionamiento relativo":
+- "Definir qué métricas clave se comparan lado a lado (ej. valoración,
+  márgenes, crecimiento)." Es una tarea de diseño/documentación (como
+  `FINANCIAL_HEALTH_METRICS.md`/`VALUATION_METRICS.md`/`TREND_METRICS.md`
+  en fases anteriores): decidir qué métricas de `Comparables`/
+  `PeerComparable` (ya normalizados) se comparan lado a lado entre la
+  empresa investigada y sus pares, antes de implementar el cálculo
+  determinístico (tarea siguiente de la misma sección).
