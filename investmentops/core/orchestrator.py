@@ -2015,3 +2015,124 @@ def investigate_and_generate_reports(
         result, output_dir=output_dir, config=config, formats=formats
     )
     return result, report_paths
+# --- Bloque nuevo, insertado al final del archivo, después de
+#     investigate_and_generate_reports ---
+
+
+@dataclass(frozen=True)
+class ComparisonResult:
+    """Resultado de comparar dos o más empresas (`investmentops.cli`,
+    subcomando `compare`, ver `investmentops/cli/COMPARE_CLI.md`).
+
+    Cubre la tarea "Implementar en el orquestador la función que ejecuta
+    la investigación de cada empresa involucrada en una comparación y
+    ensambla sus resultados individuales en un resultado comparativo,
+    reutilizando el flujo de investigación ya existente" (TASKS.md, Fase
+    5, "Orquestador y CLI").
+
+    Es, deliberadamente, un contenedor simple: una lista de
+    `ResearchResult` (uno por empresa, cada uno ya producido por
+    `investigate(...)` sin modificarla), sin ningún cálculo comparativo
+    adicional en esta tarea (eso corresponde al motor de posicionamiento
+    relativo, `investmentops.analysis_engines.comparables`, ya
+    implementado por separado en la sección "Motor de análisis:
+    posicionamiento relativo" de esta misma fase, y todavía no conectado
+    con este flujo de `compare`). No se define en
+    `investmentops.core.research_result` junto a `ResearchResult`/
+    `ResearchFailure`: a diferencia de esos dos tipos (definidos en la
+    tarea "Contratos e interfaces" de la Fase 1, como parte del modelo de
+    dominio interno que consumen los generadores de reportes), este tipo
+    es una agregación puntual del *orquestador* para un flujo de CLI
+    concreto (`compare`), mismo criterio de ubicación ya aplicado a
+    `NormalizedCompanyData`/`PeerMetrics` (también definidos aquí, en
+    `investmentops.core.orchestrator`, no en `investmentops.core.research_result`).
+
+    Attributes
+    ----------
+    tickers:
+        Los tickers solicitados, en el mismo orden recibido (sin
+        normalizar ni deduplicar: mismo criterio ya aplicado por la CLI
+        en `COMPARE_CLI.md`, "Sin normalización ni deduplicación de
+        tickers en esta capa").
+    results:
+        Un `ResearchResult` por cada ticker de `tickers`, en el mismo
+        orden, cada uno producido de forma independiente por
+        `investigate(...)`. Un ticker inválido o sin datos no detiene la
+        comparación de los demás: su propio `ResearchResult` refleja el
+        fallo parcial correspondiente en su campo `failures`, tal como
+        ya garantiza `investigate` para una investigación individual.
+    """
+
+    tickers: Sequence[str]
+    results: Sequence[ResearchResult]
+
+
+def compare(
+    tickers: Sequence[str],
+    *,
+    config: dict[str, Any] | None = None,
+    provider: DataProvider | None = None,
+    news_provider: FMPNewsProvider | None = None,
+) -> ComparisonResult:
+    """Investiga cada empresa de `tickers` y ensambla un resultado comparativo.
+
+    Reutiliza, sin modificarla, `investigate(ticker, ...)` (ver su propio
+    docstring para el detalle completo de su manejo de fallos parciales)
+    una vez por cada ticker de `tickers`, en el mismo orden recibido, y
+    agrupa los `ResearchResult` obtenidos en un `ComparisonResult`.
+
+    No introduce ningún manejo de fallos adicional: como `investigate`
+    nunca deja escapar `DataProviderError`, `NormalizationError`,
+    `PromptError`, `AgentProviderSelectionError` ni `AIProviderError` (los
+    traduce a `ResearchFailure` dentro del propio `ResearchResult` de esa
+    empresa), un ticker problemático no impide que se investiguen los
+    demás: su `ResearchResult` individual simplemente refleja sus propios
+    `failures`, visibles luego en `ComparisonResult.results`.
+
+    Esta función no calcula ningún posicionamiento relativo entre las
+    empresas comparadas (eso ya vive, por separado, en
+    `investmentops.analysis_engines.comparables`/`run_comparables_engine`,
+    de la sección "Motor de análisis: posicionamiento relativo" de esta
+    misma fase): `compare` solo ejecuta el flujo de investigación
+    completo para cada empresa involucrada, reutilizándolo tal cual.
+
+    Parameters
+    ----------
+    tickers:
+        Los tickers de las empresas a comparar (ej. ``["AAPL", "MSFT"]``),
+        tal como los entrega la CLI (`investmentops.cli.parse_args`,
+        subcomando `compare`, ya validado como mínimo dos tickers no
+        vacíos, pero sin normalizar). No se exige aquí ningún mínimo:
+        esa validación ya ocurrió en la capa CLI; esta función acepta
+        cualquier secuencia no vacía de tickers.
+    config:
+        Configuración ya cargada, propagada tal cual a cada llamada de
+        `investigate(...)`. Útil para pruebas, para no depender de un
+        `config.local.toml` real en disco.
+    provider:
+        Proveedor de datos ya construido, propagado tal cual a cada
+        llamada de `investigate(...)`.
+    news_provider:
+        Proveedor de noticias ya construido, propagado tal cual a cada
+        llamada de `investigate(...)` (ver "Inclusión del motor de
+        noticias relevantes en `investigate`" en el docstring del
+        módulo).
+
+    Returns
+    -------
+    ComparisonResult
+        `tickers` (los mismos recibidos, en el mismo orden) y `results`
+        (un `ResearchResult` por ticker, en ese mismo orden).
+
+    Raises
+    ------
+    ConfigError
+        Si algún proveedor no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml` (ver `investigate`).
+    """
+    results = [
+        investigate(ticker, config=config, provider=provider, news_provider=news_provider)
+        for ticker in tickers
+    ]
+
+    return ComparisonResult(tickers=list(tickers), results=results)

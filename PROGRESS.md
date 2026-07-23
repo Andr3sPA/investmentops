@@ -4,59 +4,64 @@
 
 ## Última tarea completada
 
-Fase 5, "Orquestador y CLI" → "Implementar el parseo de argumentos del
-comando de comparación (lista de tickers)." (TASKS.md).
+Fase 5, "Orquestador y CLI" → "Implementar en el orquestador la función
+que ejecuta la investigación de cada empresa involucrada en una
+comparación y ensambla sus resultados individuales en un resultado
+comparativo, reutilizando el flujo de investigación ya existente."
+(TASKS.md).
 
 ### Qué se implementó
 
-`investmentops/cli/__init__.py` (modificado): sobre la sintaxis ya
-fijada en `investmentops/cli/COMPARE_CLI.md`, se agrega un segundo
-subparser, `compare`, junto al ya existente `investigate` (sin modificar
-la sintaxis ni el comportamiento de este último):
+`investmentops/core/orchestrator.py` (modificado): se agregan dos piezas
+nuevas al final del módulo, sin tocar nada existente:
 
-- `compare TICKER1 TICKER2 [TICKER3 ...]`: argumento posicional
-  variádico (`nargs="+"`), cada elemento validado individualmente con
-  `_validate_ticker` (reutilizada sin cambios de `investigate`).
-- Mínimo de dos tickers exigido por una `argparse.Action` propia,
-  `_MinimumTwoTickersAction`: como `argparse` no ofrece un mecanismo
-  nativo para un mínimo en `nargs="+"`, esta acción llama a
-  `parser.error(...)` si `len(values) < 2`, terminando el proceso con el
-  mismo mecanismo estándar (mensaje en `stderr` + `SystemExit`) ya usado
-  por el resto de errores de parseo de esta CLI.
-- Sin normalización ni deduplicación de tickers en esta capa (mismo
-  criterio ya aplicado a `investigate`, ver `CLI.md`).
-- Sin flags adicionales para `compare` en esta tarea (`--format` u
-  otros): fuera de alcance, ver `COMPARE_CLI.md`.
-- `dispatch` no se modificó: `args.command == "compare"` sigue
-  levantando `ValueError("Comando desconocido: ...")`, ya que conectar
-  `compare` con el orquestador es la tarea siguiente y separada de esta
-  misma sección de `TASKS.md`.
+- `ComparisonResult` (dataclass inmutable): contenedor simple
+  `{tickers: Sequence[str], results: Sequence[ResearchResult]}`. Definido
+  en `investmentops.core.orchestrator` (no en
+  `investmentops.core.research_result`, junto a `ResearchResult`/
+  `ResearchFailure`), mismo criterio de ubicación ya aplicado a
+  `NormalizedCompanyData`/`PeerMetrics`: es una agregación puntual del
+  orquestador para el flujo de CLI `compare`, no parte del modelo de
+  dominio interno definido en la Fase 1.
+- `compare(tickers, *, config=None, provider=None, news_provider=None) ->
+  ComparisonResult`: invoca `investigate(ticker, ...)` (sin modificarla)
+  una vez por cada ticker de `tickers`, en el mismo orden recibido, y
+  agrupa los `ResearchResult` obtenidos. No introduce ningún manejo de
+  fallos adicional — un ticker problemático no detiene la comparación de
+  los demás, ya que cada `ResearchResult` individual ya refleja su propio
+  fallo parcial en `failures` (garantía ya existente de `investigate`).
+  No calcula ningún posicionamiento relativo entre las empresas
+  comparadas: esa responsabilidad ya vive, por separado, en
+  `investmentops.analysis_engines.comparables`
+  (`run_comparables_engine`), de la sección "Motor de análisis:
+  posicionamiento relativo" de esta misma fase, todavía no conectada con
+  este flujo.
 
-`investmentops/tests/test_cli_compare.py` (nuevo): cubre el parseo de
-`compare` (tickers válidos, mínimo de dos, ticker vacío/solo espacios,
-preservación de orden, tickers con puntos, no normalización), confirma
-que `investigate` sigue funcionando sin cambios tras agregar el nuevo
-subparser, y confirma que `dispatch` todavía no reconoce `compare`.
+`investmentops/tests/test_core_orchestrator_compare.py` (nuevo): cubre
+`compare` devolviendo un `ResearchResult` por ticker en el orden
+recibido, propagando cada ticker al proveedor inyectado, capturando
+fallos de proveedor sin propagar la excepción (tanto "todos fallan" como
+"uno falla y los demás no se ven afectados"), y confirmando que
+`ComparisonResult.tickers` conserva los tickers tal cual se recibieron
+(sin normalizar).
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_cli_compare.py`
+- `investmentops/tests/test_core_orchestrator_compare.py`
 
 Modificados:
-- `investmentops/cli/__init__.py`
+- `investmentops/core/orchestrator.py`
 - `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
 Fase 5, "Orquestador y CLI":
-- "Implementar en el orquestador la función que ejecuta la investigación
-  de cada empresa involucrada en una comparación y ensambla sus
-  resultados individuales en un resultado comparativo, reutilizando el
-  flujo de investigación ya existente." Reutilizaría `investigate(...)`
-  (`investmentops/core/orchestrator.py`) para cada ticker de la lista
-  recibida, ensamblando sus `ResearchResult` individuales en una
-  estructura comparativa nueva (a definir: lista de `ResearchResult`, o
-  un tipo contenedor simple), sin modificar `investigate` ni
-  `assemble_research_result`.
+- "Conectar el comando CLI de comparación con esa función del
+  orquestador." Extendería `investmentops.cli.dispatch` para reconocer
+  `args.command == "compare"` (hoy levanta `ValueError`), invocando
+  `investmentops.core.orchestrator.compare(args.tickers, config=config,
+  provider=provider, news_provider=news_provider)` y devolviendo el
+  `ComparisonResult` obtenido, sin modificar el comportamiento ya
+  existente de `dispatch` para `"investigate"`.
