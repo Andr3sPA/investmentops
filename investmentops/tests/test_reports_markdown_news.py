@@ -14,6 +14,16 @@ motor de noticias relevantes en sí
 propios archivos de prueba) ni su conversión a `AnalysisResult`
 (`investmentops.core.orchestrator._news_relevance_result_to_analysis_result`,
 ya cubierta en `test_core_orchestrator_news_relevance.py`).
+
+`test_render_precedes_comparables_section` (antes
+`test_render_is_the_last_section_of_the_document`) y
+`test_render_keeps_empty_news_relevance_section_when_agent_absent` se
+ajustaron al agregarse la sección "Comparables del sector" (Fase 5)
+después de "Noticias recientes relevantes": ya no es la última sección
+del reporte, por lo que las pruebas ya no pueden asumir eso ni tomar
+todo lo que sigue al encabezado hasta el final del documento (mismo
+ajuste ya aplicado en su momento a las pruebas de "Valoración"/"Evolución
+de ingresos y beneficios" cuando se agregaron secciones posteriores).
 """
 
 from datetime import datetime, timezone
@@ -92,28 +102,36 @@ def test_render_shows_news_relevance_after_trend_analysis() -> None:
     )
 
 
-def test_render_is_the_last_section_of_the_document() -> None:
+def test_render_precedes_comparables_section() -> None:
+    """"Noticias recientes relevantes" ya no es la última sección del
+    reporte (desde que se agregó "Comparables del sector" en Fase 5),
+    pero sigue precediéndola en el orden ya fijado."""
     result = assemble_research_result("AAPL", [])
 
     output = render_markdown(result)
 
-    assert output.rstrip("\n").endswith(
-        output[output.index("## Noticias recientes relevantes"):].rstrip("\n")
+    assert output.index("## Noticias recientes relevantes") < output.index(
+        "## Comparables del sector"
     )
 
 
 def test_render_keeps_empty_news_relevance_section_when_agent_absent() -> None:
     """Si el motor de noticias relevantes no está en `analysis_results`
     (ej. no se inyectó un proveedor de noticias), la sección conserva
-    solo su encabezado vacío. Es la última sección del reporte, por lo
-    que basta con verificar todo lo que sigue al encabezado."""
+    solo su encabezado vacío.
+
+    Acotada por el encabezado de "Comparables del sector" (nueva desde
+    Fase 5): "Noticias recientes relevantes" ya no es la última sección
+    del reporte.
+    """
     result = assemble_research_result("AAPL", [])
 
     output = render_markdown(result)
 
     section_start = output.index("## Noticias recientes relevantes")
+    section_end = output.index("## Comparables del sector")
     section_body = (
-        output[section_start:]
+        output[section_start:section_end]
         .replace("## Noticias recientes relevantes", "")
         .strip()
     )
@@ -163,7 +181,8 @@ def test_render_news_relevance_section_ignores_other_analysis_results() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Noticias recientes relevantes")
-    assert "hallazgo de valoración" not in output[section_start:]
+    section_end = output.index("## Comparables del sector")
+    assert "hallazgo de valoración" not in output[section_start:section_end]
 
 
 # --- Lista de noticias relevantes --------------------------------------------
@@ -208,7 +227,9 @@ def test_render_omits_news_list_when_no_relevant_news() -> None:
 
     output = render_markdown(result)
 
-    assert "- **" not in output[output.index("## Noticias recientes relevantes"):]
+    section_start = output.index("## Noticias recientes relevantes")
+    section_end = output.index("## Comparables del sector")
+    assert "- **" not in output[section_start:section_end]
 
 
 def test_render_does_not_duplicate_relevant_news_as_supporting_metrics_list() -> None:
@@ -253,7 +274,8 @@ def test_render_omits_news_relevance_limitations_subsection_when_empty() -> None
     output = render_markdown(result)
 
     section_start = output.index("## Noticias recientes relevantes")
-    assert "**Limitaciones:**" not in output[section_start:]
+    section_end = output.index("## Comparables del sector")
+    assert "**Limitaciones:**" not in output[section_start:section_end]
 
 
 # --- Procedencia (centinela) ------------------------------------------------------
@@ -271,8 +293,10 @@ def test_render_includes_news_relevance_sentinel_provenance() -> None:
 
     output = render_markdown(result)
 
-    assert "**Generado por:** none (deterministic) el" in output
-    assert provenance.generated_at.isoformat() in output
+    section_start = output.index("## Noticias recientes relevantes")
+    section_end = output.index("## Comparables del sector")
+    assert "**Generado por:** none (deterministic) el" in output[section_start:section_end]
+    assert provenance.generated_at.isoformat() in output[section_start:section_end]
 
 
 def test_render_omits_news_relevance_provenance_when_agent_absent() -> None:
@@ -281,4 +305,5 @@ def test_render_omits_news_relevance_provenance_when_agent_absent() -> None:
     output = render_markdown(result)
 
     section_start = output.index("## Noticias recientes relevantes")
-    assert "**Generado por:**" not in output[section_start:]
+    section_end = output.index("## Comparables del sector")
+    assert "**Generado por:**" not in output[section_start:section_end]
