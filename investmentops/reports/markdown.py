@@ -2,7 +2,7 @@
 # investmentops/reports/markdown.py
 """Generador de reportes en Markdown.
 
-Cubre, hasta ahora, nueve tareas de TASKS.md, Fase 2 ("Generador Markdown"),
+Cubre, hasta ahora, diez tareas de TASKS.md, Fase 2 ("Generador Markdown"),
 Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
 
 - "Implementar la plantilla base de reporte en Markdown (encabezados,
@@ -21,7 +21,9 @@ Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
 - "Añadir la sección 'Noticias recientes relevantes' a la plantilla
   Markdown." (ya completada, ver PROGRESS.md).
 - "Añadir la sección 'Comparables del sector' a la plantilla Markdown."
-  (esta tarea).
+  (ya completada, ver PROGRESS.md).
+- "Adaptar el generador Markdown para soportar un reporte de comparación
+  (varias empresas) además del reporte individual." (esta tarea).
 
 ## Dónde vive la procedencia de IA
 
@@ -122,7 +124,7 @@ usa una **lista Markdown**, un ítem por noticia relevante:
 Orden dentro de la sección: hallazgos → lista de noticias relevantes
 (omitida si está vacía) → limitaciones → procedencia.
 
-## Sección "Comparables del sector" (esta tarea)
+## Sección "Comparables del sector"
 
 Cubre la tarea "Añadir la sección 'Comparables del sector' a la
 plantilla Markdown" (TASKS.md, Fase 5, "Reportes"). Mismo criterio que
@@ -180,6 +182,95 @@ Orden dentro de la sección: hallazgos → métricas de la empresa (omitida
 si no hay ninguna) → tabla comparativa (omitida si no hay pares) →
 limitaciones → procedencia.
 
+## Reporte de comparación (varias empresas, esta tarea)
+
+Cubre la tarea "Adaptar el generador Markdown para soportar un reporte
+de comparación (varias empresas) además del reporte individual"
+(TASKS.md, Fase 5, "Reportes"). No hay una tarea de diseño previa y
+separada para el formato de este reporte; la decisión se toma aquí
+mismo, mismo criterio ya aplicado a "Noticias recientes relevantes"/
+"Comparables del sector".
+
+### Decisión de formato: reutilizar `render_markdown` por empresa, anidado bajo un encabezado de comparación
+
+`render_markdown_comparison(tickers, results)` no define una estructura
+nueva y paralela para el reporte comparativo (ej. una tabla única con
+todas las métricas de todas las empresas lado a lado). En su lugar,
+reutiliza, sin modificarlo, `render_markdown` para producir el reporte
+individual completo de cada empresa (`ResearchResult`), y los anida bajo
+un único documento de comparación, desplazando un nivel cada encabezado
+Markdown de nivel 1 o 2 que produce `render_markdown` (`# ` -> `## `,
+`## ` -> `### `, vía `_shift_markdown_headings`) para que la jerarquía
+del documento quede correcta:
+
+    # Comparación: AAPL, MSFT
+    ## Investigación: AAPL
+    ### Salud financiera
+    ...
+    ## Investigación: MSFT
+    ### Salud financiera
+    ...
+
+Se elige esta reutilización, en vez de una tabla comparativa
+escalar-por-escalar (ya cubierta, para una única empresa frente a sus
+pares, por la sección "Comparables del sector" del reporte individual),
+por dos motivos:
+
+- **No hay ningún cálculo comparativo nuevo que ensamblar en esta
+  tarea.** `investmentops.core.orchestrator.compare` ya deja explícito
+  que no calcula ningún posicionamiento relativo entre las empresas
+  comparadas — solo ejecuta `investigate(...)` para cada una. El
+  posicionamiento relativo ya existe, por separado, como el motor de
+  comparables (`run_comparables_engine`), y no está conectado a este
+  flujo (ver PROGRESS.md). Reproducir aquí una tabla comparativa
+  escalar-por-escalar duplicaría, sin ninguna fuente de datos nueva,
+  algo que ese motor ya hace mejor (con posición relativa explícita, no
+  solo el valor crudo de cada empresa).
+- **Ninguna empresa pierde ninguna sección de su reporte individual.**
+  Un usuario que compara dos empresas normalmente quiere ver el análisis
+  completo de cada una (salud financiera, valoración, tendencia,
+  noticias, comparables), no solo un resumen recortado — reutilizar
+  `render_markdown` tal cual garantiza eso sin reimplementar ninguna de
+  sus cinco secciones.
+
+### Por qué recibe `tickers`/`results` sueltos y no un `ComparisonResult`
+
+`investmentops.core.orchestrator.ComparisonResult` no se importa aquí:
+`investmentops.core.orchestrator` ya importa `investmentops.reports`
+(`render_markdown`, `render_html`, `save_markdown_report`,
+`save_html_report`) para `generate_reports`/
+`investigate_and_generate_reports`, por lo que importar `ComparisonResult`
+desde este módulo crearía un ciclo de importación
+(`core.orchestrator` -> `reports` -> `reports.markdown` ->
+`core.orchestrator`). Esta función acepta en su lugar los dos campos que
+expone `ComparisonResult` (`tickers`, `results`) como parámetros
+sueltos: quien la invoque (el orquestador, la CLI) puede pasarle
+`comparison.tickers`/`comparison.results` directamente, sin que este
+módulo dependa del tipo concreto que los agrupa.
+
+### Manejo de listas vacías o desalineadas
+
+Esta función no valida que `len(tickers) == len(results)` ni que los
+tickers coincidan con `result.company.ticker` de cada `ResearchResult`:
+`ComparisonResult` ya garantiza esa correspondencia por construcción
+(`compare(...)` produce un `ResearchResult` por cada ticker, en el mismo
+orden). El título del documento (`# Comparación: ...`) usa `tickers`
+(los solicitados originalmente, sin normalizar, ver
+`ComparisonResult.tickers`); el cuerpo usa `results` (uno por empresa,
+cada uno ya con su propio ticker normalizado en `result.company.ticker`,
+visible en su propio encabezado `## Investigación: <ticker>` ya
+producido por `render_markdown`).
+
+Fuera de alcance de esta tarea:
+- El generador HTML: tarea separada y posterior de la misma sección de
+  `TASKS.md`.
+- Conectar este generador con el orquestador o la CLI (ej. un nuevo
+  `--format` para `compare`, o un `generate_comparison_reports`
+  análogo a `generate_reports`): no forma parte de esta tarea.
+- Cualquier tabla comparativa escalar-por-escalar entre las empresas
+  comparadas: ya existe, por separado, como el motor de comparables
+  (Fase 5), no conectado a este flujo (ver arriba).
+
 ## Guardado del archivo Markdown generado (`save_markdown_report`)
 
 `save_markdown_report` escribe el texto ya renderizado por
@@ -219,25 +310,22 @@ criterio ya aplicado por `CacheError` en
 
 Fuera de alcance de este módulo:
 - El generador HTML: sección separada de `TASKS.md` (incluida su propia
-  tarea, todavía pendiente, de añadir esta misma sección de comparables).
+  tarea, todavía pendiente, de añadir el equivalente de este reporte de
+  comparación).
 - Conectar el motor de comparables (`run_comparables_engine`) con
   `investigate()`: no forma parte de esta tarea de plantilla; hoy ningún
   `ResearchResult` real incluye un `AnalysisResult` con
   `analysis_id="comparables"` (ver `investmentops/core/orchestrator.py`).
-- Adaptar el generador para un reporte de comparación (varias empresas,
-  `ComparisonResult`): tarea separada y posterior de la misma sección de
-  `TASKS.md`.
-- Conectar `save_markdown_report` con el orquestador o con la CLI para
-  que se invoque automáticamente tras ensamblar el resultado de
-  investigación: ya conectado desde Fase 2 (ver
-  `investmentops.core.orchestrator.generate_reports`).
+- Conectar `render_markdown_comparison`/`save_markdown_report` con el
+  orquestador o con la CLI para un nuevo formato de salida de `compare`:
+  tarea separada y posterior de `TASKS.md`.
 - Gráficos o visualizaciones: fuera de alcance del MVP.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from investmentops.analysis_engines.contracts import AnalysisResult
 from investmentops.config import load_config
@@ -669,6 +757,92 @@ def render_markdown(result: ResearchResult) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
+def _shift_markdown_headings(markdown_text: str) -> str:
+    """Desplaza un nivel cada encabezado Markdown de nivel 1 o 2.
+
+    Usada por `render_markdown_comparison` para anidar el reporte
+    individual completo de cada empresa (ya renderizado por
+    `render_markdown`, que solo usa encabezados `# ` y `## `) bajo el
+    encabezado de nivel superior del documento de comparación
+    (`# Comparación: ...`), ver "Reporte de comparación" en el docstring
+    del módulo.
+
+    Solo transforma líneas que empiezan exactamente con ``"# "`` (nivel
+    1) o ``"## "`` (nivel 2) — las únicas dos profundidades que produce
+    `render_markdown` — sumando un ``#`` adicional a cada una
+    (``"# "`` -> ``"## "``, ``"## "`` -> ``"### "``). Ambos prefijos son
+    mutuamente excluyentes (una línea que empieza con ``"## "`` no
+    empieza con ``"# "``, ya que el segundo carácter es ``#``, no un
+    espacio), por lo que no hay ambigüedad sobre cuál aplicar. El resto
+    del texto (párrafos, listas, tablas, líneas en blanco) queda
+    intacto.
+
+    Parameters
+    ----------
+    markdown_text:
+        Texto Markdown ya renderizado (típicamente la salida de
+        `render_markdown(result)`).
+
+    Returns
+    -------
+    str
+        El mismo texto, con cada encabezado de nivel 1 o 2 desplazado un
+        nivel hacia abajo.
+    """
+    shifted_lines: list[str] = []
+    for line in markdown_text.split("\n"):
+        if line.startswith("## ") or line.startswith("# "):
+            shifted_lines.append("#" + line)
+        else:
+            shifted_lines.append(line)
+    return "\n".join(shifted_lines)
+
+
+def render_markdown_comparison(
+    tickers: Sequence[str], results: Sequence[ResearchResult]
+) -> str:
+    """Renderiza un reporte de comparación (varias empresas) en Markdown.
+
+    Ver "Reporte de comparación (varias empresas, esta tarea)" en el
+    docstring del módulo para la decisión de formato completa: reutiliza
+    `render_markdown` para el reporte individual completo de cada
+    empresa, anidándolos bajo un único documento de comparación
+    (`# Comparación: <tickers>`), con los encabezados de cada reporte
+    individual desplazados un nivel (vía `_shift_markdown_headings`) para
+    que la jerarquía del documento quede correcta.
+
+    Parameters
+    ----------
+    tickers:
+        Los tickers solicitados para la comparación, en el mismo orden
+        recibido (ej. `ComparisonResult.tickers`), usados únicamente
+        para el título del documento.
+    results:
+        Un `ResearchResult` por empresa, en el mismo orden (ej.
+        `ComparisonResult.results`), cada uno renderizado íntegramente
+        vía `render_markdown` y anidado bajo su propio subtítulo
+        (`## Investigación: <ticker>`, ya producido por `render_markdown`
+        y desplazado un nivel).
+
+    Returns
+    -------
+    str
+        Texto Markdown del reporte comparativo, terminado en un único
+        salto de línea final. Si `results` está vacío, el documento
+        contiene únicamente el título de comparación.
+    """
+    lines: list[str] = []
+    lines.append(f"# Comparación: {', '.join(tickers)}")
+    lines.append("")
+
+    for result in results:
+        individual_report = render_markdown(result)
+        lines.append(_shift_markdown_headings(individual_report))
+        lines.append("")
+
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
 def _resolve_output_dir(
     output_dir: str | Path | None, config: dict[str, Any] | None
 ) -> Path:
@@ -751,4 +925,4 @@ def save_markdown_report(
             f"No se pudo escribir el archivo de reporte '{file_path}': {exc}"
         ) from exc
 
-    return file_path    
+    return file_path

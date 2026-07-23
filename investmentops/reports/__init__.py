@@ -27,6 +27,11 @@ implementada en `investmentops.reports.markdown` (ver TASKS.md, Fase 2,
 - `render_markdown`: construye el reporte completo (encabezado, salud
   financiera, valoración, incluyendo hallazgos, métricas de soporte,
   limitaciones y procedencia de la interpretación de IA por sección).
+- `render_markdown_comparison`: construye un reporte de comparación
+  (varias empresas), reutilizando `render_markdown` por empresa y
+  anidándolos bajo un único documento (ver TASKS.md, Fase 5, "Reportes"
+  > "Adaptar el generador Markdown para soportar un reporte de
+  comparación").
 - `save_markdown_report`: guarda el texto ya renderizado por
   `render_markdown` en un archivo `<TICKER>.md`, en una ruta local
   configurable (`config.local.toml`, sección `[output].output_dir`).
@@ -49,16 +54,15 @@ volcado de secciones y su guardado en disco implementados en
   usa `save_markdown_report` (`config.local.toml`, sección
   `[output].output_dir`), siguiendo exactamente el mismo patrón.
 
-Aún sin implementación: extender el orquestador para invocar los
-generadores de reporte automáticamente tras ensamblar el resultado de
-investigación, y la opción de formato de salida en la CLI (ambas, tareas
-separadas y posteriores, ver TASKS.md, Fase 2, "Orquestador y CLI").
+Aún sin implementación: el equivalente HTML de `render_markdown_comparison`
+(tarea separada y posterior de "Reportes", Fase 5).
 """
 
 from investmentops.reports.html import render_html, save_html_report
 from investmentops.reports.markdown import (
     ReportError,
     render_markdown,
+    render_markdown_comparison,
     save_markdown_report,
 )
 
@@ -66,6 +70,7 @@ __all__ = [
     "ReportError",
     "render_html",
     "render_markdown",
+    "render_markdown_comparison",
     "save_html_report",
     "save_markdown_report",
 ]
