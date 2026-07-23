@@ -4,78 +4,66 @@
 
 ## Última tarea completada
 
-Fase 5, "Reportes" → "Añadir la sección 'Comparables del sector' a la
-plantilla Markdown." (TASKS.md).
+Fase 5, "Reportes" → "Añadir la misma sección [Comparables del sector] a
+la plantilla HTML." (TASKS.md).
 
 ### Qué se implementó
 
-`investmentops/reports/markdown.py` (modificado): se agregó
+`investmentops/reports/html.py` (modificado): se agregó
 `COMPARABLES_AGENT_ID = "comparables"` (mismo criterio de identificador
 ya usado para los demás motores, sin importar desde
-`investmentops.analysis_engines.comparables` para no acoplar este
-generador a la implementación concreta del motor) y tres piezas nuevas:
+`investmentops.analysis_engines.comparables`) y tres piezas nuevas,
+equivalente HTML de las ya implementadas en
+`investmentops/reports/markdown.py`:
 
-- `_format_comparable_value`/`_format_comparable_position`: formatean
-  valores/posiciones `None` como `"—"`, mismo símbolo ya usado por
-  `_format_growth_percentage` para variaciones no calculables de la
-  sección de tendencia.
-- `_render_comparables_body`: construye la sección "Comparables del
-  sector" — hallazgos → métricas propias de la empresa (lista plana
-  `- clave: valor`, sin la clave `ticker`, mismo formato ya usado por
-  salud financiera/valoración) → tabla comparativa Markdown (una fila
+- `_format_comparable_value_html`/`_format_comparable_position_html`:
+  formatean valores/posiciones `None` como `"—"`, mismo símbolo ya usado
+  por `_format_growth_percentage_html` para variaciones no calculables
+  de la sección de tendencia.
+- `_render_comparables_body_html`: construye la sección "Comparables del
+  sector" — hallazgos → métricas propias de la empresa (`<ul><li>clave:
+  valor</li></ul>`, sin la clave `ticker`, mismo formato ya usado por
+  salud financiera/valoración) → tabla `<table>` comparativa (una fila
   por combinación métrica/par, tomada de
   `supporting_metrics["comparisons"]`; omitida si ninguna métrica tiene
   comparaciones, es decir, la empresa no tiene pares) → limitaciones →
-  procedencia centinela (mismo patrón ya usado por tendencia/noticias
-  relevantes).
+  procedencia centinela. Todo el contenido dinámico se escapa con
+  `html.escape`, mismo criterio ya aplicado en el resto del generador.
 
-`render_markdown` ahora agrega el bloque `## Comparables del sector`
-después de `## Noticias recientes relevantes`, convirtiéndose en la
-nueva última sección del reporte. No se decidió el formato en un
-documento `.md` separado (a diferencia de la tendencia, que tuvo
-`TREND_PRESENTATION.md`): siguiendo el mismo criterio ya usado para
-"Noticias recientes relevantes" (que tampoco tuvo una tarea de diseño
-separada en `TASKS.md`), la decisión se documentó inline en el docstring
-del módulo.
+`render_html` ahora agrega el bloque `<h2>Comparables del sector</h2>`
+después de `<h2>Noticias recientes relevantes</h2>`, convirtiéndose en
+la nueva última sección del reporte HTML, igual que ya ocurrió con la
+versión Markdown.
 
 Esta tarea **no conecta** el motor de posicionamiento relativo
-(`run_comparables_engine`) con `investigate()`: hoy ningún
-`ResearchResult` real producido por el flujo normal incluye un
-`AnalysisResult` con `analysis_id="comparables"` (esa conexión no está
-desglosada como tarea explícita en `TASKS.md` para esta sección). La
-sección simplemente queda lista para volcar el contenido cuando ese
-análisis esté presente, igual que ya ocurrió con salud
-financiera/valoración/tendencia/noticias antes de que sus respectivos
-motores se conectaran al orquestador.
+(`run_comparables_engine`) con `investigate()`: mismo alcance ya
+documentado para la tarea equivalente de Markdown (ver entrada anterior
+de este archivo). No fue necesario ajustar ninguna prueba HTML
+existente (`test_reports_html.py`, `test_reports_html_trend.py`), ya
+que ninguna asumía que "Noticias recientes relevantes" fuera la última
+sección del documento HTML (a diferencia de la versión Markdown, que sí
+requirió ajustes en `test_reports_markdown_news.py`).
 
-`investmentops/tests/test_reports_markdown_news.py` (modificado): se
-ajustaron `test_render_is_the_last_section_of_the_document` (renombrada
-a `test_render_precedes_comparables_section`, ya que "Noticias recientes
-relevantes" dejó de ser la última sección) y
-`test_render_keeps_empty_news_relevance_section_when_agent_absent`
-(acotada ahora por `## Comparables del sector` en vez de tomar todo lo
-que sigue hasta el final del documento), junto con las pruebas de
-limitaciones/procedencia que también asumían ser la sección final.
-
-`investmentops/tests/test_reports_markdown_comparables.py` (nuevo):
-cubre encabezado y ubicación de la sección (después de "Noticias
-recientes relevantes", nueva última sección), hallazgos, métricas de la
-empresa (presentes/ausentes, sin la clave `ticker`), tabla comparativa
-(filas por métrica/par, valores/posiciones no calculables como `"—"`,
-tabla omitida sin pares), limitaciones y procedencia centinela.
+`investmentops/tests/test_reports_html_comparables.py` (nuevo): cubre
+encabezado y ubicación de la sección (después de "Noticias recientes
+relevantes"), hallazgos, métricas de la empresa (presentes/ausentes, sin
+la clave `ticker`), tabla comparativa (filas por métrica/par,
+valores/posiciones no calculables como `"—"`, tabla omitida sin pares),
+limitaciones, procedencia centinela y escapado de caracteres especiales
+en los hallazgos.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_reports_markdown_comparables.py`
+- `investmentops/tests/test_reports_html_comparables.py`
 
 Modificados:
-- `investmentops/reports/markdown.py`
-- `investmentops/tests/test_reports_markdown_news.py`
+- `investmentops/reports/html.py`
 - `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
 Fase 5, "Reportes":
-- "Añadir la misma sección [Comparables del sector] a la plantilla HTML."
+- "Adaptar el generador Markdown para soportar un reporte de comparación
+  (varias empresas) además del reporte individual."

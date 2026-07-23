@@ -1,8 +1,8 @@
 # investmentops/reports/html.py
 """Generador de reportes en HTML.
 
-Cubre, hasta ahora, cuatro tareas de TASKS.md, Fase 2 ("Generador HTML"),
-Fase 3 ("Reportes") y Fase 4 ("Reportes"):
+Cubre, hasta ahora, cinco tareas de TASKS.md, Fase 2 ("Generador HTML"),
+Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
 
 - "Implementar el volcado de las mismas secciones que en Markdown (salud
   financiera, valoración, fuentes)." (ya completada, ver PROGRESS.md).
@@ -12,7 +12,9 @@ Fase 3 ("Reportes") y Fase 4 ("Reportes"):
   plantilla HTML, conforme al formato ya decidido." (ya completada, ver
   PROGRESS.md).
 - "Añadir la misma sección [Noticias recientes relevantes] a la
-  plantilla HTML." (esta tarea).
+  plantilla HTML." (ya completada, ver PROGRESS.md).
+- "Añadir la misma sección [Comparables del sector] a la plantilla
+  HTML." (esta tarea).
 
 Sobre la base de diseño ya fijada en `investmentops/reports/HTML_TEMPLATE.md`:
 HTML5 mínimo, sin CSS elaborado, sin JavaScript, sin motor de templating
@@ -28,9 +30,10 @@ independiente (ver ARCHITECTURE.md, "Extensibilidad sin reescritura" —
 "Agregar un nuevo formato de salida implica añadir un generador nuevo,
 no tocar los existentes"), por lo que las constantes de identificador de
 agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`,
-`TREND_ANALYSIS_AGENT_ID`, `NEWS_RELEVANCE_AGENT_ID`) y el helper de
-búsqueda (`_find_analysis`) se duplican aquí en vez de importarse, mismo
-criterio ya documentado en versiones anteriores de este módulo.
+`TREND_ANALYSIS_AGENT_ID`, `NEWS_RELEVANCE_AGENT_ID`,
+`COMPARABLES_AGENT_ID`) y el helper de búsqueda (`_find_analysis`) se
+duplican aquí en vez de importarse, mismo criterio ya documentado en
+versiones anteriores de este módulo.
 
 ## Sección "Evolución de ingresos y beneficios"
 
@@ -59,7 +62,7 @@ claves que son mapeos por periodo
 contenido y orden que la tabla Markdown ya implementada
 (`_render_trend_analysis_body` en `investmentops/reports/markdown.py`).
 
-## Sección "Noticias recientes relevantes" (esta tarea)
+## Sección "Noticias recientes relevantes"
 
 Cubre la tarea "Añadir la misma sección a la plantilla HTML" (TASKS.md,
 Fase 4, "Reportes"), equivalente HTML de la sección ya implementada en
@@ -85,35 +88,53 @@ es una lista de dicts (`title`, `summary`, `source`, `published_at`,
 ni un puñado de escalares (a diferencia de salud financiera/valoración).
 Esta sección usa una **lista HTML** (`<ul><li>`), un ítem por noticia
 relevante, equivalente elemento a elemento a la lista Markdown ya
-implementada:
+implementada.
 
-```html
-<ul>
-  <li><strong>título</strong> (fuente, fecha ISO 8601): resumen
-      (<a href="url">Leer más</a>)</li>
-</ul>
-```
+## Sección "Comparables del sector" (esta tarea)
 
-- Un `<li>` por elemento de `relevant_news`, en el mismo orden en que ya
-  vienen (preservado desde `filter_relevant_news`).
-- La lista se omite por completo si `relevant_news` está vacía: en ese
-  caso basta con el hallazgo ya generado ("No se encontraron noticias
-  recientes relevantes en los últimos N día(s).").
-- Todo el contenido dinámico (título, fuente, fecha, resumen, url) se
-  escapa con `html.escape` antes de insertarse, mismo criterio ya
-  aplicado en el resto de este generador (los hallazgos y las
-  limitaciones ya vienen de un modelo de lenguaje o de texto libre, y no
-  deben interpretarse como marcado HTML).
-- Los `findings` y la procedencia reutilizan exactamente el mismo
-  formato de marcado (`<p>`, bloque "Generado por: ...") ya usado por
-  las demás secciones.
+Cubre la tarea "Añadir la misma sección [Comparables del sector] a la
+plantilla HTML" (TASKS.md, Fase 5, "Reportes"), equivalente HTML de la
+sección ya implementada en `investmentops.reports.markdown.render_markdown`/
+`_render_comparables_body`, sobre el formato decidido inline en el
+docstring de `markdown.py` ("Sección 'Comparables del sector'").
+
+`COMPARABLES_AGENT_ID` (``"comparables"``, el mismo identificador usado
+en `investmentops.analysis_engines.comparables.AGENT_ID` y propagado tal
+cual por
+`investmentops.core.orchestrator._comparables_analysis_result_to_analysis_result`
+al convertir su resultado a `AnalysisResult`) se reutiliza junto con
+`_find_analysis` (ya genérica) para localizar el `AnalysisResult`
+correspondiente. Es un `AnalysisResult` normal, con una
+`AnalysisProvenance` centinela (`ai_provider="none"`,
+`ai_model="deterministic"`), mismo criterio ya usado por los motores de
+tendencia y noticias relevantes: este motor tampoco invoca ningún
+proveedor de IA.
+
+`supporting_metrics` de este motor tiene la forma `{"company": {...},
+"comparisons": {...}}` (ver
+`investmentops.analysis_engines.comparables.assemble_comparables_analysis`),
+distinta de las demás secciones. Esta sección la vuelca en dos partes,
+equivalente elemento a elemento a `_render_comparables_body`
+(`investmentops/reports/markdown.py`):
+
+1. **Métricas de la empresa** (`supporting_metrics["company"]`, sin la
+   clave `"ticker"`): volcadas como lista `<ul><li>clave: valor</li></ul>`,
+   mismo formato ya usado por "Salud financiera"/"Valoración".
+2. **Tabla comparativa** (`supporting_metrics["comparisons"]`): una
+   `<table>` con una fila por combinación (métrica, par), columnas
+   `Métrica | Par | Valor empresa | Valor par | Posición`. Valores y
+   posiciones `None` se muestran como `"—"` (`_format_comparable_value_html`/
+   `_format_comparable_position_html`), mismo símbolo ya usado por la
+   tabla de tendencia. La tabla se omite por completo si ninguna métrica
+   tiene comparaciones (la empresa no tiene pares).
 
 Orden dentro de la sección, igual que en la versión Markdown: hallazgos
-→ lista de noticias relevantes (omitida si está vacía) → limitaciones →
-procedencia. El bloque `<h2>Noticias recientes relevantes</h2>` se
-agrega a `render_html` después de `<h2>Evolución de ingresos y
-beneficios</h2>`, con el mismo comportamiento de encabezado vacío
-cuando el motor no completó su análisis.
+→ métricas de la empresa (omitida si no hay ninguna) → tabla comparativa
+(omitida si no hay pares) → limitaciones → procedencia.
+
+Esta tarea no conecta el motor de posicionamiento relativo
+(`run_comparables_engine`) con `investigate()`: mismo alcance ya
+documentado para la tarea equivalente de Markdown (ver PROGRESS.md).
 
 ## Guardado del archivo HTML generado (`save_html_report`)
 
@@ -164,6 +185,12 @@ Fuera de alcance de este módulo:
   se invoque automáticamente tras ensamblar el resultado de
   investigación: ya conectado desde Fase 2 (ver
   `investmentops.core.orchestrator.generate_reports`).
+- Conectar el motor de comparables (`run_comparables_engine`) con
+  `investigate()`: mismo alcance ya documentado para la tarea
+  equivalente de Markdown.
+- Adaptar el generador para un reporte de comparación (varias empresas,
+  `ComparisonResult`): tarea separada y posterior de la misma sección de
+  `TASKS.md`.
 - Gráficos o visualizaciones de la serie o de noticias: fuera de alcance
   del MVP.
 """
@@ -209,6 +236,15 @@ TREND_ANALYSIS_AGENT_ID = "trend_analysis"
 #: para no acoplar este generador a su implementación concreta.
 NEWS_RELEVANCE_AGENT_ID = "news_relevance"
 
+#: Identificador del motor de posicionamiento relativo, el mismo usado
+#: en `investmentops.analysis_engines.comparables.AGENT_ID` (y propagado
+#: tal cual por
+#: `investmentops.core.orchestrator._comparables_analysis_result_to_analysis_result`
+#: al convertir su resultado a `AnalysisResult`). Mismo criterio que los
+#: identificadores anteriores: no se importa desde el módulo del motor
+#: para no acoplar este generador a su implementación concreta.
+COMPARABLES_AGENT_ID = "comparables"
+
 #: Bloque `<style>` mínimo embebido, tal como lo fija `HTML_TEMPLATE.md`:
 #: tipografía de sistema, ancho máximo legible, espaciado básico. Sin
 #: hoja de estilos externa ni framework CSS.
@@ -230,8 +266,8 @@ def _find_analysis(
     equivalente en `investmentops.reports.markdown`, duplicada aquí por
     independencia entre generadores (ver docstring del módulo). Funciona
     igual para cualquier `analysis_id` (``"financial_health"``,
-    ``"valuation"``, ``"trend_analysis"``, ``"news_relevance"``), sin
-    acoplarse a ninguno.
+    ``"valuation"``, ``"trend_analysis"``, ``"news_relevance"``,
+    ``"comparables"``), sin acoplarse a ninguno.
     """
     return next(
         (analysis for analysis in result.analysis_results if analysis.analysis_id == analysis_id),
@@ -247,11 +283,12 @@ def _render_analysis_body_html(analysis: AnalysisResult) -> list[str]:
     métricas de soporte → limitaciones → procedencia de la interpretación
     de IA. Reutilizada tanto para "Salud financiera" como para
     "Valoración" (no depende del `analysis_id` concreto). No se usa para
-    "Evolución de ingresos y beneficios" ni "Noticias recientes
-    relevantes": esas secciones reemplazan el volcado plano de
-    `supporting_metrics` por una tabla o una lista (ver
+    "Evolución de ingresos y beneficios", "Noticias recientes
+    relevantes" ni "Comparables del sector": esas secciones reemplazan el
+    volcado plano de `supporting_metrics` por una tabla o una lista (ver
     `_render_trend_analysis_body_html`,
-    `_render_news_relevance_body_html`). Todo el contenido dinámico se
+    `_render_news_relevance_body_html`,
+    `_render_comparables_body_html`). Todo el contenido dinámico se
     escapa con `html.escape` antes de insertarse.
     """
     lines: list[str] = []
@@ -415,19 +452,121 @@ def _render_news_relevance_body_html(analysis: AnalysisResult) -> list[str]:
     return lines
 
 
+def _format_comparable_value_html(value: Any) -> str:
+    """Formatea el valor de una métrica en la tabla comparativa.
+
+    Equivalente HTML de
+    `investmentops.reports.markdown._format_comparable_value` (misma
+    lógica, duplicada aquí por independencia entre generadores, ver
+    docstring del módulo). Devuelve ``"—"`` si `value` es ``None``
+    (métrica no calculable para la empresa o el par, ver
+    `investmentops.analysis_engines.comparables.calculate_entity_metrics`).
+    No convierte a porcentaje: las cuatro métricas comparadas tienen
+    unidades distintas (ratios, múltiplos), mismo criterio ya usado por
+    el volcado plano de `supporting_metrics` en
+    `_render_analysis_body_html`.
+    """
+    if value is None:
+        return "—"
+    return str(value)
+
+
+def _format_comparable_position_html(position: Any) -> str:
+    """Formatea la posición relativa de una comparación en la tabla.
+
+    Equivalente HTML de
+    `investmentops.reports.markdown._format_comparable_position`.
+    Devuelve ``"—"`` si `position` es ``None`` (comparación no posible
+    por falta de datos, ver
+    `investmentops.analysis_engines.comparables.compare_metric`).
+    """
+    if position is None:
+        return "—"
+    return str(position)
+
+
+def _render_comparables_body_html(analysis: AnalysisResult) -> list[str]:
+    """Construye las líneas HTML de la sección "Comparables del sector".
+
+    Orden: hallazgos → métricas propias de la empresa investigada
+    (`<ul><li>clave: valor</li></ul>`, igual criterio que "Salud
+    financiera"/"Valoración") → tabla `<table>` comparativa por métrica y
+    par (omitida si no hay ningún par) → limitaciones → procedencia de IA
+    (centinela). Equivalente elemento a elemento a
+    `investmentops.reports.markdown._render_comparables_body`. Todo el
+    contenido dinámico se escapa con `html.escape` antes de insertarse.
+    """
+    lines: list[str] = []
+
+    for finding in analysis.findings:
+        lines.append(f"<p>{escape(finding)}</p>")
+
+    company_metrics: dict[str, Any] = analysis.supporting_metrics.get("company", {})
+    company_metric_items = [
+        (key, value) for key, value in company_metrics.items() if key != "ticker"
+    ]
+    if company_metric_items:
+        lines.append("<h3>Métricas de la empresa</h3>")
+        lines.append("<ul>")
+        for key, value in company_metric_items:
+            lines.append(f"<li>{escape(str(key))}: {escape(str(value))}</li>")
+        lines.append("</ul>")
+
+    comparisons: dict[str, list[dict[str, Any]]] = analysis.supporting_metrics.get(
+        "comparisons", {}
+    )
+    has_any_comparison = any(comparisons.get(name) for name in comparisons)
+
+    if has_any_comparison:
+        lines.append("<table>")
+        lines.append(
+            "<tr><th>Métrica</th><th>Par</th><th>Valor empresa</th>"
+            "<th>Valor par</th><th>Posición</th></tr>"
+        )
+        for metric_name, entries in comparisons.items():
+            for entry in entries:
+                lines.append(
+                    f"<tr><td>{escape(str(metric_name))}</td>"
+                    f"<td>{escape(str(entry.get('peer_ticker', '')))}</td>"
+                    "<td>"
+                    f"{escape(_format_comparable_value_html(entry.get('company_value')))}"
+                    "</td>"
+                    "<td>"
+                    f"{escape(_format_comparable_value_html(entry.get('peer_value')))}"
+                    "</td>"
+                    "<td>"
+                    f"{escape(_format_comparable_position_html(entry.get('position')))}"
+                    "</td></tr>"
+                )
+        lines.append("</table>")
+
+    if analysis.limitations:
+        lines.append("<h3>Limitaciones</h3>")
+        lines.append("<ul>")
+        for limitation in analysis.limitations:
+            lines.append(f"<li>{escape(limitation)}</li>")
+        lines.append("</ul>")
+
+    provenance = analysis.provenance
+    lines.append(
+        "<p><em>Generado por: "
+        f"{escape(provenance.ai_provider)} ({escape(provenance.ai_model)}) "
+        f"el {escape(provenance.generated_at.isoformat())}</em></p>"
+    )
+
+    return lines
+
+
 def render_html(result: ResearchResult) -> str:
     """Renderiza un `ResearchResult` como reporte HTML.
 
     Construye el documento HTML5 completo (según el esqueleto ya fijado
     en `HTML_TEMPLATE.md`): encabezado con identidad de la empresa
     investigada y fecha de ensamblado, más las secciones "Salud
-    financiera", "Valoración", "Evolución de ingresos y beneficios" y
-    "Noticias recientes relevantes", en el mismo orden y con el mismo
-    contenido que `investmentops.reports.markdown.render_markdown` (las
-    dos últimas ubicadas donde ya las agrega
-    `investmentops.core.orchestrator.investigate` en
-    `ResearchResult.analysis_results`, después de valoración y de
-    tendencia respectivamente).
+    financiera", "Valoración", "Evolución de ingresos y beneficios",
+    "Noticias recientes relevantes" y "Comparables del sector", en el
+    mismo orden y con el mismo contenido que
+    `investmentops.reports.markdown.render_markdown`.
 
     "Salud financiera" y "Valoración" vuelcan su contenido completo
     cuando el `AnalysisResult` correspondiente está presente: hallazgos,
@@ -436,11 +575,13 @@ def render_html(result: ResearchResult) -> str:
     beneficios" vuelca hallazgos, una tabla de variación periodo a
     periodo, limitaciones y procedencia (centinela). "Noticias recientes
     relevantes" vuelca hallazgos, una lista `<ul>` de noticias relevantes
-    (una por ítem), limitaciones y procedencia (centinela). Si el
-    agente/motor correspondiente no completó su análisis, la sección
-    conserva solo su encabezado (`<h2>`) vacío. Todavía no se incluye la
-    sección condicional de "Fallos parciales" (fuera de alcance de esta
-    tarea, ver docstring del módulo).
+    (una por ítem), limitaciones y procedencia (centinela). "Comparables
+    del sector" vuelca hallazgos, las métricas propias de la empresa, una
+    tabla comparativa por métrica y par, limitaciones y procedencia
+    (centinela). Si el agente/motor correspondiente no completó su
+    análisis, la sección conserva solo su encabezado (`<h2>`) vacío.
+    Todavía no se incluye la sección condicional de "Fallos parciales"
+    (fuera de alcance de esta tarea, ver docstring del módulo).
 
     Parameters
     ----------
@@ -488,6 +629,11 @@ def render_html(result: ResearchResult) -> str:
     news_relevance_result = _find_analysis(result, NEWS_RELEVANCE_AGENT_ID)
     if news_relevance_result is not None:
         body_lines.extend(_render_news_relevance_body_html(news_relevance_result))
+
+    body_lines.append("<h2>Comparables del sector</h2>")
+    comparables_result = _find_analysis(result, COMPARABLES_AGENT_ID)
+    if comparables_result is not None:
+        body_lines.extend(_render_comparables_body_html(comparables_result))
 
     body = "\n  ".join(body_lines)
 
