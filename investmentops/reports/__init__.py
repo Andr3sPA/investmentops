@@ -49,16 +49,20 @@ volcado de secciones y su guardado en disco implementados en
   financiera, valoración), reutilizando el mismo `ResearchResult` y el
   mismo orden de secciones ya fijado para Markdown (ver
   `investmentops/reports/HTML_TEMPLATE.md` y `REPORT_SECTIONS.md`).
+- `render_html_comparison`: equivalente HTML de
+  `render_markdown_comparison` (ver TASKS.md, Fase 5, "Reportes" >
+  "Adaptar el generador HTML para soportar un reporte de comparación").
 - `save_html_report`: guarda el texto ya renderizado por `render_html`
   en un archivo `<TICKER>.html`, en la misma ruta local configurable que
   usa `save_markdown_report` (`config.local.toml`, sección
   `[output].output_dir`), siguiendo exactamente el mismo patrón.
-
-Aún sin implementación: el equivalente HTML de `render_markdown_comparison`
-(tarea separada y posterior de "Reportes", Fase 5).
 """
 
-from investmentops.reports.html import render_html, save_html_report
+from investmentops.reports.html import (
+    render_html,
+    render_html_comparison,
+    save_html_report,
+)
 from investmentops.reports.markdown import (
     ReportError,
     render_markdown,
@@ -69,6 +73,7 @@ from investmentops.reports.markdown import (
 __all__ = [
     "ReportError",
     "render_html",
+    "render_html_comparison",
     "render_markdown",
     "render_markdown_comparison",
     "save_html_report",

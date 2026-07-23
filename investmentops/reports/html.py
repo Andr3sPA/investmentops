@@ -1,7 +1,7 @@
 # investmentops/reports/html.py
 """Generador de reportes en HTML.
 
-Cubre, hasta ahora, cinco tareas de TASKS.md, Fase 2 ("Generador HTML"),
+Cubre, hasta ahora, seis tareas de TASKS.md, Fase 2 ("Generador HTML"),
 Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
 
 - "Implementar el volcado de las mismas secciones que en Markdown (salud
@@ -14,7 +14,9 @@ Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
 - "Añadir la misma sección [Noticias recientes relevantes] a la
   plantilla HTML." (ya completada, ver PROGRESS.md).
 - "Añadir la misma sección [Comparables del sector] a la plantilla
-  HTML." (esta tarea).
+  HTML." (ya completada, ver PROGRESS.md).
+- "Adaptar el generador HTML para soportar un reporte de comparación
+  (varias empresas) además del reporte individual." (esta tarea).
 
 Sobre la base de diseño ya fijada en `investmentops/reports/HTML_TEMPLATE.md`:
 HTML5 mínimo, sin CSS elaborado, sin JavaScript, sin motor de templating
@@ -24,16 +26,16 @@ directamente `ResearchResult` sin ningún tipo intermedio nuevo (ver
 `investmentops/reports/REPORT_MODEL.md` y `REPORT_SECTIONS.md`).
 
 Este módulo no importa nada de `investmentops.reports.markdown` para la
-parte de **renderizado** (`render_html`): aunque el contenido y el orden
-de las secciones son los mismos, cada generador de formato es
-independiente (ver ARCHITECTURE.md, "Extensibilidad sin reescritura" —
-"Agregar un nuevo formato de salida implica añadir un generador nuevo,
-no tocar los existentes"), por lo que las constantes de identificador de
-agente (`FINANCIAL_HEALTH_AGENT_ID`, `VALUATION_AGENT_ID`,
-`TREND_ANALYSIS_AGENT_ID`, `NEWS_RELEVANCE_AGENT_ID`,
-`COMPARABLES_AGENT_ID`) y el helper de búsqueda (`_find_analysis`) se
-duplican aquí en vez de importarse, mismo criterio ya documentado en
-versiones anteriores de este módulo.
+parte de **renderizado** (`render_html`/`render_html_comparison`):
+aunque el contenido y el orden de las secciones son los mismos, cada
+generador de formato es independiente (ver ARCHITECTURE.md,
+"Extensibilidad sin reescritura" — "Agregar un nuevo formato de salida
+implica añadir un generador nuevo, no tocar los existentes"), por lo que
+las constantes de identificador de agente (`FINANCIAL_HEALTH_AGENT_ID`,
+`VALUATION_AGENT_ID`, `TREND_ANALYSIS_AGENT_ID`,
+`NEWS_RELEVANCE_AGENT_ID`, `COMPARABLES_AGENT_ID`) y el helper de
+búsqueda (`_find_analysis`) se duplican aquí en vez de importarse, mismo
+criterio ya documentado en versiones anteriores de este módulo.
 
 ## Sección "Evolución de ingresos y beneficios"
 
@@ -90,7 +92,7 @@ Esta sección usa una **lista HTML** (`<ul><li>`), un ítem por noticia
 relevante, equivalente elemento a elemento a la lista Markdown ya
 implementada.
 
-## Sección "Comparables del sector" (esta tarea)
+## Sección "Comparables del sector"
 
 Cubre la tarea "Añadir la misma sección [Comparables del sector] a la
 plantilla HTML" (TASKS.md, Fase 5, "Reportes"), equivalente HTML de la
@@ -134,7 +136,67 @@ Orden dentro de la sección, igual que en la versión Markdown: hallazgos
 
 Esta tarea no conecta el motor de posicionamiento relativo
 (`run_comparables_engine`) con `investigate()`: mismo alcance ya
-documentado para la tarea equivalente de Markdown (ver PROGRESS.md).
+documentado para la tarea equivalente de Markdown.
+
+## Reporte de comparación (varias empresas, esta tarea)
+
+Cubre la tarea "Adaptar el generador HTML para soportar un reporte de
+comparación (varias empresas) además del reporte individual" (TASKS.md,
+Fase 5, "Reportes"). Equivalente HTML de
+`investmentops.reports.markdown.render_markdown_comparison`, sobre la
+misma decisión de formato ya documentada en ese módulo (reutilizada
+aquí sin una nueva decisión de diseño: no hay ninguna tarea de diseño
+separada para este reporte en `TASKS.md`, y la razón para no producir
+una tabla comparativa escalar-por-escalar —el motor de comparables
+todavía no está conectado a `investigate()`, y ninguna empresa debe
+perder ninguna de sus cinco secciones— aplica igual en HTML que en
+Markdown).
+
+### Por qué se extrae `_render_result_body_lines`
+
+`render_html` construía, hasta esta tarea, el cuerpo de un único
+`ResearchResult` (título, identidad, fecha, y las cinco secciones)
+directamente dentro de su propio cuerpo de función, antes de envolverlo
+en el documento HTML5 completo (`<!DOCTYPE html>` ... `</html>`). Para
+anidar varios reportes completos bajo un único documento de comparación
+sin duplicar esa lógica de volcado, esa construcción se extrajo a
+`_render_result_body_lines(result) -> list[str]`, reutilizada tanto por
+`render_html` (que la envuelve en su propio documento) como por
+`render_html_comparison` (que la envuelve, ya con los encabezados
+desplazados, dentro de un único documento de comparación). Este cambio
+es puramente una extracción de función: `render_html` no cambia su
+comportamiento ni su salida.
+
+### Desplazamiento de encabezados (`_shift_html_headings`)
+
+Equivalente HTML de
+`investmentops.reports.markdown._shift_markdown_headings`: transforma
+cada `<h1>`/`</h1>` en `<h2>`/`</h2>`, y cada `<h2>`/`</h2>` en
+`<h3>`/`</h3>` (el orden de las dos sustituciones importa: primero
+`<h2>`→`<h3>`, luego `<h1>`→`<h2>`, para no desplazar dos veces el mismo
+encabezado). Los `<h3>` ya presentes en el fragmento (ej. "Métricas de
+soporte", "Limitaciones") no se tocan — mismo criterio que la versión
+Markdown, que solo desplaza los dos niveles que produce el reporte
+individual (`#`/`##`), dejando intacto cualquier nivel más profundo.
+
+### Por qué recibe `tickers`/`results` sueltos y no un `ComparisonResult`
+
+Mismo motivo ya documentado en `investmentops.reports.markdown.render_markdown_comparison`:
+`investmentops.core.orchestrator` ya importa `investmentops.reports`
+(`render_markdown`, `render_html`, `save_markdown_report`,
+`save_html_report`) para `generate_reports`/
+`investigate_and_generate_reports`; importar `ComparisonResult` desde
+este módulo crearía un ciclo de importación. Esta función acepta los dos
+campos sueltos que expone `ComparisonResult` (`tickers`, `results`).
+
+Fuera de alcance de esta tarea:
+- Conectar `render_html_comparison`/`save_html_report` con el
+  orquestador o con la CLI (ej. un nuevo `--format` para `compare`, o un
+  `generate_comparison_reports`): no forma parte de esta tarea, mismo
+  alcance ya documentado para la tarea equivalente de Markdown.
+- Cualquier tabla comparativa escalar-por-escalar entre las empresas
+  comparadas: ya existe, por separado, como el motor de comparables
+  (Fase 5), no conectado a este flujo.
 
 ## Guardado del archivo HTML generado (`save_html_report`)
 
@@ -188,9 +250,6 @@ Fuera de alcance de este módulo:
 - Conectar el motor de comparables (`run_comparables_engine`) con
   `investigate()`: mismo alcance ya documentado para la tarea
   equivalente de Markdown.
-- Adaptar el generador para un reporte de comparación (varias empresas,
-  `ComparisonResult`): tarea separada y posterior de la misma sección de
-  `TASKS.md`.
 - Gráficos o visualizaciones de la serie o de noticias: fuera de alcance
   del MVP.
 """
@@ -199,7 +258,7 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from investmentops.analysis_engines.contracts import AnalysisResult
 from investmentops.config import load_config
@@ -557,6 +616,59 @@ def _render_comparables_body_html(analysis: AnalysisResult) -> list[str]:
     return lines
 
 
+def _render_result_body_lines(result: ResearchResult) -> list[str]:
+    """Construye las líneas HTML del cuerpo (sin envoltura de documento)
+    para un único `ResearchResult`: título, identidad, fecha, y las cinco
+    secciones de análisis, en el mismo orden que usa `render_html`.
+
+    Extraída como pieza reutilizable (ver "Reporte de comparación" en el
+    docstring del módulo) para que `render_html` y
+    `render_html_comparison` compartan exactamente la misma lógica de
+    volcado de cada sección, sin duplicarla.
+    """
+    ticker = escape(result.company.ticker)
+
+    lines: list[str] = []
+    lines.append(f"<h1>Investigación: {ticker}</h1>")
+
+    identity_details = [
+        detail
+        for detail in (result.company.name, result.company.sector, result.company.market)
+        if detail
+    ]
+    if identity_details:
+        lines.append(f"<p>{escape(' · '.join(identity_details))}</p>")
+
+    lines.append(f"<p>Generado: {escape(result.generated_at.isoformat())}</p>")
+
+    lines.append("<h2>Salud financiera</h2>")
+    financial_health_result = _find_analysis(result, FINANCIAL_HEALTH_AGENT_ID)
+    if financial_health_result is not None:
+        lines.extend(_render_analysis_body_html(financial_health_result))
+
+    lines.append("<h2>Valoración</h2>")
+    valuation_result = _find_analysis(result, VALUATION_AGENT_ID)
+    if valuation_result is not None:
+        lines.extend(_render_analysis_body_html(valuation_result))
+
+    lines.append("<h2>Evolución de ingresos y beneficios</h2>")
+    trend_analysis_result = _find_analysis(result, TREND_ANALYSIS_AGENT_ID)
+    if trend_analysis_result is not None:
+        lines.extend(_render_trend_analysis_body_html(trend_analysis_result))
+
+    lines.append("<h2>Noticias recientes relevantes</h2>")
+    news_relevance_result = _find_analysis(result, NEWS_RELEVANCE_AGENT_ID)
+    if news_relevance_result is not None:
+        lines.extend(_render_news_relevance_body_html(news_relevance_result))
+
+    lines.append("<h2>Comparables del sector</h2>")
+    comparables_result = _find_analysis(result, COMPARABLES_AGENT_ID)
+    if comparables_result is not None:
+        lines.extend(_render_comparables_body_html(comparables_result))
+
+    return lines
+
+
 def render_html(result: ResearchResult) -> str:
     """Renderiza un `ResearchResult` como reporte HTML.
 
@@ -566,7 +678,8 @@ def render_html(result: ResearchResult) -> str:
     financiera", "Valoración", "Evolución de ingresos y beneficios",
     "Noticias recientes relevantes" y "Comparables del sector", en el
     mismo orden y con el mismo contenido que
-    `investmentops.reports.markdown.render_markdown`.
+    `investmentops.reports.markdown.render_markdown` (construidos vía
+    `_render_result_body_lines`, ver docstring del módulo).
 
     "Salud financiera" y "Valoración" vuelcan su contenido completo
     cuando el `AnalysisResult` correspondiente está presente: hallazgos,
@@ -596,45 +709,7 @@ def render_html(result: ResearchResult) -> str:
         terminado en un único salto de línea final.
     """
     ticker = escape(result.company.ticker)
-
-    body_lines: list[str] = []
-    body_lines.append(f"<h1>Investigación: {ticker}</h1>")
-
-    identity_details = [
-        detail
-        for detail in (result.company.name, result.company.sector, result.company.market)
-        if detail
-    ]
-    if identity_details:
-        body_lines.append(f"<p>{escape(' · '.join(identity_details))}</p>")
-
-    body_lines.append(f"<p>Generado: {escape(result.generated_at.isoformat())}</p>")
-
-    body_lines.append("<h2>Salud financiera</h2>")
-    financial_health_result = _find_analysis(result, FINANCIAL_HEALTH_AGENT_ID)
-    if financial_health_result is not None:
-        body_lines.extend(_render_analysis_body_html(financial_health_result))
-
-    body_lines.append("<h2>Valoración</h2>")
-    valuation_result = _find_analysis(result, VALUATION_AGENT_ID)
-    if valuation_result is not None:
-        body_lines.extend(_render_analysis_body_html(valuation_result))
-
-    body_lines.append("<h2>Evolución de ingresos y beneficios</h2>")
-    trend_analysis_result = _find_analysis(result, TREND_ANALYSIS_AGENT_ID)
-    if trend_analysis_result is not None:
-        body_lines.extend(_render_trend_analysis_body_html(trend_analysis_result))
-
-    body_lines.append("<h2>Noticias recientes relevantes</h2>")
-    news_relevance_result = _find_analysis(result, NEWS_RELEVANCE_AGENT_ID)
-    if news_relevance_result is not None:
-        body_lines.extend(_render_news_relevance_body_html(news_relevance_result))
-
-    body_lines.append("<h2>Comparables del sector</h2>")
-    comparables_result = _find_analysis(result, COMPARABLES_AGENT_ID)
-    if comparables_result is not None:
-        body_lines.extend(_render_comparables_body_html(comparables_result))
-
+    body_lines = _render_result_body_lines(result)
     body = "\n  ".join(body_lines)
 
     html_document = (
@@ -643,6 +718,115 @@ def render_html(result: ResearchResult) -> str:
         "<head>\n"
         '  <meta charset="utf-8">\n'
         f"  <title>Investigación: {ticker}</title>\n"
+        "  <style>\n"
+        f"    {_EMBEDDED_STYLE}\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"  {body}\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+    return html_document
+
+
+def _shift_html_headings(html_fragment: str) -> str:
+    """Desplaza un nivel cada encabezado HTML `<h1>`/`<h2>` de un fragmento
+    ya renderizado.
+
+    Equivalente HTML de
+    `investmentops.reports.markdown._shift_markdown_headings`, usada por
+    `render_html_comparison` para anidar el reporte individual completo
+    de cada empresa (ya renderizado por `_render_result_body_lines`, que
+    solo usa `<h1>` para el título y `<h2>` para las secciones de nivel
+    superior) bajo el encabezado de nivel superior del documento de
+    comparación (`<h1>Comparación: ...</h1>`).
+
+    Transforma primero `<h2>`/`</h2>` en `<h3>`/`</h3>`, y luego
+    `<h1>`/`</h1>` en `<h2>`/`</h2>` (en ese orden, para no desplazar dos
+    veces el mismo encabezado). Los `<h3>` ya presentes en el fragmento
+    (ej. "Métricas de soporte", "Limitaciones") no se tocan, mismo
+    criterio que la versión Markdown (que solo desplaza nivel 1 y 2).
+
+    Parameters
+    ----------
+    html_fragment:
+        Fragmento HTML ya renderizado (típicamente la salida de
+        `_render_result_body_lines`, unida en un único texto).
+
+    Returns
+    -------
+    str
+        El mismo fragmento, con cada `<h1>`/`<h2>` desplazado un nivel
+        hacia abajo.
+    """
+    shifted = html_fragment.replace("<h2>", "<h3>").replace("</h2>", "</h3>")
+    shifted = shifted.replace("<h1>", "<h2>").replace("</h1>", "</h2>")
+    return shifted
+
+
+def render_html_comparison(
+    tickers: Sequence[str], results: Sequence[ResearchResult]
+) -> str:
+    """Renderiza un reporte de comparación (varias empresas) en HTML.
+
+    Ver "Reporte de comparación (varias empresas, esta tarea)" en el
+    docstring del módulo para la decisión de formato completa
+    (equivalente HTML de
+    `investmentops.reports.markdown.render_markdown_comparison`):
+    reutiliza `_render_result_body_lines` para el reporte individual
+    completo de cada empresa, anidándolos bajo un único documento HTML5
+    de comparación (`<h1>Comparación: <tickers></h1>`), con los
+    encabezados de cada reporte individual desplazados un nivel (vía
+    `_shift_html_headings`) para que la jerarquía del documento quede
+    correcta:
+
+        <h1>Comparación: AAPL, MSFT</h1>
+        <h2>Investigación: AAPL</h2>
+        <h3>Salud financiera</h3>
+        ...
+        <h2>Investigación: MSFT</h2>
+        <h3>Salud financiera</h3>
+        ...
+
+    Parameters
+    ----------
+    tickers:
+        Los tickers solicitados para la comparación, en el mismo orden
+        recibido (ej. `ComparisonResult.tickers`), usados únicamente
+        para el título del documento (`<title>`/`<h1>`).
+    results:
+        Un `ResearchResult` por empresa, en el mismo orden (ej.
+        `ComparisonResult.results`), cada uno renderizado íntegramente
+        vía `_render_result_body_lines` y anidado bajo su propio
+        subtítulo (`<h2>Investigación: <ticker></h2>`, desplazado desde
+        el `<h1>` que produce esa función).
+
+    Returns
+    -------
+    str
+        Documento HTML5 completo (`<!DOCTYPE html>` ... `</html>`),
+        terminado en un único salto de línea final. Si `results` está
+        vacío, el documento contiene únicamente el título de
+        comparación.
+    """
+    title = escape(", ".join(tickers))
+
+    body_lines: list[str] = [f"<h1>Comparación: {title}</h1>"]
+
+    for result in results:
+        individual_fragment = "\n  ".join(_render_result_body_lines(result))
+        body_lines.append(_shift_html_headings(individual_fragment))
+
+    body = "\n  ".join(body_lines)
+
+    html_document = (
+        "<!DOCTYPE html>\n"
+        '<html lang="es">\n'
+        "<head>\n"
+        '  <meta charset="utf-8">\n'
+        f"  <title>Comparación: {title}</title>\n"
         "  <style>\n"
         f"    {_EMBEDDED_STYLE}\n"
         "  </style>\n"

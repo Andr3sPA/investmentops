@@ -4,76 +4,81 @@
 
 ## Última tarea completada
 
-Fase 5, "Reportes" → "Adaptar el generador Markdown para soportar un
+Fase 5, "Reportes" → "Adaptar el generador HTML para soportar un
 reporte de comparación (varias empresas) además del reporte
 individual." (TASKS.md).
 
 ### Qué se implementó
 
-`investmentops/reports/markdown.py` (modificado): se agregaron dos
-piezas nuevas y se actualizó el docstring del módulo para documentar la
-decisión de formato (no había una tarea de diseño previa y separada
-para esta sección, mismo criterio ya usado para "Noticias recientes
-relevantes"/"Comparables del sector"):
+`investmentops/reports/html.py` (modificado): equivalente HTML de
+`render_markdown_comparison` (ya implementada en la tarea anterior de
+esta misma sección para Markdown).
 
-- `_shift_markdown_headings(markdown_text)`: desplaza un nivel cada
-  encabezado Markdown de nivel 1 (`# `) o 2 (`## `) de un texto ya
-  renderizado, sumando un `#` adicional a cada uno. Es la única
-  transformación necesaria porque `render_markdown` solo produce esas
-  dos profundidades de encabezado.
-- `render_markdown_comparison(tickers, results)`: construye
-  `# Comparación: <tickers>` y, para cada `ResearchResult` de
-  `results`, reutiliza `render_markdown(result)` sin modificarlo y
-  aplica `_shift_markdown_headings` para anidarlo correctamente bajo el
-  documento de comparación (`# Investigación: AAPL` -> `## Investigación:
-  AAPL`, `## Salud financiera` -> `### Salud financiera`, etc.).
+- `_render_result_body_lines(result)`: se extrajo del cuerpo de
+  `render_html` la construcción del título, identidad, fecha y las
+  cinco secciones de análisis para un único `ResearchResult`, como
+  pieza reutilizable. `render_html` sigue produciendo exactamente el
+  mismo documento que antes (esta extracción no cambia su
+  comportamiento ni su salida, solo permite reutilizar la lógica sin
+  duplicarla).
+- `_shift_html_headings(html_fragment)`: desplaza un nivel cada
+  `<h1>`/`<h2>` de un fragmento HTML ya renderizado (`<h1>`→`<h2>`,
+  `<h2>`→`<h3>`), equivalente HTML de `_shift_markdown_headings`. Los
+  `<h3>` ya presentes (ej. "Métricas de soporte") no se tocan.
+- `render_html_comparison(tickers, results)`: construye
+  `<h1>Comparación: <tickers></h1>` y, para cada `ResearchResult` de
+  `results`, reutiliza `_render_result_body_lines` y aplica
+  `_shift_html_headings` para anidarlo correctamente bajo el documento
+  de comparación, envolviendo todo en un documento HTML5 completo
+  (mismo `<style>` embebido y estructura de cabecera ya usados por
+  `render_html`).
 
-**Decisión de formato** (documentada en el docstring del módulo):
-reutilizar el reporte individual completo de cada empresa, en vez de
-una tabla comparativa escalar-por-escalar, porque (1) `compare(...)` no
-calcula ningún posicionamiento relativo entre empresas — eso ya existe,
-por separado, como el motor de comparables (`run_comparables_engine`),
-todavía no conectado a este flujo — y reproducir una tabla aquí
-duplicaría, sin datos nuevos, algo que ese motor ya hace mejor; y (2)
-ninguna empresa pierde ninguna de sus cinco secciones de análisis.
+Misma decisión de formato ya documentada para la versión Markdown
+(reutilizar el reporte individual completo de cada empresa, en vez de
+una tabla comparativa escalar-por-escalar): el motor de comparables
+(`run_comparables_engine`) sigue sin estar conectado a `investigate()`,
+y ninguna empresa pierde ninguna de sus cinco secciones.
 
-**Por qué recibe `tickers`/`results` sueltos y no `ComparisonResult`:**
-`investmentops.core.orchestrator` (donde vive `ComparisonResult`) ya
-importa `investmentops.reports` para `generate_reports`/
-`investigate_and_generate_reports`; importar `ComparisonResult` desde
-`investmentops.reports.markdown` crearía un ciclo de importación. La
-función acepta en su lugar los dos campos sueltos que expone
-`ComparisonResult`.
+Recibe `tickers`/`results` sueltos, no un `ComparisonResult`, por el
+mismo motivo ya documentado en `render_markdown_comparison`: evitar un
+ciclo de importación con `investmentops.core.orchestrator` (que ya
+importa `investmentops.reports` para `generate_reports`).
 
-Esta tarea **no** conecta `render_markdown_comparison` con el
-orquestador ni con la CLI (ej. un nuevo `--format` para `compare`, o un
-`generate_comparison_reports` análogo a `generate_reports`): eso queda
-fuera de alcance, mismo criterio ya aplicado a la conexión del motor de
-comparables con `investigate()`.
+Esta tarea **no** conecta `render_html_comparison` con el orquestador
+ni con la CLI: mismo alcance ya documentado para la tarea equivalente
+de Markdown.
 
 `investmentops/reports/__init__.py` (modificado): re-exporta
-`render_markdown_comparison` junto a las piezas ya existentes.
+`render_html_comparison` junto a las piezas ya existentes.
 
-`investmentops/tests/test_reports_markdown_comparison.py` (nuevo):
-cubre el título con todos los tickers, el resultado con lista de
-`results` vacía (solo el título), el desplazamiento de encabezados
-(nivel 1 y nivel 2), la inclusión del contenido completo de cada
-empresa, la preservación del orden de las empresas, y que los hallazgos
-de una empresa no se filtran a la sección de otra.
+`investmentops/tests/test_reports_html_comparison.py` (nuevo): cubre
+el título con todos los tickers, el resultado con lista de `results`
+vacía (solo el título), el desplazamiento de encabezados (nivel 1 y
+nivel 2), la inclusión del contenido completo de cada empresa, la
+preservación del orden de las empresas, que los hallazgos de una
+empresa no se filtran a la sección de otra, y el escapado del ticker en
+título/encabezado.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_reports_markdown_comparison.py`
+- `investmentops/tests/test_reports_html_comparison.py`
 
 Modificados:
-- `investmentops/reports/markdown.py`
+- `investmentops/reports/html.py`
 - `investmentops/reports/__init__.py`
 - `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
-Fase 5, "Reportes":
-- "Adaptar el generador HTML para soportar un reporte de comparación
-  (varias empresas) además del reporte individual."
+Fase 5, "Verificación":
+- Probar el comando de investigación individual y confirmar que ahora
+  incluye la sección de comparables.
+- Probar el nuevo comando de comparación con dos empresas reales del
+  mismo sector.
+
+(Ambas son tareas de verificación manual, no de implementación; si se
+prefiere seguir con implementación, la Fase 5 ya no tiene tareas `[ ]`
+pendientes — la siguiente fase con trabajo pendiente es la Fase 6,
+"Lecturas por estrategia de inversión".)
