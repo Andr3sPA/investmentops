@@ -244,7 +244,7 @@ Convención de seguimiento: una tarea marcada con `- [x]` está completada. Las 
 ## Fase 6 — Lecturas por estrategia de inversión
 
 ### Diseño de estrategias
-- [ ] Listar las estrategias/escuelas de inversión a cubrir en el MVP (ej. value, growth, calidad).
+- [x] Listar las estrategias/escuelas de inversión a cubrir en el MVP (ej. value, growth, calidad). — `investmentops/analysis_engines/STRATEGIES.md` (nuevo, ver PROGRESS.md). Decisión: se confirman las tres estrategias ya anticipadas en este mismo documento — **value**, **growth** y **calidad** — sin agregar ni quitar ninguna. Las tres son implementables reutilizando exclusivamente modelos de dominio y métricas ya existentes (sin fuentes de datos nuevas, conforme a `ROADMAP.md`), y cubren ángulos claramente distintos y no redundantes entre sí (valoración actual, evolución en el tiempo, solidez financiera subyacente), consistente con `GOALS.md` (opiniones contrastables, no una única verdad).
 - [ ] Para cada estrategia, definir de forma breve qué datos del modelo de dominio utiliza y qué pregunta responde.
 
 ### Motores de análisis por estrategia
