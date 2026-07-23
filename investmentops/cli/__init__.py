@@ -8,7 +8,7 @@ Responsabilidad (ver ARCHITECTURE.md, componente 1):
 - No contiene lógica financiera ni de formateo de reportes; todo eso se
   delega a las capas correspondientes.
 
-Cubre seis tareas:
+Cubre siete tareas:
 
 Fase 1, "CLI" (TASKS.md):
 - "Implementar el parseo del argumento ticker." (`build_parser`,
@@ -29,8 +29,14 @@ Fase 2, "Orquestador y CLI" (TASKS.md):
 
 Fase 5, "Orquestador y CLI" (TASKS.md):
 - "Implementar el parseo de argumentos del comando de comparación (lista
-  de tickers)." (esta tarea) — nuevo subcomando `compare`, sobre la
-  sintaxis ya fijada en `investmentops/cli/COMPARE_CLI.md`.
+  de tickers)." — nuevo subcomando `compare`, sobre la sintaxis ya fijada
+  en `investmentops/cli/COMPARE_CLI.md`.
+- "Conectar el comando CLI de comparación con esa función del
+  orquestador." (esta tarea) — `dispatch` ahora reconoce
+  `args.command == "compare"`, invocando
+  `investmentops.core.orchestrator.compare(args.tickers, config=config,
+  provider=provider)` y devolviendo el `ComparisonResult` obtenido, sin
+  modificar el comportamiento ya existente para `"investigate"`.
 
 ```
 python -m investmentops investigate TICKER
@@ -38,6 +44,7 @@ python -m investmentops investigate TICKER --format markdown
 python -m investmentops investigate TICKER --format html
 python -m investmentops investigate TICKER --format both
 python -m investmentops compare TICKER1 TICKER2 [TICKER3 ...]
+
 ```
 ## Parseo (`build_parser`/`parse_args`)
 
@@ -60,7 +67,7 @@ devuelve el resultado ya parseado.
   (ausente): si el usuario no pide un formato, `args.format` es `None`
   y `dispatch` se comporta exactamente igual que en la Fase 1 (sin
   generar ningún archivo de reporte).
-- **`compare`** (esta tarea) es un segundo subcomando, agregado junto a
+- **`compare`** es un segundo subcomando, agregado junto a
   `investigate` sin modificar su sintaxis ni su comportamiento (ver
   `COMPARE_CLI.md`, "Decisión: subcomando `compare`..."). Su único
   argumento posicional, `tickers`, es **variádico** (`nargs="+"`, cada
@@ -106,15 +113,30 @@ el mínimo se cumple, simplemente asigna la lista al namespace
 (`setattr(namespace, self.dest, values)`), comportamiento equivalente al
 de `argparse._StoreAction` por defecto.
 
+## Conexión de `compare` con el orquestador (`dispatch`, esta tarea)
+
+`dispatch` ahora reconoce `args.command == "compare"`: invoca
+`investmentops.core.orchestrator.compare(args.tickers, config=config,
+provider=provider)` (ya implementada en la tarea anterior de esta misma
+sección) y devuelve el `ComparisonResult` obtenido tal cual, sin
+transformarlo. Sigue exactamente el mismo criterio ya usado para
+`"investigate"`: `provider`/`config` son los mismos parámetros ya
+aceptados por `dispatch`, propagados sin cambios; no se agrega un
+parámetro `news_provider` a `dispatch` en esta tarea, porque la rama de
+`"investigate"` tampoco lo propaga hoy — mantener ambas ramas
+consistentes entre sí es preferible a introducir una asimetría nueva sin
+necesidad concreta. `compare` internamente ya usa `news_provider=None`
+por defecto para cada `investigate(...)` que ejecuta (ver
+`investmentops/core/orchestrator.py`), igual que la propia rama de
+`"investigate"` de `dispatch`.
+
+Esta tarea no toca `format_research_result`: formatear un
+`ComparisonResult` para consola (en vez de un `ResearchResult` a secas)
+es explícitamente parte de "Reportes" en esta misma fase, no de esta
+tarea de conexión.
+
 ## Fuera de alcance de esta tarea (aún, ver TASKS.md, "Orquestador y CLI")
 
-- La función del orquestador que ejecuta la investigación de cada
-  empresa involucrada en una comparación y ensambla sus resultados
-  individuales en un resultado comparativo (tarea separada y siguiente
-  en la misma sección).
-- Conectar el subcomando `compare` con esa función del orquestador
-  (`dispatch` no reconoce todavía `args.command == "compare"`; tarea
-  separada y siguiente).
 - La impresión en consola del resultado comparativo y el manejo de
   errores específicos de `compare`: no desglosadas todavía como tareas
   explícitas en `TASKS.md` para esta sección.
@@ -130,7 +152,12 @@ import argparse
 from pathlib import Path
 from typing import Any, Sequence
 
-from investmentops.core.orchestrator import investigate, investigate_and_generate_reports
+from investmentops.core.orchestrator import (
+    ComparisonResult,
+    compare,
+    investigate,
+    investigate_and_generate_reports,
+)
 from investmentops.core.research_result import ResearchResult
 from investmentops.data_providers.contracts import DataProvider
 
@@ -240,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
       (validado mediante `_validate_ticker`: no vacío, no solo espacios)
       y un flag opcional `--format` (valores admitidos: `markdown`,
       `html`, `both`; por defecto ausente, sin generar ningún reporte).
-    - `compare` (esta tarea, ver `investmentops/cli/COMPARE_CLI.md`): un
+    - `compare` (ver `investmentops/cli/COMPARE_CLI.md`): un
       argumento posicional variádico `tickers` (`nargs="+"`, cada
       elemento validado con `_validate_ticker`), con un mínimo de dos
       elementos exigido por `_MinimumTwoTickersAction`. Sin flags
@@ -351,22 +378,25 @@ def dispatch(
     config: dict[str, Any] | None = None,
     provider: DataProvider | None = None,
     output_dir: str | Path | None = None,
-) -> ResearchResult | tuple[ResearchResult, list[Path]]:
+) -> ResearchResult | tuple[ResearchResult, list[Path]] | ComparisonResult:
     """Conecta el comando ya parseado con el orquestador.
 
     Traduce el `argparse.Namespace` producido por `parse_args` en una
-    llamada real al orquestador (`investmentops.core.orchestrator`). Ver
-    "Conexión con el orquestador (`dispatch`)" en versiones anteriores
-    del docstring del módulo para el alcance exacto de esta función.
+    llamada real al orquestador (`investmentops.core.orchestrator`).
 
-    Solo reconoce el comando `"investigate"` (ver docstring de
-    versiones anteriores para el detalle completo de su comportamiento
-    con/sin `--format`): el subcomando `compare` (esta tarea) todavía no
-    está conectado con el orquestador — esa conexión es una tarea
-    separada y posterior de la misma sección ("Conectar el comando CLI
-    de comparación con esa función del orquestador"), por lo que
-    `args.command == "compare"` hoy levanta `ValueError` igual que
-    cualquier otro comando no reconocido por esta función.
+    - **`"investigate"`**: sin `--format`, invoca
+      `investigate(args.ticker, config=config, provider=provider)` y
+      devuelve el `ResearchResult` obtenido. Con `--format`, invoca en
+      su lugar `investigate_and_generate_reports(...)`, devolviendo
+      `tuple[ResearchResult, list[Path]]`.
+    - **`"compare"`** (esta tarea): invoca
+      `investmentops.core.orchestrator.compare(args.tickers,
+      config=config, provider=provider)` y devuelve el `ComparisonResult`
+      obtenido tal cual, sin transformarlo. Mismo criterio ya usado por
+      `"investigate"`: no se propaga ningún `news_provider` desde
+      `dispatch` (la rama de `"investigate"` tampoco lo hace hoy);
+      `compare` ya usa `news_provider=None` por defecto internamente
+      para cada `investigate(...)` que ejecuta.
 
     Parameters
     ----------
@@ -375,25 +405,24 @@ def dispatch(
         `parse_args`).
     config:
         Configuración ya cargada, propagada tal cual a
-        `investigate(...)`/`investigate_and_generate_reports(...)`.
+        `investigate(...)`/`investigate_and_generate_reports(...)`/
+        `compare(...)`.
     provider:
         Proveedor de datos ya construido, propagado tal cual al
         orquestador.
     output_dir:
         Ruta al directorio donde guardar los reportes generados, si
-        `args.format` no es `None`.
+        `args.format` no es `None` (solo aplica a `"investigate"`).
 
     Returns
     -------
-    ResearchResult | tuple[ResearchResult, list[Path]]
-        Ver docstring de versiones anteriores del módulo.
+    ResearchResult | tuple[ResearchResult, list[Path]] | ComparisonResult
+        Ver el detalle por comando arriba.
 
     Raises
     ------
     ValueError
-        Si `args.command` no es `"investigate"` (incluyendo, hoy,
-        `"compare"`: su conexión con el orquestador es una tarea
-        separada y posterior).
+        Si `args.command` no es `"investigate"` ni `"compare"`.
     ReportError, ConfigError
         Ver `investmentops.core.orchestrator.generate_reports`.
     """
@@ -411,6 +440,9 @@ def dispatch(
             formats=_FORMAT_TO_REPORT_FORMATS[requested_format],
         )
 
+    if args.command == "compare":
+        return compare(args.tickers, config=config, provider=provider)
+
     raise ValueError(f"Comando desconocido: {args.command!r}")
 
 
@@ -420,8 +452,11 @@ def format_research_result(result: ResearchResult) -> str:
     Cubre la tarea "Implementar la impresión en consola del resultado
     (texto simple, sin formato de reporte todavía)" (TASKS.md, Fase 1,
     "CLI"). Espera un `ResearchResult`, no la tupla que `dispatch` puede
-    devolver cuando `args.format` no es `None` (ver docstring de
-    `dispatch`).
+    devolver cuando `args.format` no es `None`, ni el `ComparisonResult`
+    que `dispatch` devuelve para `"compare"` (ver docstring de
+    `dispatch`; la impresión en consola de un resultado comparativo es
+    alcance de una tarea separada, todavía pendiente en TASKS.md,
+    "Reportes").
 
     Esta función solo produce el texto: no imprime nada por sí misma
     (`print(format_research_result(result))` es responsabilidad de quien
