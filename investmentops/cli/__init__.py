@@ -2,13 +2,13 @@
 
 Responsabilidad (ver ARCHITECTURE.md, componente 1):
 - Parsear comandos y argumentos del usuario (ej. investigar una empresa por
-  ticker, elegir formato de salida).
+  ticker, elegir formato de salida, comparar dos o más empresas).
 - Validar argumentos básicos (ticker, formato, rango de fechas).
 - Invocar al orquestador (investmentops.core) y mostrar progreso/errores.
 - No contiene lógica financiera ni de formateo de reportes; todo eso se
   delega a las capas correspondientes.
 
-Cubre cinco tareas:
+Cubre seis tareas:
 
 Fase 1, "CLI" (TASKS.md):
 - "Implementar el parseo del argumento ticker." (`build_parser`,
@@ -27,13 +27,18 @@ Fase 2, "Orquestador y CLI" (TASKS.md):
   (`build_parser`), consumido por `dispatch` para generar los reportes
   solicitados vía `investmentops.core.orchestrator.investigate_and_generate_reports`.
 
+Fase 5, "Orquestador y CLI" (TASKS.md):
+- "Implementar el parseo de argumentos del comando de comparación (lista
+  de tickers)." (esta tarea) — nuevo subcomando `compare`, sobre la
+  sintaxis ya fijada en `investmentops/cli/COMPARE_CLI.md`.
+
 ```
 python -m investmentops investigate TICKER
 python -m investmentops investigate TICKER --format markdown
 python -m investmentops investigate TICKER --format html
 python -m investmentops investigate TICKER --format both
+python -m investmentops compare TICKER1 TICKER2 [TICKER3 ...]
 ```
-
 ## Parseo (`build_parser`/`parse_args`)
 
 Construye el `ArgumentParser` (con `add_subparsers`, tal como fija
@@ -44,7 +49,9 @@ devuelve el resultado ya parseado.
   ocurre más abajo en el pipeline (ver
   `investmentops.data_providers.fundamentals.FMPFundamentalsProvider.fetch`
   y `investmentops.core.orchestrator.assemble_research_result`), conforme
-  a `CLI.md`: "no es responsabilidad de la capa CLI".
+  a `CLI.md`: "no es responsabilidad de la capa CLI". Mismo criterio
+  aplicado a los tickers de `compare` (ver `COMPARE_CLI.md`, "Sin
+  normalización ni deduplicación de tickers en esta capa").
 - **`--format`** es un flag opcional del subcomando `investigate`, con
   `choices` restringidos a `"markdown"`, `"html"` y `"both"` (validados
   nativamente por `argparse`: un valor fuera de esa lista termina el
@@ -53,17 +60,28 @@ devuelve el resultado ya parseado.
   (ausente): si el usuario no pide un formato, `args.format` es `None`
   y `dispatch` se comporta exactamente igual que en la Fase 1 (sin
   generar ningún archivo de reporte).
+- **`compare`** (esta tarea) es un segundo subcomando, agregado junto a
+  `investigate` sin modificar su sintaxis ni su comportamiento (ver
+  `COMPARE_CLI.md`, "Decisión: subcomando `compare`..."). Su único
+  argumento posicional, `tickers`, es **variádico** (`nargs="+"`, cada
+  elemento validado individualmente con `_validate_ticker`, mismo
+  criterio ya usado por `investigate`) y exige un **mínimo de dos**
+  tickers mediante `_MinimumTwoTickersAction` (ver más abajo). Sin flags
+  adicionales todavía (ej. `--format`): su necesidad se decidirá, si
+  aplica, en la sección "Reportes" de esta misma fase (ver
+  `COMPARE_CLI.md`, "Sin flags adicionales en esta tarea").
 
 ## Validación básica (`_validate_ticker`)
 
 Se implementa como una función `type=` de `argparse`, el mismo mecanismo
-nativo que ya usa `argparse` para exigir que el argumento posicional
-`ticker` esté *presente*: si `_validate_ticker` levanta
-`argparse.ArgumentTypeError`, `argparse` lo traduce automáticamente a un
-mensaje de error en `stderr` y un `SystemExit`, igual comportamiento que
-ya tienen los demás errores de parseo de esta CLI (ticker ausente,
-subcomando ausente/desconocido, formato desconocido, ver
-`investmentops/tests/test_cli.py`).
+nativo que ya usa `argparse` para exigir que un argumento posicional esté
+*presente*: si `_validate_ticker` levanta `argparse.ArgumentTypeError`,
+`argparse` lo traduce automáticamente a un mensaje de error en `stderr` y
+un `SystemExit`, igual comportamiento que ya tienen los demás errores de
+parseo de esta CLI (ticker ausente, subcomando ausente/desconocido,
+formato desconocido). Se reutiliza sin cambios como `type=` de cada
+elemento de `tickers` en `compare` (`nargs="+"` aplica `type=` a cada
+valor individual antes de agruparlos en la lista).
 
 "Formato esperado", en el alcance de esta tarea, es deliberadamente
 mínimo: no vacío y no compuesto solo de espacios en blanco. No se aplica
@@ -73,73 +91,37 @@ mayúsculas, símbolos permitidos): el modelo de dominio `Company` (ver
 formato fijo de ticker (soporta, por ejemplo, tickers con puntos del
 mercado colombiano como `"ECOPETROL.CL"`).
 
-## Conexión con el orquestador (`dispatch`)
+## Mínimo de dos tickers en `compare` (`_MinimumTwoTickersAction`)
 
-`dispatch(args, ...)` recibe el `argparse.Namespace` ya producido por
-`parse_args` y lo traduce a una llamada real al orquestador
-(`investmentops.core.orchestrator`). Su comportamiento depende de
-`args.format`:
+`argparse` no ofrece nativamente un mecanismo para exigir un mínimo de
+elementos en un argumento `nargs="+"` (que ya garantiza "uno o más", no
+"dos o más"). Se implementa como una `argparse.Action` propia:
+`_MinimumTwoTickersAction.__call__` recibe la lista ya parseada y
+validada individualmente (`_validate_ticker` ya corrió sobre cada
+elemento antes de llegar aquí), y si tiene menos de dos elementos, llama
+a `parser.error(...)` — el mismo método interno que usa `argparse` para
+señalar cualquier otro error de parseo (imprime el mensaje de uso +
+error en `stderr` y termina el proceso con `SystemExit`, código 2). Si
+el mínimo se cumple, simplemente asigna la lista al namespace
+(`setattr(namespace, self.dest, values)`), comportamiento equivalente al
+de `argparse._StoreAction` por defecto.
 
-- **`args.format is None`** (comportamiento histórico, sin cambios):
-  invoca `investigate(args.ticker, config=config, provider=provider)` y
-  devuelve el `ResearchResult` obtenido tal cual, sin transformarlo. No
-  se genera ningún archivo. Este es el único camino que existía antes de
-  esta tarea, y sigue siendo exactamente igual para cualquier llamador
-  que no use `--format` (ver `investmentops/tests/test_cli_dispatch.py`,
-  todas sus llamadas a `dispatch` siguen devolviendo un `ResearchResult`
-  sin modificación alguna).
-- **`args.format` es `"markdown"`, `"html"` o `"both"`** (nuevo en esta
-  tarea): invoca
-  `investigate_and_generate_reports(args.ticker, config=config,
-  provider=provider, output_dir=output_dir, formats=<mapeo>)` (ver
-  `_FORMAT_TO_REPORT_FORMATS` más abajo), y devuelve la tupla
-  `(ResearchResult, list[Path])` que esa función produce. `dispatch`
-  amplía así su tipo de retorno a `ResearchResult | tuple[ResearchResult,
-  list[Path]]`, condicionado estrictamente a si el usuario pidió un
-  formato de salida.
+## Fuera de alcance de esta tarea (aún, ver TASKS.md, "Orquestador y CLI")
 
-En ambos casos:
-- **No imprime nada en consola** (eso sigue siendo responsabilidad de
-  `format_research_result`, y de quien invoque `dispatch`, ver
-  `investmentops/__main__.py`). Presentar en consola las rutas de los
-  reportes generados cuando `dispatch` devuelve la tupla es alcance de
-  la tarea siguiente ("Implementar el mensaje final en consola
-  indicando dónde quedaron guardados los reportes generados",
-  TASKS.md); `investmentops/__main__.py` **no se modificó** en esta
-  tarea, por lo que invocar la CLI real con `--format` hoy generará los
-  archivos correctamente pero `main()` todavía no sabe presentar la
-  tupla resultante (se actualizará en la tarea siguiente).
-- **No traduce ni maneja ningún error adicional** más allá de lo que ya
-  hacían `investigate`/`investigate_and_generate_reports` (ver sus
-  propios docstrings): `DataProviderError`, `NormalizationError`,
-  `PromptError`, `AgentProviderSelectionError` y `AIProviderError` ya
-  quedan reflejados como `ResearchFailure` dentro del propio
-  `ResearchResult`; lo que puede seguir escapando (ej. `ConfigError` si
-  falta `config.local.toml`, o `ReportError` si no se puede escribir el
-  reporte en disco) se propaga tal cual desde `dispatch`.
-- `config`, `provider` y `output_dir` son parámetros opcionales que se
-  propagan directamente al orquestador, pensados sobre todo para pruebas.
-- Si `args.command` no es un comando reconocido, levanta `ValueError`
-  (salvaguarda defensiva, no debería ocurrir en la práctica).
-
-## Impresión en consola (`format_research_result`)
-
-`format_research_result(result)` traduce un `ResearchResult` (no la
-tupla que `dispatch` puede devolver cuando se pide `--format`; ver
-arriba) a un texto simple y legible, pensado para imprimirse
-directamente en consola. Sin cambios en esta tarea; ver la sección
-completa en versiones anteriores de este docstring o el código de la
-función.
-
-Fuera de alcance de este módulo (aún, ver TASKS.md, sección "CLI" /
-"Orquestador y CLI"):
-- El mensaje final en consola indicando dónde quedaron guardados los
-  reportes generados cuando se usa `--format` (tarea separada y
-  siguiente).
-- Los subcomandos de fases posteriores (comparar, listar investigaciones,
-  watchlist, ver `ROADMAP.md`, Fases 5, 7 y 8): no se anticipan aquí,
-  siguiendo el mismo criterio de no sobre-diseñar ya aplicado en el resto
-  del proyecto.
+- La función del orquestador que ejecuta la investigación de cada
+  empresa involucrada en una comparación y ensambla sus resultados
+  individuales en un resultado comparativo (tarea separada y siguiente
+  en la misma sección).
+- Conectar el subcomando `compare` con esa función del orquestador
+  (`dispatch` no reconoce todavía `args.command == "compare"`; tarea
+  separada y siguiente).
+- La impresión en consola del resultado comparativo y el manejo de
+  errores específicos de `compare`: no desglosadas todavía como tareas
+  explícitas en `TASKS.md` para esta sección.
+- Cualquier sección de reporte de comparación (Markdown/HTML): tareas
+  separadas y posteriores en la sección "Reportes" de esta misma fase.
+- Los subcomandos de fases posteriores (listar investigaciones,
+  watchlist, ver `ROADMAP.md`, Fases 7 y 8): no se anticipan aquí.
 """
 
 from __future__ import annotations
@@ -171,13 +153,19 @@ _FORMAT_TO_REPORT_FORMATS: dict[str, tuple[str, ...]] = {
     "both": ("markdown", "html"),
 }
 
+#: Número mínimo de tickers exigido por el subcomando `compare` (ver
+#: `investmentops/cli/COMPARE_CLI.md`: "una comparación requiere al
+#: menos dos empresas").
+_MIN_COMPARE_TICKERS = 2
+
 
 def _validate_ticker(value: str) -> str:
     """Valida que el ticker recibido no esté vacío ni sea solo espacios.
 
     Usada como `type=` del argumento posicional `ticker` en
-    `build_parser`. `argparse` invoca esta función con el valor crudo
-    recibido en la línea de comandos; si levanta
+    `build_parser` (subcomando `investigate`) y de cada elemento de
+    `tickers` en el subcomando `compare`. `argparse` invoca esta función
+    con el valor crudo recibido en la línea de comandos; si levanta
     `argparse.ArgumentTypeError`, `argparse` lo traduce automáticamente a
     un mensaje de error en `stderr` y termina el proceso con
     `SystemExit`, el mismo mecanismo ya usado para el resto de errores de
@@ -186,8 +174,8 @@ def _validate_ticker(value: str) -> str:
     Parameters
     ----------
     value:
-        El valor crudo del argumento `ticker` tal como lo recibió
-        `argparse`, sin procesar.
+        El valor crudo del argumento tal como lo recibió `argparse`, sin
+        procesar.
 
     Returns
     -------
@@ -208,19 +196,60 @@ def _validate_ticker(value: str) -> str:
     return value
 
 
+class _MinimumTwoTickersAction(argparse.Action):
+    """Exige un mínimo de dos tickers para el argumento `tickers` de `compare`.
+
+    `nargs="+"` ya garantiza "uno o más" elementos, pero
+    `investmentops/cli/COMPARE_CLI.md` exige explícitamente un mínimo de
+    **dos** (una comparación requiere al menos dos empresas; un único
+    ticker ya está cubierto por `investigate`). `argparse` no ofrece un
+    mecanismo nativo para ese mínimo, por lo que se implementa como una
+    `Action` propia: si `values` (ya validados individualmente por
+    `_validate_ticker`, que corre antes vía `type=`) tiene menos de
+    `_MIN_COMPARE_TICKERS` elementos, se levanta el mismo error que
+    `argparse` usaría para cualquier otro problema de parseo
+    (`parser.error(...)`: mensaje de uso + error en `stderr`, y
+    `SystemExit` con código 2), sin introducir un mecanismo de error
+    distinto al ya usado por el resto de esta CLI.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        if len(values) < _MIN_COMPARE_TICKERS:
+            parser.error(
+                "compare requiere al menos "
+                f"{_MIN_COMPARE_TICKERS} tickers (se recibió "
+                f"{len(values)})."
+            )
+        setattr(namespace, self.dest, values)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construye el `ArgumentParser` de la CLI, con sus subcomandos.
 
     Implementa la estructura de subcomandos (`argparse` con
-    `add_subparsers`) ya decidida en `investmentops/cli/CLI.md`. En esta
-    fase existe un único subcomando, `investigate`, con un argumento
-    posicional obligatorio `ticker` (validado mediante `_validate_ticker`:
-    no vacío, no solo espacios) y un flag opcional `--format` (valores
-    admitidos: `markdown`, `html`, `both`; por defecto ausente, sin
-    generar ningún reporte). Subcomandos futuros (comparar, listar
-    investigaciones, watchlist) se añadirán aquí como subparsers
-    adicionales, sin modificar este, cuando les corresponda su propia
-    tarea (ver `CLI.md`, "Decisión: subcomandos").
+    `add_subparsers`) ya decidida en `investmentops/cli/CLI.md`. Expone
+    dos subcomandos:
+
+    - `investigate`: un argumento posicional obligatorio `ticker`
+      (validado mediante `_validate_ticker`: no vacío, no solo espacios)
+      y un flag opcional `--format` (valores admitidos: `markdown`,
+      `html`, `both`; por defecto ausente, sin generar ningún reporte).
+    - `compare` (esta tarea, ver `investmentops/cli/COMPARE_CLI.md`): un
+      argumento posicional variádico `tickers` (`nargs="+"`, cada
+      elemento validado con `_validate_ticker`), con un mínimo de dos
+      elementos exigido por `_MinimumTwoTickersAction`. Sin flags
+      adicionales todavía.
+
+    Subcomandos futuros (listar investigaciones, watchlist) se añadirán
+    aquí como subparsers adicionales, sin modificar los existentes,
+    cuando les corresponda su propia tarea (ver `CLI.md`, "Decisión:
+    subcomandos").
 
     Returns
     -------
@@ -258,6 +287,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="Compara dos o más empresas a partir de sus tickers.",
+    )
+    compare_parser.add_argument(
+        "tickers",
+        nargs="+",
+        type=_validate_ticker,
+        action=_MinimumTwoTickersAction,
+        help=(
+            "Tickers de las empresas a comparar, mínimo dos (ej. AAPL "
+            "MSFT GOOGL)."
+        ),
+    )
+
     return parser
 
 
@@ -279,18 +323,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         recibió, ya validado como no vacío/no solo espacios por
         `_validate_ticker`, pero sin normalizar, ver docstring del
         módulo) y `format` (`"markdown"`, `"html"`, `"both"`, o `None`
-        si no se indicó `--format`).
+        si no se indicó `--format`). Para el subcomando `compare`, expone
+        `command == "compare"` y `tickers` (la lista de valores tal cual
+        se recibieron, cada uno ya validado individualmente, sin
+        normalizar; ya garantizada con al menos dos elementos).
 
     Raises
     ------
     SystemExit
         Comportamiento estándar de `argparse` si falta el subcomando, si
-        falta el argumento posicional `ticker`, si el ticker está vacío o
-        es solo espacios (ver `_validate_ticker`), si `--format` recibe
-        un valor fuera de `{"markdown", "html", "both"}`, o si se pasa
-        `--help`/`-h` (imprime ayuda/error y termina el proceso). Este
-        módulo no atrapa ni traduce esa excepción: es el mecanismo de
-        error nativo de `argparse`, consistente con una CLI estándar.
+        falta el argumento posicional `ticker` (`investigate`) o
+        `tickers` (`compare`), si algún ticker está vacío o es solo
+        espacios (ver `_validate_ticker`), si `compare` recibe menos de
+        dos tickers (ver `_MinimumTwoTickersAction`), si `--format`
+        recibe un valor fuera de `{"markdown", "html", "both"}`, o si se
+        pasa `--help`/`-h` (imprime ayuda/error y termina el proceso).
+        Este módulo no atrapa ni traduce esa excepción: es el mecanismo
+        de error nativo de `argparse`, consistente con una CLI estándar.
     """
     parser = build_parser()
     return parser.parse_args(argv)
@@ -307,56 +356,46 @@ def dispatch(
 
     Traduce el `argparse.Namespace` producido por `parse_args` en una
     llamada real al orquestador (`investmentops.core.orchestrator`). Ver
-    "Conexión con el orquestador (`dispatch`)" en el docstring del
-    módulo para el alcance exacto de esta función, incluyendo el nuevo
-    comportamiento condicionado a `args.format` (ver esa sección para la
-    explicación completa; resumen abajo).
+    "Conexión con el orquestador (`dispatch`)" en versiones anteriores
+    del docstring del módulo para el alcance exacto de esta función.
+
+    Solo reconoce el comando `"investigate"` (ver docstring de
+    versiones anteriores para el detalle completo de su comportamiento
+    con/sin `--format`): el subcomando `compare` (esta tarea) todavía no
+    está conectado con el orquestador — esa conexión es una tarea
+    separada y posterior de la misma sección ("Conectar el comando CLI
+    de comparación con esa función del orquestador"), por lo que
+    `args.command == "compare"` hoy levanta `ValueError` igual que
+    cualquier otro comando no reconocido por esta función.
 
     Parameters
     ----------
     args:
         El `argparse.Namespace` ya parseado y validado (ver
-        `parse_args`). Para el único subcomando existente
-        (`"investigate"`), se espera que exponga `args.ticker` y
-        `args.format` (`None` si no se pidió `--format`).
+        `parse_args`).
     config:
         Configuración ya cargada, propagada tal cual a
         `investigate(...)`/`investigate_and_generate_reports(...)`.
-        Pensado sobre todo para pruebas, para no depender de un
-        `config.local.toml` real en disco. Si no se indica, el
-        orquestador resuelve la configuración real por sí mismo.
     provider:
         Proveedor de datos ya construido, propagado tal cual al
-        orquestador. Pensado sobre todo para pruebas. Si no se indica, el
-        orquestador usa el proveedor por defecto (FMP).
+        orquestador.
     output_dir:
         Ruta al directorio donde guardar los reportes generados, si
-        `args.format` no es `None`. Se ignora por completo si
-        `args.format` es `None` (no se genera ningún reporte). Si no se
-        indica, `generate_reports` la resuelve desde `config.local.toml`
-        (sección `[output].output_dir`, ver CONFIGURATION.md).
+        `args.format` no es `None`.
 
     Returns
     -------
     ResearchResult | tuple[ResearchResult, list[Path]]
-        - Si `args.format is None`: el `ResearchResult` devuelto por
-          `investigate(...)`, sin transformar (comportamiento idéntico al
-          de la Fase 1).
-        - Si `args.format` es `"markdown"`, `"html"` o `"both"`: la tupla
-          `(ResearchResult, list[Path])` devuelta por
-          `investigate_and_generate_reports(...)`, con las rutas de los
-          reportes ya generados y guardados en disco.
+        Ver docstring de versiones anteriores del módulo.
 
     Raises
     ------
     ValueError
-        Si `args.command` no es un comando reconocido (salvaguarda
-        defensiva; no debería ocurrir en la práctica, ya que
-        `build_parser` exige un subcomando válido mediante `argparse`).
+        Si `args.command` no es `"investigate"` (incluyendo, hoy,
+        `"compare"`: su conexión con el orquestador es una tarea
+        separada y posterior).
     ReportError, ConfigError
-        Si `args.format` no es `None`, ver
-        `investmentops.core.orchestrator.generate_reports` para los
-        fallos que puede levantar la generación de reportes.
+        Ver `investmentops.core.orchestrator.generate_reports`.
     """
     if args.command == "investigate":
         requested_format = getattr(args, "format", None)
@@ -382,10 +421,7 @@ def format_research_result(result: ResearchResult) -> str:
     (texto simple, sin formato de reporte todavía)" (TASKS.md, Fase 1,
     "CLI"). Espera un `ResearchResult`, no la tupla que `dispatch` puede
     devolver cuando `args.format` no es `None` (ver docstring de
-    `dispatch`); presentar esa tupla, incluyendo las rutas de los
-    reportes generados, es alcance de la tarea siguiente ("Implementar
-    el mensaje final en consola indicando dónde quedaron guardados los
-    reportes generados").
+    `dispatch`).
 
     Esta función solo produce el texto: no imprime nada por sí misma
     (`print(format_research_result(result))` es responsabilidad de quien
