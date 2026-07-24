@@ -4,56 +4,47 @@
 
 ## Última tarea completada
 
-Fase 6, "Motores de análisis por estrategia" → "Implementar el parseo de
-la respuesta del modelo al resultado estructurado del agente 'growth'
-(hallazgos, procedencia de IA, dejando explícito que es una lectura
-desde un marco particular, no un veredicto)." (TASKS.md).
+Fase 6, "Motores de análisis por estrategia" → "Escribir el archivo de
+prompt del agente de estrategia 'calidad' (fuera del código Python),
+indicando su marco de análisis y prohibiendo explícitamente cualquier
+recomendación de compra/venta o veredicto." (TASKS.md).
 
 ### Qué se implementó
 
-`parse_growth_response`/`analyze_growth`/`FRAMEWORK_LIMITATION` en
-`investmentops/analysis_engines/growth.py` (agregados al módulo ya
-existente). Mismo patrón ya usado por `parse_value_response`/
-`analyze_value` (Fase 6, estrategia "value"):
+`prompts/quality.md` (nuevo). Sigue el mismo patrón ya usado por
+`prompts/value.md`/`prompts/growth.md` (Fase 6): instruye al modelo a
+interpretar, sin recalcular, `net_margin`/`debt_to_revenue` (ya
+calculadas por `calculate_financial_health_metrics`, Fase 1) junto con
+`FinancialStatement` normalizado como contexto, sobre el mapeo de datos
+ya fijado en `STRATEGY_DATA_MAPPING.md` (¿qué tan sólida es la salud
+financiera subyacente?). Enmarca explícitamente la lectura como una
+perspectiva de "quality investing", distinta del diagnóstico general ya
+producido por el agente de salud financiera de Fase 1 (misma
+distinción ya documentada en `STRATEGY_DATA_MAPPING.md`, "Por qué
+'calidad' y 'salud financiera' no son redundantes"): la diferencia vive
+en el marco de interpretación del prompt, no en los datos ni su
+cálculo. Declara explícitamente la limitación de liquidez ya conocida
+desde Fase 1 (el modelo de dominio no expone activos/pasivos
+corrientes) y prohíbe cualquier recomendación de compra/venta o
+veredicto de inversión.
 
-- `parse_growth_response(response, trend_result)` traduce el
-  `AIProviderResponse` crudo (más el `TrendAnalysisResult` ya calculado)
-  a un `AnalysisResult`: `analysis_id="growth"`, `findings=[response.content]`,
-  `supporting_metrics` con las cuatro claves ya calculadas por
-  `assemble_trend_analysis` (`revenue_trend`, `net_income_trend`,
-  `revenue_growth_by_period`, `net_income_growth_by_period`), `limitations`
-  con `FRAMEWORK_LIMITATION` (siempre primero) seguida de cualquier
-  advertencia ya producida por `assemble_trend_analysis`
-  (`trend_result.limitations`), y `provenance` construida desde los
-  metadatos del proveedor de IA.
-- `FRAMEWORK_LIMITATION` declara explícitamente que la lectura
-  corresponde solo al marco de growth investing, no a una evaluación
-  general ni a un veredicto — mismo criterio ya usado por
-  `value.FRAMEWORK_LIMITATION`.
-- `analyze_growth(series, trend_result=None, *, config=None)` encadena
-  `assemble_trend_analysis` (si no se pasa ya calculado) →
-  `invoke_growth_agent` → `parse_growth_response`, análoga a
-  `analyze_value`.
-
-No se modificó `invoke_growth_agent`, `trends.py`, `value.py` ni ningún
-otro motor existente.
+Solo se agregó el archivo de prompt; no se tocó ningún módulo Python.
+La invocación al proveedor de IA para este agente y el parseo de su
+respuesta son las dos tareas siguientes y separadas de esta misma
+sección.
 
 ## Archivos creados o modificados
 
 Creados:
-- `investmentops/tests/test_analysis_engines_growth_parse.py`
+- `prompts/quality.md`
 
 Modificados:
-- `investmentops/analysis_engines/growth.py` (se agregó `parse_growth_response`,
-  `analyze_growth`, `FRAMEWORK_LIMITATION`, y las importaciones/docstring
-  correspondientes)
 - `TASKS.md` (una línea: tarea marcada como completada)
 - `PROGRESS.md` (este archivo)
 
 ## Próxima tarea recomendada
 
 Fase 6, "Motores de análisis por estrategia":
-- "Escribir el archivo de prompt del agente de estrategia 'calidad'
-  (fuera del código Python), indicando su marco de análisis y
-  prohibiendo explícitamente cualquier recomendación de compra/venta o
-  veredicto."
+- "Implementar la invocación al proveedor de IA configurado para el
+  agente 'calidad', enviando los datos normalizados ya existentes
+  junto con el prompt."
