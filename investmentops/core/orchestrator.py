@@ -442,6 +442,9 @@ from investmentops.analysis_engines.comparables import (
     assemble_comparables_analysis,
     calculate_relative_positioning,
 )
+from investmentops.analysis_engines.growth import analyze_growth
+from investmentops.analysis_engines.quality import analyze_quality
+from investmentops.analysis_engines.value import analyze_value
 # --- Import nuevo, junto a los demás imports de data_layer ---
 # --- normalization import block: se agrega comparables_from_raw ---
 
@@ -1362,6 +1365,215 @@ def run_comparables_engine(
     )
     comparables_result = assemble_comparables_analysis(positioning)
     return _comparables_analysis_result_to_analysis_result(comparables_result)
+
+def run_value_engine(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: DataProvider | None = None,
+) -> AnalysisResult:
+    """Registra la invocación del agente de estrategia 'value' (Fase 6).
+
+    Encadena, para `ticker`:
+
+    1. `fetch_and_normalize(ticker, ...)`: obtiene y normaliza los datos
+       fundamentales de la empresa (mismo modelo ya usado por los
+       agentes de salud financiera y valoración, Fase 1).
+    2. `investmentops.analysis_engines.value.analyze_value(...)`: calcula
+       (si hace falta) `ValuationMetrics`/`FinancialHealthMetrics` ya
+       existentes, invoca al proveedor de IA configurado para el agente
+       ``"value"`` y parsea su respuesta a un `AnalysisResult` completo
+       (ya implementado en Fase 6, sin modificar aquí).
+
+    A diferencia de `run_trend_analysis_engine`/`run_news_relevance_engine`/
+    `run_comparables_engine` (que envuelven un resultado sin
+    `AnalysisProvenance` real en una procedencia centinela), este motor
+    ya invoca un proveedor de IA de verdad: `analyze_value` devuelve un
+    `AnalysisResult` con procedencia genuina (`ai_provider`/`ai_model`
+    del proveedor configurado), por lo que no requiere ninguna
+    conversión ni adaptador adicional.
+
+    No modifica `run_analysis_engines`, `run_trend_analysis_engine`,
+    `run_news_relevance_engine` ni `run_comparables_engine`: ningún
+    motor existente cambia. Todavía no se invoca desde `investigate`:
+    incorporar las lecturas por estrategia al flujo de investigación es
+    la tarea siguiente y separada de esta misma sección ("Incluir los
+    resultados de cada estrategia en el 'Resultado de investigación'
+    como entradas independientes y contrastables").
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a analizar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a `fetch_and_normalize` y a
+        `analyze_value`. Útil para pruebas, para no depender de un
+        `config.local.toml` real en disco.
+    provider:
+        Proveedor de datos fundamentales ya construido, propagado a
+        `fetch_and_normalize`. Pensado sobre todo para pruebas.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado del agente de estrategia 'value', con procedencia
+        de IA real (ver `analyze_value`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_and_normalize`. Esta función no captura ni traduce
+        esa excepción: el manejo de fallos parciales, si aplica, es
+        responsabilidad de quien la invoque (mismo criterio ya usado
+        por los demás `run_*_engine` respecto a `investigate`).
+    NormalizationError
+        Ver `fetch_and_normalize`.
+    PromptError, AgentProviderSelectionError, AIProviderError
+        Ver `investmentops.analysis_engines.value.analyze_value`.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    company_data = fetch_and_normalize(ticker, config=config, provider=provider)
+    return analyze_value(
+        company_data.market_data,
+        company_data.financial_statement,
+        config=config,
+    )
+
+
+def run_growth_engine(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: FMPFundamentalsProvider | None = None,
+    period: str = "annual",
+    limit: int = 5,
+) -> AnalysisResult:
+    """Registra la invocación del agente de estrategia 'growth' (Fase 6).
+
+    Encadena, para `ticker`:
+
+    1. `fetch_and_normalize_historical(ticker, ...)`: obtiene y
+       normaliza la serie histórica de estados financieros (misma
+       función ya usada por `run_trend_analysis_engine`, Fase 3).
+    2. `investmentops.analysis_engines.growth.analyze_growth(series,
+       ...)`: calcula (si hace falta) el `TrendAnalysisResult` a partir
+       de la serie, invoca al proveedor de IA configurado para el
+       agente ``"growth"`` y parsea su respuesta a un `AnalysisResult`
+       completo (ya implementado en Fase 6, sin modificar aquí).
+
+    Mismo criterio que `run_value_engine`: `analyze_growth` ya invoca un
+    proveedor de IA real, por lo que su resultado no requiere ninguna
+    conversión de procedencia centinela.
+
+    No modifica ningún motor existente. Todavía no se invoca desde
+    `investigate` (tarea siguiente de esta misma sección).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a analizar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a
+        `fetch_and_normalize_historical` y a `analyze_growth`.
+    provider:
+        Proveedor de datos fundamentales ya construido, propagado a
+        `fetch_and_normalize_historical`. Pensado sobre todo para
+        pruebas.
+    period:
+        Granularidad de los periodos a solicitar, propagada tal cual a
+        `fetch_and_normalize_historical`. Por defecto, ``"annual"``.
+    limit:
+        Número máximo de periodos históricos a solicitar, propagado tal
+        cual a `fetch_and_normalize_historical`. Por defecto, ``5``.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado del agente de estrategia 'growth', con procedencia
+        de IA real (ver `analyze_growth`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_and_normalize_historical`. Esta función no captura
+        ni traduce esa excepción: el manejo de fallos parciales, si
+        aplica, es responsabilidad de quien la invoque.
+    NormalizationError
+        Ver `fetch_and_normalize_historical`.
+    PromptError, AgentProviderSelectionError, AIProviderError
+        Ver `investmentops.analysis_engines.growth.analyze_growth`.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    series = fetch_and_normalize_historical(
+        ticker, config=config, provider=provider, period=period, limit=limit
+    )
+    return analyze_growth(series, config=config)
+
+
+def run_quality_engine(
+    ticker: str,
+    *,
+    config: dict[str, Any] | None = None,
+    provider: DataProvider | None = None,
+) -> AnalysisResult:
+    """Registra la invocación del agente de estrategia 'calidad' (Fase 6).
+
+    Encadena, para `ticker`:
+
+    1. `fetch_and_normalize(ticker, ...)`: obtiene y normaliza los datos
+       fundamentales de la empresa.
+    2. `investmentops.analysis_engines.quality.analyze_quality(...)`:
+       calcula (si hace falta) `FinancialHealthMetrics` ya existentes,
+       invoca al proveedor de IA configurado para el agente
+       ``"quality"`` y parsea su respuesta a un `AnalysisResult`
+       completo (ya implementado en Fase 6, sin modificar aquí).
+
+    Mismo criterio que `run_value_engine`/`run_growth_engine`:
+    `analyze_quality` ya invoca un proveedor de IA real, por lo que su
+    resultado no requiere ninguna conversión de procedencia centinela.
+    A diferencia de `run_value_engine`, no usa `MarketData` (el agente
+    de calidad no la necesita, ver `STRATEGY_DATA_MAPPING.md`).
+
+    No modifica ningún motor existente. Todavía no se invoca desde
+    `investigate` (tarea siguiente de esta misma sección).
+
+    Parameters
+    ----------
+    ticker:
+        Identificador de la empresa a analizar (ej. ``"AAPL"``).
+    config:
+        Configuración ya cargada, propagada a `fetch_and_normalize` y a
+        `analyze_quality`.
+    provider:
+        Proveedor de datos fundamentales ya construido, propagado a
+        `fetch_and_normalize`. Pensado sobre todo para pruebas.
+
+    Returns
+    -------
+    AnalysisResult
+        El resultado del agente de estrategia 'calidad', con
+        procedencia de IA real (ver `analyze_quality`).
+
+    Raises
+    ------
+    DataProviderError
+        Ver `fetch_and_normalize`. Esta función no captura ni traduce
+        esa excepción.
+    NormalizationError
+        Ver `fetch_and_normalize`.
+    PromptError, AgentProviderSelectionError, AIProviderError
+        Ver `investmentops.analysis_engines.quality.analyze_quality`.
+    ConfigError
+        Si `provider` no se indica, `config` tampoco, y no se puede
+        cargar `config.local.toml`.
+    """
+    company_data = fetch_and_normalize(ticker, config=config, provider=provider)
+    return analyze_quality(company_data.financial_statement, config=config)
+
 
 def _news_relevance_result_to_analysis_result(
     news_result: NewsRelevanceResult,
