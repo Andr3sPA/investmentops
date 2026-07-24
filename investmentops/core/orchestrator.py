@@ -422,6 +422,35 @@ preserva sin cambios el comportamiento (y las aserciones sobre
 existentes que inyectan un `provider` mínimo de datos fundamentales sin
 capacidad de noticias.
 
+## Inclusión de las lecturas por estrategia de inversión en `investigate`
+
+Cubre la tarea "Incluir los resultados de cada estrategia en el
+'Resultado de investigación' como entradas independientes y
+contrastables" (TASKS.md, Fase 6, "Orquestador"). `investigate` invoca
+también `run_value_engine`/`run_growth_engine`/`run_quality_engine`
+(Fase 6, ya implementados), cada uno en su propio `try/except`
+independiente. A diferencia de los motores de tendencia/noticias
+relevantes/comparables (que devuelven una `AnalysisProvenance`
+centinela), estos tres ya invocan un proveedor de IA real: sus
+`AnalysisResult` se agregan tal cual, sin ninguna conversión adicional.
+
+"value"/"quality" solo se intentan cuando `provider is None` (uso real,
+sin un `DataProvider` de prueba inyectado), ya que ambos reutilizan
+`fetch_and_normalize` sin necesitar ninguna capacidad especial del
+proveedor — mismo criterio de "solo en uso real" ya aplicado al motor de
+noticias relevantes, para no alterar el comportamiento de las
+numerosas pruebas ya existentes que inyectan un `DataProvider` mínimo.
+"growth" necesita series históricas (`fetch_historical`), por lo que
+sigue la misma condición ya usada por el motor de tendencia
+(`provider is None or hasattr(provider, "fetch_historical")`).
+
+Un fallo de cualquiera de las tres estrategias (`DataProviderError`,
+`NormalizationError`, `PromptError`, `AgentProviderSelectionError`,
+`AIProviderError`) se captura y se traduce a un `ResearchFailure`, con
+`stage="data_provider"` para los dos primeros tipos de error y
+`stage="analysis_engine"` para el resto, sin detener las demás
+estrategias ni el resto del flujo ya ensamblado.
+
 Fuera de alcance de este módulo (aún):
 - Completar `Company.name`/`sector`/`market` con datos reales: no hay
   hoy una fuente de datos que los provea (ver docstring de
@@ -442,9 +471,9 @@ from investmentops.analysis_engines.comparables import (
     assemble_comparables_analysis,
     calculate_relative_positioning,
 )
-from investmentops.analysis_engines.growth import analyze_growth
-from investmentops.analysis_engines.quality import analyze_quality
-from investmentops.analysis_engines.value import analyze_value
+from investmentops.analysis_engines.growth import AGENT_ID as GROWTH_AGENT_ID, analyze_growth
+from investmentops.analysis_engines.quality import AGENT_ID as QUALITY_AGENT_ID, analyze_quality
+from investmentops.analysis_engines.value import AGENT_ID as VALUE_AGENT_ID, analyze_value
 # --- Import nuevo, junto a los demás imports de data_layer ---
 # --- normalization import block: se agrega comparables_from_raw ---
 
@@ -2069,7 +2098,73 @@ def investigate(
                     reason=str(exc),
                 )
             )
+    # Lecturas por estrategia de inversión (Fase 6: value, growth,
+    # calidad). "value"/"quality" reutilizan fetch_and_normalize, igual
+    # que salud financiera/valoración, sin ninguna capacidad especial
+    # del proveedor; por eso solo se intentan cuando no se inyectó un
+    # `provider` de datos fundamentales de prueba (`provider is None`,
+    # uso real), mismo criterio de "solo en uso real" ya aplicado al
+    # motor de noticias relevantes. "growth" necesita series históricas
+    # (`fetch_historical`), por lo que sigue la misma condición ya usada
+    # por el motor de tendencia. Cada estrategia se intenta en su propio
+    # try/except, capturando tanto los fallos de obtención/normalización
+    # de datos (`DataProviderError`/`NormalizationError`, stage
+    # "data_provider") como los del proveedor de IA
+    # (`PromptError`/`AgentProviderSelectionError`/`AIProviderError`,
+    # stage "analysis_engine"), sin detener el resto del flujo.
+    strategy_exceptions = (
+        DataProviderError,
+        NormalizationError,
+        PromptError,
+        AgentProviderSelectionError,
+        AIProviderError,
+    )
 
+    def _strategy_failure_stage(exc: Exception) -> str:
+        if isinstance(exc, (DataProviderError, NormalizationError)):
+            return "data_provider"
+        return "analysis_engine"
+
+    if provider is None:
+        try:
+            analysis_results.append(
+                run_value_engine(ticker, config=config, provider=provider)
+            )
+        except strategy_exceptions as exc:
+            failures.append(
+                ResearchFailure(
+                    stage=_strategy_failure_stage(exc),
+                    identifier=VALUE_AGENT_ID,
+                    reason=str(exc),
+                )
+            )
+
+        try:
+            analysis_results.append(
+                run_quality_engine(ticker, config=config, provider=provider)
+            )
+        except strategy_exceptions as exc:
+            failures.append(
+                ResearchFailure(
+                    stage=_strategy_failure_stage(exc),
+                    identifier=QUALITY_AGENT_ID,
+                    reason=str(exc),
+                )
+            )
+
+    if provider is None or hasattr(provider, "fetch_historical"):
+        try:
+            analysis_results.append(
+                run_growth_engine(ticker, config=config, provider=provider)
+            )
+        except strategy_exceptions as exc:
+            failures.append(
+                ResearchFailure(
+                    stage=_strategy_failure_stage(exc),
+                    identifier=GROWTH_AGENT_ID,
+                    reason=str(exc),
+                )
+            )
     return assemble_research_result(ticker, analysis_results, failures=failures)
 
 
