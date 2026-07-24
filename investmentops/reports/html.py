@@ -1,8 +1,9 @@
 # investmentops/reports/html.py
 """Generador de reportes en HTML.
 
-Cubre, hasta ahora, seis tareas de TASKS.md, Fase 2 ("Generador HTML"),
-Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
+Cubre, hasta ahora, siete tareas de TASKS.md, Fase 2 ("Generador HTML"),
+Fase 3 ("Reportes"), Fase 4 ("Reportes"), Fase 5 ("Reportes") y Fase 6
+("Reportes"):
 
 - "Implementar el volcado de las mismas secciones que en Markdown (salud
   financiera, valoración, fuentes)." (ya completada, ver PROGRESS.md).
@@ -16,7 +17,10 @@ Fase 3 ("Reportes"), Fase 4 ("Reportes") y Fase 5 ("Reportes"):
 - "Añadir la misma sección [Comparables del sector] a la plantilla
   HTML." (ya completada, ver PROGRESS.md).
 - "Adaptar el generador HTML para soportar un reporte de comparación
-  (varias empresas) además del reporte individual." (esta tarea).
+  (varias empresas) además del reporte individual." (ya completada, ver
+  PROGRESS.md).
+- "Añadir la misma sección [Lecturas por estrategia de inversión] a la
+  plantilla HTML." (esta tarea).
 
 Sobre la base de diseño ya fijada en `investmentops/reports/HTML_TEMPLATE.md`:
 HTML5 mínimo, sin CSS elaborado, sin JavaScript, sin motor de templating
@@ -33,9 +37,10 @@ generador de formato es independiente (ver ARCHITECTURE.md,
 implica añadir un generador nuevo, no tocar los existentes"), por lo que
 las constantes de identificador de agente (`FINANCIAL_HEALTH_AGENT_ID`,
 `VALUATION_AGENT_ID`, `TREND_ANALYSIS_AGENT_ID`,
-`NEWS_RELEVANCE_AGENT_ID`, `COMPARABLES_AGENT_ID`) y el helper de
-búsqueda (`_find_analysis`) se duplican aquí en vez de importarse, mismo
-criterio ya documentado en versiones anteriores de este módulo.
+`NEWS_RELEVANCE_AGENT_ID`, `COMPARABLES_AGENT_ID`, `VALUE_AGENT_ID`,
+`GROWTH_AGENT_ID`, `QUALITY_AGENT_ID`) y el helper de búsqueda
+(`_find_analysis`) se duplican aquí en vez de importarse, mismo criterio
+ya documentado en versiones anteriores de este módulo.
 
 ## Sección "Evolución de ingresos y beneficios"
 
@@ -138,7 +143,7 @@ Esta tarea no conecta el motor de posicionamiento relativo
 (`run_comparables_engine`) con `investigate()`: mismo alcance ya
 documentado para la tarea equivalente de Markdown.
 
-## Reporte de comparación (varias empresas, esta tarea)
+## Reporte de comparación (varias empresas)
 
 Cubre la tarea "Adaptar el generador HTML para soportar un reporte de
 comparación (varias empresas) además del reporte individual" (TASKS.md,
@@ -149,13 +154,12 @@ aquí sin una nueva decisión de diseño: no hay ninguna tarea de diseño
 separada para este reporte en `TASKS.md`, y la razón para no producir
 una tabla comparativa escalar-por-escalar —el motor de comparables
 todavía no está conectado a `investigate()`, y ninguna empresa debe
-perder ninguna de sus cinco secciones— aplica igual en HTML que en
-Markdown).
+perder ninguna de sus secciones— aplica igual en HTML que en Markdown).
 
 ### Por qué se extrae `_render_result_body_lines`
 
-`render_html` construía, hasta esta tarea, el cuerpo de un único
-`ResearchResult` (título, identidad, fecha, y las cinco secciones)
+`render_html` construía, hasta la tarea de comparación, el cuerpo de un
+único `ResearchResult` (título, identidad, fecha, y las secciones)
 directamente dentro de su propio cuerpo de función, antes de envolverlo
 en el documento HTML5 completo (`<!DOCTYPE html>` ... `</html>`). Para
 anidar varios reportes completos bajo un único documento de comparación
@@ -175,7 +179,8 @@ cada `<h1>`/`</h1>` en `<h2>`/`</h2>`, y cada `<h2>`/`</h2>` en
 `<h3>`/`</h3>` (el orden de las dos sustituciones importa: primero
 `<h2>`→`<h3>`, luego `<h1>`→`<h2>`, para no desplazar dos veces el mismo
 encabezado). Los `<h3>` ya presentes en el fragmento (ej. "Métricas de
-soporte", "Limitaciones") no se tocan — mismo criterio que la versión
+soporte", "Limitaciones", y ahora las subsecciones de "Lecturas por
+estrategia de inversión") no se tocan — mismo criterio que la versión
 Markdown, que solo desplaza los dos niveles que produce el reporte
 individual (`#`/`##`), dejando intacto cualquier nivel más profundo.
 
@@ -197,6 +202,57 @@ Fuera de alcance de esta tarea:
 - Cualquier tabla comparativa escalar-por-escalar entre las empresas
   comparadas: ya existe, por separado, como el motor de comparables
   (Fase 5), no conectado a este flujo.
+
+## Sección "Lecturas por estrategia de inversión" (esta tarea)
+
+Cubre la tarea "Añadir la misma sección [Lecturas por estrategia de
+inversión] a la plantilla HTML" (TASKS.md, Fase 6, "Reportes"),
+equivalente HTML de la sección ya implementada en
+`investmentops.reports.markdown.render_markdown` (ver ese módulo,
+"Sección 'Lecturas por estrategia de inversión'" para la justificación
+completa del formato, reutilizada aquí sin una nueva decisión de
+diseño).
+
+A diferencia de los motores de tendencia/noticias relevantes/comparables
+(que no invocan IA y usan una `AnalysisProvenance` centinela), los tres
+agentes de estrategia (`value`, `growth`, `quality`, Fase 6) ya invocan
+un proveedor de IA real y devuelven un `AnalysisResult` con exactamente
+la misma forma que "Salud financiera"/"Valoración": hallazgos, un puñado
+de `supporting_metrics` escalares, limitaciones y `provenance` genuina.
+Por eso esta sección **reutiliza sin modificarla** `_render_analysis_body_html`
+(la misma función ya usada por esas dos secciones), en vez de escribir
+un volcado nuevo.
+
+`VALUE_AGENT_ID`/`GROWTH_AGENT_ID`/`QUALITY_AGENT_ID` (los mismos
+identificadores usados en
+`investmentops.analysis_engines.value.AGENT_ID`/
+`investmentops.analysis_engines.growth.AGENT_ID`/
+`investmentops.analysis_engines.quality.AGENT_ID`) y `_STRATEGY_SECTIONS`
+(que fija el orden y la etiqueta legible de cada estrategia: `value` →
+"Value investing", `growth` → "Growth investing", `quality` → "Calidad
+(quality investing)", mismo orden en que se listan en `STRATEGIES.md`/se
+invocan en `investigate`) siguen exactamente el mismo patrón ya usado en
+`investmentops/reports/markdown.py`.
+
+### Estructura
+
+    <h2>Lecturas por estrategia de inversión</h2>
+    <h3>Value investing</h3>
+    <!-- hallazgos, métricas, limitaciones, procedencia -->
+    <h3>Growth investing</h3>
+    <!-- hallazgos, métricas, limitaciones, procedencia -->
+    <h3>Calidad (quality investing)</h3>
+    <!-- hallazgos, métricas, limitaciones, procedencia -->
+
+Cada estrategia tiene su **propio encabezado `<h3>`**, presentado
+siempre (esté o no presente su `AnalysisResult`), igual criterio ya
+usado por los encabezados `<h2>` de las demás secciones: esto es lo que
+garantiza, conforme a `GOALS.md` ("presentadas como opiniones
+contrastables entre sí, no como una única verdad"), que ninguna lectura
+se fusione con otra ni con un veredicto único.
+
+Esta tarea no conecta ningún motor nuevo con `investigate()` (ya
+conectados desde una tarea anterior de Fase 6, "Orquestador").
 
 ## Guardado del archivo HTML generado (`save_html_report`)
 
@@ -304,6 +360,39 @@ NEWS_RELEVANCE_AGENT_ID = "news_relevance"
 #: para no acoplar este generador a su implementación concreta.
 COMPARABLES_AGENT_ID = "comparables"
 
+#: Identificador del agente de estrategia "value", el mismo usado en
+#: `investmentops.analysis_engines.value.AGENT_ID`. A diferencia de
+#: `TREND_ANALYSIS_AGENT_ID`/`NEWS_RELEVANCE_AGENT_ID`/`COMPARABLES_AGENT_ID`
+#: (motores sin `provenance` real), este agente ya invoca un proveedor de
+#: IA real (ver "Sección 'Lecturas por estrategia de inversión'" en el
+#: docstring del módulo), por lo que su `AnalysisResult` se presenta
+#: reutilizando `_render_analysis_body_html` sin ninguna adaptación
+#: adicional.
+VALUE_AGENT_ID = "value"
+
+#: Identificador del agente de estrategia "growth", el mismo usado en
+#: `investmentops.analysis_engines.growth.AGENT_ID`. Mismo criterio que
+#: `VALUE_AGENT_ID`.
+GROWTH_AGENT_ID = "growth"
+
+#: Identificador del agente de estrategia "calidad", el mismo usado en
+#: `investmentops.analysis_engines.quality.AGENT_ID`. Mismo criterio que
+#: `VALUE_AGENT_ID`/`GROWTH_AGENT_ID`.
+QUALITY_AGENT_ID = "quality"
+
+#: Estrategias a presentar en la sección "Lecturas por estrategia de
+#: inversión", en el orden en que se muestran (mismo orden en que se
+#: listan en `STRATEGIES.md`/se invocan en `investigate`, y mismo orden
+#: ya usado en `investmentops/reports/markdown.py`). Cada entrada es
+#: `(analysis_id, etiqueta_legible)`. Agregar una estrategia nueva en el
+#: futuro implicaría sumar una entrada aquí, sin tocar el resto de
+#: `_render_result_body_lines`.
+_STRATEGY_SECTIONS: tuple[tuple[str, str], ...] = (
+    (VALUE_AGENT_ID, "Value investing"),
+    (GROWTH_AGENT_ID, "Growth investing"),
+    (QUALITY_AGENT_ID, "Calidad (quality investing)"),
+)
+
 #: Bloque `<style>` mínimo embebido, tal como lo fija `HTML_TEMPLATE.md`:
 #: tipografía de sistema, ancho máximo legible, espaciado básico. Sin
 #: hoja de estilos externa ni framework CSS.
@@ -326,7 +415,8 @@ def _find_analysis(
     independencia entre generadores (ver docstring del módulo). Funciona
     igual para cualquier `analysis_id` (``"financial_health"``,
     ``"valuation"``, ``"trend_analysis"``, ``"news_relevance"``,
-    ``"comparables"``), sin acoplarse a ninguno.
+    ``"comparables"``, ``"value"``, ``"growth"``, ``"quality"``), sin
+    acoplarse a ninguno.
     """
     return next(
         (analysis for analysis in result.analysis_results if analysis.analysis_id == analysis_id),
@@ -341,11 +431,15 @@ def _render_analysis_body_html(analysis: AnalysisResult) -> list[str]:
     Orden fijado en `REPORT_SECTIONS.md`/`HTML_TEMPLATE.md`: hallazgos →
     métricas de soporte → limitaciones → procedencia de la interpretación
     de IA. Reutilizada tanto para "Salud financiera" como para
-    "Valoración" (no depende del `analysis_id` concreto). No se usa para
-    "Evolución de ingresos y beneficios", "Noticias recientes
-    relevantes" ni "Comparables del sector": esas secciones reemplazan el
-    volcado plano de `supporting_metrics` por una tabla o una lista (ver
-    `_render_trend_analysis_body_html`,
+    "Valoración", y ahora también para las tres subsecciones de
+    "Lecturas por estrategia de inversión" (`value`/`growth`/`quality`,
+    ver "Sección 'Lecturas por estrategia de inversión'" en el docstring
+    del módulo): no depende del `analysis_id` concreto, solo asume la
+    forma común de `AnalysisResult` con `supporting_metrics` planos. No
+    se usa para "Evolución de ingresos y beneficios", "Noticias
+    recientes relevantes" ni "Comparables del sector": esas secciones
+    reemplazan el volcado plano de `supporting_metrics` por una tabla o
+    una lista (ver `_render_trend_analysis_body_html`,
     `_render_news_relevance_body_html`,
     `_render_comparables_body_html`). Todo el contenido dinámico se
     escapa con `html.escape` antes de insertarse.
@@ -618,7 +712,7 @@ def _render_comparables_body_html(analysis: AnalysisResult) -> list[str]:
 
 def _render_result_body_lines(result: ResearchResult) -> list[str]:
     """Construye las líneas HTML del cuerpo (sin envoltura de documento)
-    para un único `ResearchResult`: título, identidad, fecha, y las cinco
+    para un único `ResearchResult`: título, identidad, fecha, y las seis
     secciones de análisis, en el mismo orden que usa `render_html`.
 
     Extraída como pieza reutilizable (ver "Reporte de comparación" en el
@@ -666,6 +760,13 @@ def _render_result_body_lines(result: ResearchResult) -> list[str]:
     if comparables_result is not None:
         lines.extend(_render_comparables_body_html(comparables_result))
 
+    lines.append("<h2>Lecturas por estrategia de inversión</h2>")
+    for agent_id, label in _STRATEGY_SECTIONS:
+        lines.append(f"<h3>{escape(label)}</h3>")
+        strategy_result = _find_analysis(result, agent_id)
+        if strategy_result is not None:
+            lines.extend(_render_analysis_body_html(strategy_result))
+
     return lines
 
 
@@ -676,8 +777,9 @@ def render_html(result: ResearchResult) -> str:
     en `HTML_TEMPLATE.md`): encabezado con identidad de la empresa
     investigada y fecha de ensamblado, más las secciones "Salud
     financiera", "Valoración", "Evolución de ingresos y beneficios",
-    "Noticias recientes relevantes" y "Comparables del sector", en el
-    mismo orden y con el mismo contenido que
+    "Noticias recientes relevantes", "Comparables del sector" y
+    "Lecturas por estrategia de inversión", en el mismo orden y con el
+    mismo contenido que
     `investmentops.reports.markdown.render_markdown` (construidos vía
     `_render_result_body_lines`, ver docstring del módulo).
 
@@ -691,10 +793,16 @@ def render_html(result: ResearchResult) -> str:
     (una por ítem), limitaciones y procedencia (centinela). "Comparables
     del sector" vuelca hallazgos, las métricas propias de la empresa, una
     tabla comparativa por métrica y par, limitaciones y procedencia
-    (centinela). Si el agente/motor correspondiente no completó su
-    análisis, la sección conserva solo su encabezado (`<h2>`) vacío.
-    Todavía no se incluye la sección condicional de "Fallos parciales"
-    (fuera de alcance de esta tarea, ver docstring del módulo).
+    (centinela). "Lecturas por estrategia de inversión" presenta, cada
+    una en su propia subsección `<h3>`, las lecturas de `value`, `growth`
+    y `quality` (ver "Sección 'Lecturas por estrategia de inversión'" en
+    el docstring del módulo), reutilizando el mismo volcado ya usado por
+    "Salud financiera"/"Valoración" (estos tres agentes ya invocan un
+    proveedor de IA real, con `AnalysisProvenance` genuina). Si el
+    agente/motor correspondiente no completó su análisis, la sección
+    conserva solo su encabezado vacío. Todavía no se incluye la sección
+    condicional de "Fallos parciales" (fuera de alcance de esta tarea,
+    ver docstring del módulo).
 
     Parameters
     ----------
@@ -746,8 +854,9 @@ def _shift_html_headings(html_fragment: str) -> str:
     Transforma primero `<h2>`/`</h2>` en `<h3>`/`</h3>`, y luego
     `<h1>`/`</h1>` en `<h2>`/`</h2>` (en ese orden, para no desplazar dos
     veces el mismo encabezado). Los `<h3>` ya presentes en el fragmento
-    (ej. "Métricas de soporte", "Limitaciones") no se tocan, mismo
-    criterio que la versión Markdown (que solo desplaza nivel 1 y 2).
+    (ej. "Métricas de soporte", "Limitaciones", "Value investing") no se
+    tocan, mismo criterio que la versión Markdown (que solo desplaza
+    nivel 1 y 2).
 
     Parameters
     ----------
